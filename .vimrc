@@ -47,25 +47,25 @@ let g:NERDTreeDirArrows=0
 
 let g:NERDTreeIgnore=['\.clean$', '\.swp$', '\.bak$', '\~$']
 
-" $BJ8K!%A%'%C%/(B
+" 文法チェック
 let g:syntastic_enable_signs=1
 let g:syntastic_auto_loc_list=2
 
-" $BJd40(B
+" 補完
 let g:neocomplcache_enable_at_startup = 1
 
-"$B%]%C%W%"%C%W%a%K%e!<$GI=<($5$l$k8uJd$N?t!#=i4|CM$O(B100
+"ポップアップメニューで表示される候補の数。初期値は100
 "let g:neocomplcache_max_list = 20
-""$B<+F0Jd40$r9T$&F~NO?t$r@_Dj!#=i4|CM$O(B2
+""自動補完を行う入力数を設定。初期値は2
 let g:neocomplcache_auto_completion_start_length = 2
-"$B<jF0Jd40;~$KJd40$r9T$&F~NO?t$r@)8f!#CM$r>.$5$/$9$k$HJ8;z$N:o=|;~$K=E$/$J$k(B
+"手動補完時に補完を行う入力数を制御。値を小さくすると文字の削除時に重くなる
 "let g:neocomplcache_manual_completion_start_length = 3
-""$B%P%C%U%!$d<-=q%U%!%$%kCf$G!"Jd40$NBP>]$H$J$k%-!<%o!<%I$N:G>.D9$5!#=i4|CM$O(B4$B!#(B
+""バッファや辞書ファイル中で、補完の対象となるキーワードの最小長さ。初期値は4。
 let g:neocomplcache_min_keyword_length = 4
-"$B%7%s%?%C%/%9%U%!%$%kCf$G!"Jd40$NBP>]$H$J$k%-!<%o!<%I$N:G>.D9$5!#=i4|CM$O(B4$B!#(B
+"シンタックスファイル中で、補完の対象となるキーワードの最小長さ。初期値は4。
 "let g:neocomplcache_min_syntax_length = 4
-""1:$BJd408uJd8!:w;~$KBgJ8;z!&>.J8;z$rL5;k$9$k(B
+""1:補完候補検索時に大文字・小文字を無視する
 let g:neocomplcache_enable_ignore_case = 1
-"$B%"%s%@!<%P!<$r6h@Z$j$H$7$?$"$$$^$$8!:w$r9T$&$+$I$&$+!#(B
-"m_s$B$HF~NO$9$k$H(Bm*_s$B$H2r<a$5$l!"(Bmb_substr$BEy$K%^%C%A$9$k!#(B
+"アンダーバーを区切りとしたあいまい検索を行うかどうか。
+"m_sと入力するとm*_sと解釈され、mb_substr等にマッチする。
 let g:neocomplcache_enable_underbar_completion = 1
