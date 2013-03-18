@@ -48,7 +48,7 @@ autoload bashcompinit
 bashcompinit
 source ~/git-completion.bash
 
-if [ $SHLVL = 1 ];then
-  screen -xR
-fi
+#if [ $SHLVL = 1 ];then
+#  screen -xR
+#fi
 
