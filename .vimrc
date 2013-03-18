@@ -14,6 +14,7 @@ Bundle 'tpope/vim-rails'
 Bundle 'scrooloose/nerdtree'
 Bundle 'soh335/vim-symfony'
 Bundle 'tjennings/git-grep-vim'
+Bundle 'vim-scripts/local_vimrc.vim'
 
 filetype plugin indent on
 
