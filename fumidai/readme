@@ -1,0 +1,6 @@
+# mail送信
+bash ~/fumidai/mail.sh
+
+# 踏み台に接続
+bash ~/fumidai/login.sh
+
