@@ -14,7 +14,7 @@ hardstatus alwayslastline "%{= gk} %{gW} %-w%{= wk}%n %t%{-}%+w %=%{gk}$USER@$HO
 # # 背景色消去
 # defbce "on"
 # # シェルタイトル
-#shelltitle '% |zsh'
+shelltitle '% |zsh'
 # # ターミナル
 #term xterm-256color
 

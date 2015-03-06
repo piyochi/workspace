@@ -4,51 +4,59 @@ SAVEHIST=100000                       # 保存される履歴の数
 setopt extended_history               # 履歴ファイルに時刻を記録
 function history-all { history -E 1 } # 全履歴の一覧を出力する
 
-fpath=($HOME/.zsh/myfunc $fpath)
-autoload -U compinit
-compinit -u
+# Path to your oh-my-zsh configuration.
+ZSH=$HOME/.oh-my-zsh
 
-autoload -Uz VCS_INFO_get_data_git; VCS_INFO_get_data_git 2> /dev/null
+# Set name of the theme to load.
+# Look in ~/.oh-my-zsh/themes/
+# Optionally, if you set this to "random", it'll load a random theme each
+# time that oh-my-zsh is loaded.
+#ZSH_THEME="robbyrussell"
+ZSH_THEME="gallois"
 
-function rprompt-git-current-branch {
-  local name st color gitdir action
+# Example aliases
+#alias zshconfig="mate ~/.zshrc"
+# alias ohmyzsh="mate ~/.oh-my-zsh"
 
-  if [[ "$PWD" =~ '/\.git(/.*)?$' ]]; then
-    return
-  fi
+# Set to this to use case-sensitive completion
+# CASE_SENSITIVE="true"
 
-  name=`git branch 2> /dev/null | grep '^\*' | cut -b 3-`
-  if [[ -z $name ]]; then
-    return
-  fi
+# Uncomment this to disable bi-weekly auto-update checks
+# DISABLE_AUTO_UPDATE="true"
 
-  gitdir=`git rev-parse --git-dir 2> /dev/null`
-  action=`VCS_INFO_git_getaction "$gitdir"` && action="($action)"
+# Uncomment to change how often before auto-updates occur? (in days)
+# export UPDATE_ZSH_DAYS=13
 
-  st=`git status 2> /dev/null`
-  if [[ -n `echo "$st" | grep "^nothing to"` ]]; then
-    color=%F{green}
-  elif [[ -n `echo "$st" | grep "^nothing added"` ]]; then
-    color=%F{yellow}
-  elif [[ -n `echo "$st" | grep "^# Untracked"` ]]; then
-    color=%B%F{red}
-  else
-    color=%F{red}
-  fi
+# Uncomment following line if you want to disable colors in ls
+# DISABLE_LS_COLORS="true"
 
-  echo "$color$name$action%f%b "
-}
+# Uncomment following line if you want to disable autosetting terminal title.
+DISABLE_AUTO_TITLE="false"
 
-# プロンプトが表示されるたびにプロンプト文字列を評価、置換する
-setopt prompt_subst
+# Uncomment following line if you want to disable command autocorrection
+# DISABLE_CORRECTION="true"
 
-RPROMPT='[`rprompt-git-current-branch`%~]'
+# Uncomment following line if you want red dots to be displayed while waiting for completion
+# COMPLETION_WAITING_DOTS="true"
 
-autoload bashcompinit
-bashcompinit
-source ~/git-completion.bash
+# Uncomment following line if you want to disable marking untracked files under
+# VCS as dirty. This makes repository status check for large repositories much,
+# much faster.
+# DISABLE_UNTRACKED_FILES_DIRTY="true"
 
-#if [ $SHLVL = 1 ];then
-#  screen -xR
-#fi
+# Which plugins would you like to load? (plugins can be found in ~/.oh-my-zsh/plugins/*)
+# Custom plugins may be added to ~/.oh-my-zsh/custom/plugins/
+# Example format: plugins=(rails git textmate ruby lighthouse)
+plugins=(git rails rails4)
+
+source $ZSH/oh-my-zsh.sh
+
+# Customize to your needs...
+export PATH=$PATH:/home/nagayoshi/.rbenv/shims:/home/nagayoshi/.rbenv/bin:/usr/local/bin:/bin:/usr/bin:/home/nagayoshi/bin:/usr/local/sbin:/usr/sbin:/sbin
+
+LANG=ja_JP.UTF-8
+LC_CTYPE=ja_JP.UTF-8
+
+
+
 
