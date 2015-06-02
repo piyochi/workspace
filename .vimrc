@@ -88,6 +88,8 @@ let g:NERDTreeDirArrows=0
 
 let g:NERDTreeIgnore=['\.clean$', '\.swp$', '\.bak$', '\~$']
 
+" ステータスバーに文字コードと改行コード表示
+set statusline=%<%f\ %m%r%h%w%{'['.(&fenc!=''?&fenc:&enc).']['.&ff.']'}%=%l,%c%V%8P
 
 
 
