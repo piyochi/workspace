@@ -50,8 +50,9 @@ if !exists('*s:ucfirst')
 endif
 
 if !exists('*s:phalcon_read')
-    function! s:phalcon_read(main_name, next)
-        let dir_name=substitute(expand('%:p:h'), 'views', 'classes/'. a:next , 'g')
+    function! s:phalcon_read(main_name, next, ...)
+        let dir_name = get(a:, 1, expand('%:p:h'))
+        let dir_name=substitute(dir_name, 'views', 'classes/'. a:next , 'g')
         let dir_name=substitute(dir_name, 'Controllers', a:next, 'g')
         let dir_name=substitute(dir_name, 'Forms', a:next, 'g')
         let dir_name=substitute(dir_name, 'Models', a:next, 'g')
@@ -133,6 +134,13 @@ if !exists('*s:PhalconModelRead')
         end
 
         let file_name = s:phalcon_read(main_name, 'Models') . ".php"
+        if glob(file_name) == ""
+            let dir_name = expand('%:p:h') . "/../../../../classes/Models"
+            let file_name_parent = s:phalcon_read(main_name, 'Models', dir_name) . ".php"
+            if glob(file_name_parent) != ""
+                let file_name = file_name_parent
+            end
+        end
         call s:checkfileread(file_name)
     endfunction
 endif
@@ -146,6 +154,13 @@ if !exists('*s:PhalconQueryRead')
         end
 
         let file_name = s:phalcon_read(main_name, 'Queries') . ".php"
+        if glob(file_name) == ""
+            let dir_name = expand('%:p:h') . "/../../../../classes/Queries"
+            let file_name_parent = s:phalcon_read(main_name, 'Queries', dir_name) . ".php"
+            if glob(file_name_parent) != ""
+                let file_name = file_name_parent
+            end
+        end
         call s:checkfileread(file_name)
     endfunction
 endif
@@ -159,6 +174,13 @@ if !exists('*s:PhalconServiceRead')
         end
 
         let file_name = s:phalcon_read(main_name, 'Services') . ".php"
+        if glob(file_name) == ""
+            let dir_name = expand('%:p:h') . "/../../../../classes/Services"
+            let file_name_parent = s:phalcon_read(main_name, 'Services', dir_name) . ".php"
+            if glob(file_name_parent) != ""
+                let file_name = file_name_parent
+            end
+        end
         call s:checkfileread(file_name)
     endfunction
 endif
@@ -172,6 +194,13 @@ if !exists('*s:PhalconValidateRead')
         end
 
         let file_name = s:phalcon_read(main_name, 'Validators') . ".php"
+        if glob(file_name) == ""
+            let dir_name = expand('%:p:h') . "/../../../../classes/Validators"
+            let file_name_parent = s:phalcon_read(main_name, 'Validators', dir_name) . ".php"
+            if glob(file_name_parent) != ""
+                let file_name = file_name_parent
+            end
+        end
         call s:checkfileread(file_name)
     endfunction
 endif
