@@ -28,12 +28,16 @@ if !exists('*s:findit')
         else
             return ""
         endif
-endfunction
+    endfunction
 endif
 
 if !exists('*s:checkfileread')
     function! s:checkfileread(path)
-        if glob(a:path) == ""
+        " 1階層上を取得
+        let dir_name = join(remove( split( a:path, "/" ), len( split( getcwd(), "/" ) ), -1 ), "/")
+        if glob(dir_name) == ""
+            exec "echo 'no dir name: ". a:path ."'"
+        elseif glob(a:path) == ""
             exec "echo 'no file name: ". a:path ."'"
             exec "edit ". a:path
         else
@@ -49,27 +53,47 @@ if !exists('*s:ucfirst')
     endfunction
 endif
 
+" スネークケース -> キャメルケース
+if !exists('*s:camelcase')
+    function! s:camelcase(str)
+        return substitute(a:str, '\v_(.)', '\u\1', 'g')
+    endfunction
+endif
+
+" キャメルケース -> スネークケース
+if !exists('*s:snakecase')
+    function! s:snakecase(str)
+        return substitute(a:str, '\v([A-Z])', '_\L\1', 'g')
+    endfunction
+endif
+
 if !exists('*s:phalcon_read')
     function! s:phalcon_read(main_name, next, ...)
         let dir_name = get(a:, 1, expand('%:p:h'))
+        let dirs = split(dir_name, "views")
         let dir_name=substitute(dir_name, 'views', 'classes/'. a:next , 'g')
         let dir_name=substitute(dir_name, 'Controllers', a:next, 'g')
         let dir_name=substitute(dir_name, 'Forms', a:next, 'g')
         let dir_name=substitute(dir_name, 'Models', a:next, 'g')
         let dir_name=substitute(dir_name, 'Queries', a:next, 'g')
         let dir_name=substitute(dir_name, 'Services', a:next, 'g')
-        let dir_name=substitute(dir_name, 'Validators', a:next, 'g')
+        let dir_name=substitute(dir_name, 'Validation', a:next, 'g')
+        let dir_name=substitute(dir_name, 'Tasks', a:next, 'g')
 
         if a:main_name != ""
-            let main_name = dir_name ."/". s:ucfirst(a:main_name)
+            let main_name = s:camelcase(a:main_name)
+            let main_name = s:ucfirst(main_name)
+            let main_name = dir_name ."/". main_name
         elseif expand('%:p') =~ 'views'
-            let dirs = split(dir_name, "/")
+            "let dirs = split(dir_name, "/")
             let tolower_main_name = dirs[len(dirs) - 1]
-            let main_name = s:ucfirst(tolower_main_name)
+            let main_name = s:camelcase(tolower_main_name)
+            let main_name = s:ucfirst(main_name)
             let main_name = substitute(dir_name, tolower_main_name, main_name, 'g')
         else
             let main_name=substitute(expand('%:t:r'), 'Controller', '', 'g')
             let main_name=substitute(main_name, 'Form', '', 'g')
+            let main_name=substitute(main_name, 'Task', '', 'g')
             let main_name=dir_name."/".main_name
         end
 
@@ -88,14 +112,22 @@ if !exists('*s:PhalconViewRead')
         "let file_name=substitute(expand("%:r"), expand('%:p:h'), '', 'g')
         let main_name=substitute(expand('%:t:r'), 'Controller', '', 'g')
         let main_name=substitute(main_name, 'Form', '', 'g')
-        let main_name=tolower(main_name)
+        let main_name=substitute(main_name, 'Task', '', 'g')
+        let main_name=s:snakecase(main_name)
         let dir_name=substitute(expand('%:p:h'), 'classes/Controllers', 'views', 'g')
         let dir_name=substitute(dir_name, 'classes/Forms', 'views', 'g')
         let dir_name=substitute(dir_name, 'classes/Models', 'views', 'g')
         let dir_name=substitute(dir_name, 'classes/Queries', 'views', 'g')
         let dir_name=substitute(dir_name, 'classes/Services', 'views', 'g')
-        let dir_name=substitute(dir_name, 'classes/Validators', 'views', 'g')
-        call s:checkfileread(dir_name."/". main_name ."/" . volt_name)
+        let dir_name=substitute(dir_name, 'classes/Validation', 'views', 'g')
+        let dir_name=substitute(dir_name, 'classes/Tasks', 'views', 'g')
+        let dirs = split(dir_name, "views/")
+        let prev_dir_name = dirs[len(dirs) - 1]
+        let next_dir_name = s:snakecase(prev_dir_name)
+        let dir_name = substitute(dir_name, prev_dir_name, next_dir_name, 'g')
+        let name = dir_name."/". main_name ."/" . volt_name
+        let name = substitute(name, '/_', '/', 'g')
+        call s:checkfileread(name)
     endfunction
 endif
 
@@ -124,6 +156,20 @@ if !exists('*s:PhalconFormRead')
         call s:checkfileread(file_name)
     endfunction
 endif
+
+if !exists('*s:PhalconTaskRead')
+    function! s:PhalconTaskRead (...)
+        if 0 < a:0
+            let main_name = a:1 
+        else
+            let main_name = ""
+        end
+
+        let file_name = s:phalcon_read(main_name, 'Tasks') . "Task.php"
+        call s:checkfileread(file_name)
+    endfunction
+endif
+
 
 if !exists('*s:PhalconModelRead')
     function! s:PhalconModelRead (...)
@@ -193,10 +239,10 @@ if !exists('*s:PhalconValidateRead')
             let main_name = ""
         end
 
-        let file_name = s:phalcon_read(main_name, 'Validators') . ".php"
+        let file_name = s:phalcon_read(main_name, 'Validation') . ".php"
         if glob(file_name) == ""
-            let dir_name = expand('%:p:h') . "/../../../../classes/Validators"
-            let file_name_parent = s:phalcon_read(main_name, 'Validators', dir_name) . ".php"
+            let dir_name = expand('%:p:h') . "/../../../../classes/Validation"
+            let file_name_parent = s:phalcon_read(main_name, 'Validation', dir_name) . ".php"
             if glob(file_name_parent) != ""
                 let file_name = file_name_parent
             end
@@ -222,10 +268,8 @@ command! -nargs=* PHs :call s:PhalconServiceRead(<f-args>)
 command! -nargs=* PHservice :call s:PhalconServiceRead(<f-args>)
 command! -nargs=* PHva :call s:PhalconValidateRead(<f-args>)
 command! -nargs=* PHvalidate :call s:PhalconValidateRead(<f-args>)
-
-
-
-
+command! -nargs=* PHta :call s:PhalconTaskRead(<f-args>)
+command! -nargs=* PHtask :call s:PhalconTaskRead(<f-args>)
 
 
 
