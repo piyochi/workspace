@@ -77,6 +77,7 @@ if !exists('*s:phalcon_read')
         let dir_name=substitute(dir_name, 'Models', a:next, 'g')
         let dir_name=substitute(dir_name, 'Queries', a:next, 'g')
         let dir_name=substitute(dir_name, 'Services', a:next, 'g')
+        let dir_name=substitute(dir_name, 'Validators', a:next, 'g')
         let dir_name=substitute(dir_name, 'Validation', a:next, 'g')
         let dir_name=substitute(dir_name, 'Tasks', a:next, 'g')
 
@@ -119,6 +120,7 @@ if !exists('*s:PhalconViewRead')
         let dir_name=substitute(dir_name, 'classes/Models', 'views', 'g')
         let dir_name=substitute(dir_name, 'classes/Queries', 'views', 'g')
         let dir_name=substitute(dir_name, 'classes/Services', 'views', 'g')
+        let dir_name=substitute(dir_name, 'classes/Validators', 'views', 'g')
         let dir_name=substitute(dir_name, 'classes/Validation', 'views', 'g')
         let dir_name=substitute(dir_name, 'classes/Tasks', 'views', 'g')
         let dirs = split(dir_name, "views/")
@@ -231,8 +233,28 @@ if !exists('*s:PhalconServiceRead')
     endfunction
 endif
 
-if !exists('*s:PhalconValidateRead')
-    function! s:PhalconValidateRead (...)
+if !exists('*s:PhalconValidatorsRead')
+    function! s:PhalconValidatorsRead (...)
+        if 0 < a:0
+            let main_name = a:1 
+        else
+            let main_name = ""
+        end
+
+        let file_name = s:phalcon_read(main_name, 'Validators') . ".php"
+        if glob(file_name) == ""
+            let dir_name = expand('%:p:h') . "/../../../../classes/Validators"
+            let file_name_parent = s:phalcon_read(main_name, 'Validators', dir_name) . ".php"
+            if glob(file_name_parent) != ""
+                let file_name = file_name_parent
+            end
+        end
+        call s:checkfileread(file_name)
+    endfunction
+endif
+
+if !exists('*s:PhalconValidationRead')
+    function! s:PhalconValidationRead (...)
         if 0 < a:0
             let main_name = a:1 
         else
@@ -253,6 +275,7 @@ endif
 
 
 
+
 command! -nargs=* PHt :call s:PhalconViewRead(<f-args>)
 command! -nargs=* PHv :call s:PhalconViewRead(<f-args>)
 command! -nargs=* PHview :call s:PhalconViewRead(<f-args>)
@@ -266,8 +289,8 @@ command! -nargs=* PHq :call s:PhalconQueryRead(<f-args>)
 command! -nargs=* PHquery :call s:PhalconQueryRead(<f-args>)
 command! -nargs=* PHs :call s:PhalconServiceRead(<f-args>)
 command! -nargs=* PHservice :call s:PhalconServiceRead(<f-args>)
-command! -nargs=* PHva :call s:PhalconValidateRead(<f-args>)
-command! -nargs=* PHvalidate :call s:PhalconValidateRead(<f-args>)
+command! -nargs=* PHvs :call s:PhalconValidatorsRead(<f-args>)
+command! -nargs=* PHvn :call s:PhalconValidationRead(<f-args>)
 command! -nargs=* PHta :call s:PhalconTaskRead(<f-args>)
 command! -nargs=* PHtask :call s:PhalconTaskRead(<f-args>)
 
