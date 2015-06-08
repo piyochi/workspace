@@ -34,7 +34,9 @@ endif
 if !exists('*s:checkfileread')
     function! s:checkfileread(path)
         " 1階層上を取得
-        let dir_name = join(remove( split( a:path, "/" ), len( split( getcwd(), "/" ) ), -1 ), "/")
+        let dirs = split(a:path, "/")
+        let last_name = dirs[len(dirs) - 1]
+        let dir_name = substitute(a:path, last_name, '', 'g')
         if glob(dir_name) == ""
             exec "echo 'no dir name: ". a:path ."'"
         elseif glob(a:path) == ""
