@@ -82,6 +82,7 @@ if !exists('*s:phalcon_read')
         let dir_name=substitute(dir_name, 'Validators', a:next, 'g')
         let dir_name=substitute(dir_name, 'Validation', a:next, 'g')
         let dir_name=substitute(dir_name, 'Tasks', a:next, 'g')
+        let dir_name=substitute(dir_name, 'tests/src/', '', 'g')
 
         if a:main_name != ""
             let main_name = s:camelcase(a:main_name)
@@ -97,6 +98,7 @@ if !exists('*s:phalcon_read')
             let main_name=substitute(expand('%:t:r'), 'Controller', '', 'g')
             let main_name=substitute(main_name, 'Form', '', 'g')
             let main_name=substitute(main_name, 'Task', '', 'g')
+            let main_name=substitute(main_name, 'Test', '', 'g')
             let main_name=dir_name."/".main_name
         end
 
@@ -116,6 +118,7 @@ if !exists('*s:PhalconViewRead')
         let main_name=substitute(expand('%:t:r'), 'Controller', '', 'g')
         let main_name=substitute(main_name, 'Form', '', 'g')
         let main_name=substitute(main_name, 'Task', '', 'g')
+        let main_name=substitute(main_name, 'Test', '', 'g')
         let main_name=s:snakecase(main_name)
         let dir_name=substitute(expand('%:p:h'), 'classes/Controllers', 'views', 'g')
         let dir_name=substitute(dir_name, 'classes/Forms', 'views', 'g')
@@ -125,6 +128,7 @@ if !exists('*s:PhalconViewRead')
         let dir_name=substitute(dir_name, 'classes/Validators', 'views', 'g')
         let dir_name=substitute(dir_name, 'classes/Validation', 'views', 'g')
         let dir_name=substitute(dir_name, 'classes/Tasks', 'views', 'g')
+        let dir_name=substitute(dir_name, 'tests/src/', '', 'g')
         let dirs = split(dir_name, "views/")
         let prev_dir_name = dirs[len(dirs) - 1]
         let next_dir_name = s:snakecase(prev_dir_name)
@@ -134,6 +138,28 @@ if !exists('*s:PhalconViewRead')
         call s:checkfileread(name)
     endfunction
 endif
+
+if !exists('*s:PhalconTestRead')
+    function! s:PhalconTestRead (...)
+        if 0 < a:0
+            let main_name = a:1
+        else
+            let main_name = expand('%:t:r')
+        end
+        let main_name = s:camelcase(main_name)
+        let main_name = s:ucfirst(main_name)
+
+        let ext=expand('%:e')
+
+        let dir_name=expand('%:p:h')
+        let dir_name=substitute(dir_name, 'main', 'main/tests/src', 'g')
+        let dir_name=substitute(dir_name, 'review', 'review/tests/src', 'g')
+
+        let name = dir_name. "/". main_name . "Test." . ext
+        call s:checkfileread(name)
+    endfunction
+endif
+
 
 if !exists('*s:PhalconControllerRead')
     function! s:PhalconControllerRead (...)
@@ -278,7 +304,7 @@ endif
 
 
 
-command! -nargs=* PHt :call s:PhalconViewRead(<f-args>)
+command! -nargs=* PHt :call s:PhalconTestRead(<f-args>)
 command! -nargs=* PHv :call s:PhalconViewRead(<f-args>)
 command! -nargs=* PHview :call s:PhalconViewRead(<f-args>)
 command! -nargs=* PHc :call s:PhalconControllerRead(<f-args>)
