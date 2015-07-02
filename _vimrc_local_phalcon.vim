@@ -152,10 +152,17 @@ if !exists('*s:PhalconTestRead')
         let ext=expand('%:e')
 
         let dir_name=expand('%:p:h')
-        let dir_name=substitute(dir_name, 'main', 'main/tests/src', 'g')
-        let dir_name=substitute(dir_name, 'review', 'review/tests/src', 'g')
 
-        let name = dir_name. "/". main_name . "Test." . ext
+        if dir_name =~ 'tests/src/'
+            let dir_name=substitute(dir_name, 'tests/src/', '', 'g')
+            let main_name=substitute(main_name, 'Test', '', 'g')
+            let name = dir_name. "/". main_name . "." . ext
+        else
+            let dir_name=substitute(dir_name, 'main', 'main/tests/src', 'g')
+            let dir_name=substitute(dir_name, 'review', 'review/tests/src', 'g')
+            let name = dir_name. "/". main_name . "Test." . ext
+        end
+
         call s:checkfileread(name)
     endfunction
 endif

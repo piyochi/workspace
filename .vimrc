@@ -141,5 +141,17 @@ endfunction
 nmap <Leader>rj :<C-u>Ref webdict je<Space>
 nmap <Leader>re :<C-u>Ref webdict ej<Space>
 
+" Alignを日本語環境で使用するための設定
+let g:Align_xstrlen = 3
 
+" コピペ
+" <space>" copy, <space>p paste
+" y でコピーした後に、<space>"で保存、<space>p でペースト
+noremap [MyPrefix] <Nop>
+map <Space> [MyPrefix]
+" クリップボードの内容を名前付きレジスタに逃がす
+nnoremap [MyPrefix]" :<C-u>let @y=@0<CR>
+" 名前付きレジスタからペースト
+nnoremap [MyPrefix]p "yp
+nnoremap [MyPrefix]P "yP
 
