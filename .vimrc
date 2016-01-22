@@ -36,6 +36,7 @@ NeoBundle 'violetyk/neocomplete-php.vim'
 NeoBundle 'tpope/vim-obsession'
 
 NeoBundle 'junegunn/vim-easy-align'
+NeoBundle 'xwsoul/vim-zephir'
 
 
 call neobundle#end()
