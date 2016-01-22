@@ -1,4 +1,4 @@
---langmap=PHP:.php.inc
+--langmap=PHP:.php.inc.zep
 --php-kinds=c+f+d
 
 --langdef=js
