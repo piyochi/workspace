@@ -1,0 +1,68 @@
+# ~/.tmuxinator/golf.yml
+
+name: golf_rails
+root: /home/vagrant/www/golf_rails/
+
+# Optional tmux socket
+# socket_name: foo
+
+# Runs before everything. Use it to start daemons etc.
+# pre: sudo /etc/rc.d/mysqld start
+
+# Runs in each window and pane before window/pane specific commands. Useful for setting up interpreter versions.
+# pre_window: rbenv shell 2.0.0-p247
+
+# Pass command line options to tmux. Useful for specifying a different tmux.conf.
+# tmux_options: -f ~/.tmux.mac.conf
+
+# Change the command to call tmux.  This can be used by derivatives/wrappers like byobu.
+# tmux_command: byobu
+
+# Specifies (by name or index) which window will be selected on project startup. If not set, the first window is used.
+# startup_window: logs
+
+# Controls whether the tmux session should be attached to automatically. Defaults to true.
+# attach: false
+
+# Runs after everything. Use it to attach to tmux with custom options etc.
+# post: tmux -CC attach -t golf
+
+windows:
+  - zsh:
+      layout: 22b6,237x60,0,0{118x60,0,0,1,118x60,119,0,2}
+      panes:
+          - Zsh:
+              - 
+          - Root:
+              - sudo su -
+              - rm -rf /var/tmp/xdebug/*
+              - apachectl restart
+              - /usr/local/bin/redis-cli shutdown
+              - redis-server /etc/redis.conf
+  - vim:
+      layout: 76a2,237x60,0,0[237x54,0,0,3,237x2,0,55,2,237x2,0,55,5]
+      panes:
+          - Vim:
+              - 
+          - Zsh:
+              - 
+          - Console:
+              - bundle exec rails console
+  - db: 
+    - cd ~/golf_sql
+    - mysql -u root -padmin dev_golf_common
+  - console:
+    - bundle exec rails console
+  - log:
+      layout: 4ff6,237x60,0,0[237x30,0,0,7,237x29,0,31,8]
+      panes:
+          - Log1:
+              - sudo su -
+              - \cp -f /dev/null /var/log/mysql/query.log
+              - tail -f /var/log/mysql/query.log | egrep '^.+$'
+          - Log2:
+              - \cp -f /dev/null log/development.log
+              - tail -f log/development.log
+  - server:
+    - bundle exec rails server -b 0.0.0.0
+
