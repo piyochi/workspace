@@ -11,10 +11,10 @@ call neobundle#begin(expand('~/.vim/bundle/'))
 NeoBundleFetch 'Shougo/neobundle.vim'
 
 NeoBundle 'grep.vim'
-"NeoBundle 'php.vim'
+NeoBundle 'php.vim'
 "NeoBundle 'Shougo/neocomplcache'
 "NeoBundle 'scrooloose/syntastic'
-"NeoBundle 'tpope/vim-rails'
+NeoBundle 'tpope/vim-rails'
 "NeoBundle 'tpope/vim-cucumber'
 NeoBundle 'scrooloose/nerdtree'
 "NeoBundle 'soh335/vim-symfony'
