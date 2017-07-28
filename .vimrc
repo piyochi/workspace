@@ -38,6 +38,18 @@ NeoBundle 'tpope/vim-obsession'
 NeoBundle 'junegunn/vim-easy-align'
 NeoBundle 'xwsoul/vim-zephir'
 
+NeoBundle 'violetyk/cake.vim'
+
+" node.js
+" gfでrequire先に移動、ctrl+^で戻れる
+NeoBundle 'moll/vim-node'
+" js indent
+NeoBundle 'pangloss/vim-javascript'
+" js syntax
+NeoBundle 'jelera/vim-javascript-syntax'
+
+NeoBundle 'othree/html5.vim'
+
 
 call neobundle#end()
 
@@ -51,16 +63,17 @@ filetype plugin indent on
 let g:ref_phpmanual_path = $HOME . "/.vim/ref/php-chunked-xhtml"
 
 set ai
-set sw=4
+set sw=2
 set list
 set nu
 set showmode
 set expandtab
-set ts=4
+set ts=2
 set encoding=utf8
 set fileencodings=utf8,iso-2022-jp,sjis,euc-jp
 set backspace=indent,eol,start
 set autoindent
+set ambiwidth=double
 
 let php_sql_query=1
 let php_htmlInStrings=1
@@ -155,4 +168,13 @@ nnoremap [MyPrefix]" :<C-u>let @y=@0<CR>
 " 名前付きレジスタからペースト
 nnoremap [MyPrefix]p "yp
 nnoremap [MyPrefix]P "yP
+
+" html indent
+let g:html5_event_handler_attributes_complete = 1
+let g:html5_rdfa_attributes_complete = 1
+let g:html5_microdata_attributes_complete = 1
+let g:html5_aria_attributes_complete = 1
+
+
+
 
