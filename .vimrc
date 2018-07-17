@@ -50,6 +50,11 @@ NeoBundle 'jelera/vim-javascript-syntax'
 
 NeoBundle 'othree/html5.vim'
 
+" javascript整形 prettier用
+NeoBundle 'prettier/vim-prettier'
+" javascriptソースチェック eslint
+NeoBundle 'vim-syntastic/syntastic.git'
+
 
 call neobundle#end()
 
@@ -174,6 +179,32 @@ let g:html5_event_handler_attributes_complete = 1
 let g:html5_rdfa_attributes_complete = 1
 let g:html5_microdata_attributes_complete = 1
 let g:html5_aria_attributes_complete = 1
+
+" javascript整形 prettier
+let g:prettier#autoformat = 0
+autocmd BufWritePre *.js,*.jsx,*.mjs,*.ts,*.tsx,*.css,*.less,*.scss,*.json,*.graphql,*.md,*.vue Prettier
+
+" javascript整形 ESLint configuration
+set statusline+=%#warningmsg#
+set statusline+=%{SyntasticStatuslineFlag()}
+set statusline+=%*
+
+let g:syntastic_always_populate_loc_list = 1
+let g:syntastic_loc_list_height = 5
+let g:syntastic_auto_loc_list = 0
+let g:syntastic_check_on_open = 1
+let g:syntastic_check_on_wq = 1
+let g:syntastic_javascript_checkers = ['eslint']
+
+let g:syntastic_error_symbol = 'X'
+let g:syntastic_style_error_symbol = 'X'
+let g:syntastic_warning_symbol = '!'
+let g:syntastic_style_warning_symbol = '!'
+
+highlight link SyntasticErrorSign SignColumn
+highlight link SyntasticWarningSign SignColumn
+highlight link SyntasticStyleErrorSign SignColumn
+highlight link SyntasticStyleWarningSign SignColumn
 
 
 
