@@ -221,4 +221,7 @@ python3 del powerline_setup
 colorscheme pablo
 "colorscheme peachpuff
 
+" 選択した領域の色を設定
+highlight Visual term=reverse cterm=reverse gui=reverse guifg=Grey80 guibg=fg
+
 
