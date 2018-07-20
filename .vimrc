@@ -210,13 +210,15 @@ highlight link SyntasticStyleWarningSign SignColumn
 " sudo apt install -y python-pip
 " sudo apt install -y python2-pip
 " pip install --user powerline-shell
-set background=dark
 set laststatus=2
 set showtabline=2
-set t_Co=252
+set t_Co=16
 set noshowmode
 python3 from powerline.vim import setup as powerline_setup
 python3 powerline_setup()
 python3 del powerline_setup
+
+colorscheme pablo
+"colorscheme peachpuff
 
 
