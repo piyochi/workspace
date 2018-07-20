@@ -223,5 +223,7 @@ colorscheme pablo
 
 " 選択した領域の色を設定
 highlight Visual term=reverse cterm=reverse gui=reverse guifg=Grey80 guibg=fg
+" 検索時の背景色
+highlight Search ctermbg=5 ctermfg=2
 
 
