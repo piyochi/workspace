@@ -196,6 +196,7 @@ let g:syntastic_auto_loc_list = 0
 let g:syntastic_check_on_open = 0
 let g:syntastic_check_on_wq = 0
 let g:syntastic_javascript_checkers = ['eslint']
+let g:syntastic_mode_map = { 'mode': 'passive', 'active_filetypes': [],'passive_filetypes': [] } " 重いので初期は無効にする
 
 let g:syntastic_error_symbol = 'X'
 let g:syntastic_style_error_symbol = 'X'
@@ -207,10 +208,10 @@ highlight link SyntasticWarningSign SignColumn
 highlight link SyntasticStyleErrorSign SignColumn
 highlight link SyntasticStyleWarningSign SignColumn
 
-" Space + s eslint 有効に
+" Space + c eslint チェック
 nnoremap <Space>c :SyntasticCheck<CR>
-" Space + v eslint 無効に
-nnoremap <Space>v :SyntasticToggleMode<CR>
+" Space + s eslint 有効無効切替
+nnoremap <Space>s :SyntasticToggleMode<CR>
 
 
 " Powerline settings
