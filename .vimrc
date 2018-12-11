@@ -13,7 +13,7 @@ NeoBundleFetch 'Shougo/neobundle.vim'
 NeoBundle 'grep.vim'
 NeoBundle 'php.vim'
 "NeoBundle 'Shougo/neocomplcache'
-"NeoBundle 'scrooloose/syntastic'
+NeoBundle 'scrooloose/syntastic'
 NeoBundle 'tpope/vim-rails'
 "NeoBundle 'tpope/vim-cucumber'
 NeoBundle 'scrooloose/nerdtree'
@@ -56,6 +56,20 @@ NeoBundle 'prettier/vim-prettier'
 NeoBundle 'vim-syntastic/syntastic.git'
 
 NeoBundle 'vim-scripts/taglist.vim'
+
+NeoBundle 'othree/html5.vim'
+
+" python
+" 重いので一旦外す
+"NeoBundle 'davidhalter/jedi-vim'
+" cd ~/.vim/plugin/jedi-vim/
+" git submodule update --init
+
+" python文法チェック
+NeoBundle 'andviro/flake8-vim'
+
+" インデントを可視化
+NeoBundle 'Yggdroot/indentLine'
 
 call neobundle#end()
 
@@ -183,7 +197,8 @@ let g:html5_aria_attributes_complete = 1
 
 " javascript整形 prettier
 let g:prettier#autoformat = 0
-autocmd BufWritePre *.js,*.jsx,*.mjs,*.ts,*.tsx,*.css,*.less,*.scss,*.json,*.graphql,*.md,*.vue Prettier
+"autocmd BufWritePre *.js,*.jsx,*.mjs,*.ts,*.tsx,*.css,*.less,*.scss,*.json,*.graphql,*.md,*.vue Prettier
+autocmd BufWritePre *.js,*.jsx,*.mjs,*.ts,*.tsx,*.less,*.json,*.graphql,*.vue Prettier
 
 " javascript整形 ESLint configuration
 set statusline+=%#warningmsg#
@@ -226,6 +241,7 @@ python3 from powerline.vim import setup as powerline_setup
 python3 powerline_setup()
 python3 del powerline_setup
 
+
 colorscheme pablo
 "colorscheme peachpuff
 
@@ -233,5 +249,9 @@ colorscheme pablo
 highlight Visual term=reverse cterm=reverse gui=reverse guifg=Grey80 guibg=fg
 " 検索時の背景色
 highlight Search ctermbg=5 ctermfg=2
+
+autocmd BufRead,BufNewFile *.ect setfiletype eruby.html
+
+" python
 
 
