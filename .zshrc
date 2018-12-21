@@ -149,6 +149,8 @@ eval "$(pyenv virtualenv-init -)"
 
 export PATH="/home/ubuntu/.local/bin:$PATH"
 
+export PATH="./bin:$PATH"
+
 export PATH="$HOME/.rbenv/versions/2.0.0-p451/bin:$PATH"
 
 
