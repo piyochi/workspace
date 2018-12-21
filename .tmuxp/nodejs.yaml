@@ -1,0 +1,34 @@
+session_name: node_project
+start_directory: /home/ubuntu/www/nodejs/xxxxx
+windows:
+- layout: 22b6,237x60,0,0{118x60,0,0,1,118x60,119,0,2}
+  panes:
+  - null
+  - shell_command:
+    - sudo su -
+    - apachectl restart
+  window_name: zsh
+- layout: 2cc9,193x44,0,0[118x36,0,0,1,118x36,119,0,2,193x7,0,38,8]
+  panes:
+  - null
+  - shell_command:
+    - node tool/eslint_check.js
+  - null
+  window_name: vim
+- panes:
+  - shell_command:
+    - cd ~/mysql
+    - sudo mysql -u root xxxxx_develop
+  window_name: db
+- panes:
+  - NODE_ENV=local nodemon bin/www
+  window_name: server
+- layout: 4ff6,237x60,0,0[237x30,0,0,7,237x29,0,31,8]
+  panes:
+  - shell_command:
+    - sudo su -
+    - \cp -f /dev/null /var/log/mysql/query.log
+    - tail -f /var/log/mysql/query.log | egrep '^.+$'
+  - shell_command:
+    - tail -f log/*
+  window_name: log

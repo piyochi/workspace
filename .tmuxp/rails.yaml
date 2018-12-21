@@ -1,0 +1,31 @@
+session_name: rails
+start_directory: /home/ubuntu/www/rails
+windows:
+- panes:
+  - null
+  window_name: zsh
+- layout: 2cc9,193x44,0,0[193x29,0,0,1,193x7,0,30,7,193x7,0,38,8]
+  panes:
+  - null
+  - null
+  window_name: vim
+- panes:
+  - shell_command:
+    - cd ~/mysql
+    - mysql -u rails -pxxxxx xxxxx_develop
+  window_name: db
+- panes:
+  - null
+  window_name: console
+- layout: 4ff6,237x60,0,0[237x30,0,0,7,237x29,0,31,8]
+  panes:
+  - shell_command:
+    - sudo su -
+    - \cp -f /dev/null /var/log/mysql/query.log
+    - tail -f /var/log/mysql/query.log | egrep '^.+$'
+  - shell_command:
+    - tail -f log/development.log
+  window_name: log
+- panes:
+  - bundle exec rails server -p 3000
+  window_name: server

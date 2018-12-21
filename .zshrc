@@ -6,7 +6,7 @@ function history-all { history -E 1 } # 全履歴の一覧を出力する
 
 
 # Path to your oh-my-zsh installation.
-  export ZSH=/home/nagayoshi/.oh-my-zsh
+  export ZSH=/home/ubuntu/.oh-my-zsh
 
 # Set name of the theme to load.
 # Look in ~/.oh-my-zsh/themes/
@@ -56,12 +56,13 @@ ZSH_THEME="crunch"
 # Custom plugins may be added to ~/.oh-my-zsh/custom/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
-plugins=(git rails ruby gem tmuxinator)
+#plugins=(git rails ruby gem tmuxinator)
+plugins=(git rails ruby gem)
 
 # User configuration
 
-export PATH=/opt/rh/devtoolset-7/root/usr/bin:$HOME/.rbenv/shims:$HOME/.rbenv/bin:/usr/local/bin:/bin:/usr/bin:/home/nagayoshi/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH
-#  export PATH="/usr/local/bin:/bin:/usr/bin:/home/nagayoshi/bin:/usr/local/sbin:/usr/sbin:/sbin:/home/nagayoshi/.rbenv/shims:/home/nagayoshi/.rbenv/bin:/usr/local/bin:/bin:/usr/bin:/home/nagayoshi/bin:/usr/local/sbin:/usr/sbin:/sbin:/home/nagayoshi/.rbenv/versions/2.0.0-p247/bin/"
+export PATH=$HOME/.rbenv/shims:$HOME/.rbenv/bin:/usr/local/bin:/bin:/usr/bin:/home/ubuntu/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH
+#  export PATH="/usr/local/bin:/bin:/usr/bin:/home/ubuntu/bin:/usr/local/sbin:/usr/sbin:/sbin:/home/ubuntu/.rbenv/shims:/home/ubuntu/.rbenv/bin:/usr/local/bin:/bin:/usr/bin:/home/ubuntu/bin:/usr/local/sbin:/usr/sbin:/sbin:/home/ubuntu/.rbenv/versions/2.0.0-p247/bin/"
 # export MANPATH="/usr/local/man:$MANPATH"
 
 source $ZSH/oh-my-zsh.sh
@@ -97,14 +98,16 @@ LC_CTYPE=ja_JP.UTF-8
 eval "$(rbenv init - zsh)"
 
 export EDITOR='vim'
+export GIT_EDITOR='vim'
 export SHELL='zsh'
-source ~/.tmuxinator/tmuxinator.zsh
 
-[[ -s $HOME/.tmuxinator/scripts/tmuxinator ]] && source $HOME/.tmuxinator/scripts/tmuxinator
-DISABLE_AUTO_TITLE=true
+# tmux のwindowタイトルを固定
+export DISABLE_AUTO_TITLE=true
+# tmuxp 補完
+source ~/.tmuxp/tmuxp.zsh
 
-export PATH=/usr/pgsql-9.2/bin:$PATH
-
+autoload -U compinit
+compinit
 
 function git_diff_archive()
 {
@@ -126,14 +129,8 @@ function git_diff_archive()
   git archive --format=zip --prefix=root/ $h `eval $diff` -o archive.zip
 }
 
-export PYENV_ROOT=$HOME/.pyenv
-export PATH=$PYENV_ROOT/bin:$PATH
-eval "$(pyenv init - zsh)"
-
 export GOPATH="$HOME/go"
 export PATH="/opt/local/bin:/opt/local/sbin:$PATH:$GOPATH/bin"
-
-
 
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
@@ -142,4 +139,16 @@ export NVM_DIR="$HOME/.nvm"
 export VTE_CJK_WIDTH=1
 
 [[ -s "$HOME/.avn/bin/avn.sh" ]] && source "$HOME/.avn/bin/avn.sh" # load avn
+
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+if command -v pyenv 1>/dev/null 2>&1; then
+  eval "$(pyenv init -)"
+fi
+eval "$(pyenv virtualenv-init -)"
+
+export PATH="/home/ubuntu/.local/bin:$PATH"
+
+export PATH="$HOME/.rbenv/versions/2.0.0-p451/bin:$PATH"
+
 
