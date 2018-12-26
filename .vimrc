@@ -10,14 +10,17 @@ call neobundle#begin(expand('~/.vim/bundle/'))
 
 NeoBundleFetch 'Shougo/neobundle.vim'
 
+" vim 非同期処理
+NeoBundle 'Shougo/vimproc'
+
+NeoBundle 'Shougo/unite.vim'
+
+" :Grep 検索
 NeoBundle 'grep.vim'
 NeoBundle 'php.vim'
-"NeoBundle 'Shougo/neocomplcache'
 NeoBundle 'scrooloose/syntastic'
 NeoBundle 'tpope/vim-rails'
-"NeoBundle 'tpope/vim-cucumber'
 NeoBundle 'scrooloose/nerdtree'
-"NeoBundle 'soh335/vim-symfony'
 NeoBundle 'tjennings/git-grep-vim'
 NeoBundle 'vim-scripts/local_vimrc.vim'
 NeoBundle 'mattn/benchvimrc-vim'
@@ -31,7 +34,6 @@ NeoBundle 'creationix/nvm'
 " 補完
 NeoBundle 'Shougo/vimproc.vim'
 NeoBundle 'Shougo/neocomplete.vim'
-NeoBundle 'violetyk/neocomplete-php.vim'
 " tmux
 NeoBundle 'tpope/vim-obsession'
 
@@ -60,7 +62,6 @@ NeoBundle 'vim-scripts/taglist.vim'
 NeoBundle 'othree/html5.vim'
 
 " python
-" 重いので一旦外す
 "NeoBundle 'davidhalter/jedi-vim'
 " cd ~/.vim/plugin/jedi-vim/
 " git submodule update --init
@@ -70,6 +71,9 @@ NeoBundle 'andviro/flake8-vim'
 
 " インデントを可視化
 NeoBundle 'Yggdroot/indentLine'
+
+NeoBundle 'basyura/unite-rails'
+
 
 call neobundle#end()
 
@@ -106,8 +110,8 @@ let g:neocomplete#enable_ignore_case              = 1
 let g:neocomplete#enable_smart_case               = 1
 let g:neocomplete#enable_camel_case               = 1
 let g:neocomplete#use_vimproc                     = 1
-let g:neocomplete#sources#buffer#cache_limit_size = 1000000
-let g:neocomplete#sources#tags#cache_limit_size   = 30000000
+let g:neocomplete#sources#buffer#cache_limit_size = 100000
+let g:neocomplete#sources#tags#cache_limit_size   = 3000000
 let g:neocomplete#enable_fuzzy_completion         = 1
 let g:neocomplete#lock_buffer_name_pattern        = '\*ku\*'
 let g:neocomplete_php_locale                      = 'ja'
@@ -252,6 +256,11 @@ highlight Search ctermbg=5 ctermfg=2
 
 autocmd BufRead,BufNewFile *.ect setfiletype eruby.html
 
-" python
-
+" python jedi-vim
+" .入力時に補完候補を表示しない ctrl+spaceで出る
+"let g:jedi#popup_on_dot = 0
+" 勝手に最初の候補を入力しない
+"let g:jedi#popup_select_first = 0
+" docstringは表示しない
+"autocmd FileType python setlocal completeopt-=preview
 
