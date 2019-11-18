@@ -74,6 +74,15 @@ NeoBundle 'Yggdroot/indentLine'
 
 NeoBundle 'basyura/unite-rails'
 
+" .vue色付
+NeoBundle 'posva/vim-vue'
+
+" ruby 一括コメント Ctrl + -
+NeoBundle 'tomtom/tcomment_vim'
+
+" vim ctags サポート
+NeoBundle 'wesleyche/SrcExpl'
+
 
 call neobundle#end()
 
@@ -128,7 +137,7 @@ imap <silent> <C-e> <Esc>:NERDTreeToggle<CR>
 cmap <silent> <C-e> <C-u>:NERDTreeToggle<CR>
 
 " tagbar
-nmap <F8> :TagbarToggle<CR>
+"nmap <F8> :TagbarToggle<CR>
 
 " first open
 autocmd vimenter * if !argc() | NERDTree | endif
@@ -264,3 +273,26 @@ autocmd BufRead,BufNewFile *.ect setfiletype eruby.html
 " docstringは表示しない
 "autocmd FileType python setlocal completeopt-=preview
 
+"autocmd BufNewFile,BufRead *.rb set syntax=rspec
+
+" :Tlist メソッド一覧
+" 右側に表示
+let Tlist_Use_Right_Window = 1
+" taglistのウィンドウだけならvimを閉じる
+let Tlist_Exit_OnlyWindow = 1
+" 現在表示中のファイルのみ対象
+let Tlist_Show_One_File = 1
+" どの順番でソートするか
+" 未設定(定義順) or name(アルファベット順)
+let Tlist_Sort_Type = "name"
+" F8 で開閉
+nmap <F8> :TlistToggle<CR>
+
+" 自動表示しない :tag で表示
+let g:SrcExpl_RefreshTime   = 0
+" ctags 自動アップデート
+let g:SrcExpl_UpdateTags = 1
+" F9 で起動
+nmap <F9> :SrcExplToggle<CR>
+"プレビューウインドウの高さ
+let g:SrcExpl_WinHeight     = 20
