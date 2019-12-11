@@ -2,89 +2,86 @@ set nocompatible
 syntax on
 filetype off
 
-"set rtp+=~/.vim/bundle/vundle/
-"call vundle#rc()
-
-set runtimepath+=~/.vim/bundle/neobundle.vim/
-call neobundle#begin(expand('~/.vim/bundle/'))
-
-NeoBundleFetch 'Shougo/neobundle.vim'
+" vim-plug install
+" curl -fLo ~/.vim/autoload/plug.vim --create-dirs https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
+call plug#begin('~/.vim/plugged')
 
 " vim 非同期処理
-NeoBundle 'Shougo/vimproc'
+Plug 'Shougo/vimproc'
 
-NeoBundle 'Shougo/unite.vim'
+Plug 'Shougo/unite.vim'
 
 " :Grep 検索
-NeoBundle 'grep.vim'
-NeoBundle 'php.vim'
-NeoBundle 'scrooloose/syntastic'
-NeoBundle 'tpope/vim-rails'
-NeoBundle 'scrooloose/nerdtree'
-NeoBundle 'tjennings/git-grep-vim'
-NeoBundle 'vim-scripts/local_vimrc.vim'
-NeoBundle 'mattn/benchvimrc-vim'
-NeoBundle 'majutsushi/tagbar'
-NeoBundle 'etaoins/vim-volt-syntax'
-NeoBundle 'joonty/vdebug.git'
+Plug 'vim-scripts/grep.vim'
+Plug 'vim-scripts/php.vim'
+Plug 'scrooloose/syntastic'
+Plug 'tpope/vim-rails'
+Plug 'scrooloose/nerdtree'
+Plug 'tjennings/git-grep-vim'
+Plug 'vim-scripts/local_vimrc.vim'
+Plug 'mattn/benchvimrc-vim'
+Plug 'majutsushi/tagbar'
+" PHPのXdebugをvim上で管理できるやつ現状動かないのでPHPやるときに要調査
+"Plug 'joonty/vdebug.git'
 " :Ref phpmanual xxx
-NeoBundle 'thinca/vim-ref'
+Plug 'thinca/vim-ref'
 " node.js
-NeoBundle 'creationix/nvm'
+Plug 'creationix/nvm'
 " 補完
-NeoBundle 'Shougo/vimproc.vim'
-NeoBundle 'Shougo/neocomplete.vim'
+Plug 'Shougo/vimproc.vim'
+Plug 'Shougo/neocomplete.vim'
+
 " tmux
-NeoBundle 'tpope/vim-obsession'
+Plug 'tpope/vim-obsession'
 
-NeoBundle 'junegunn/vim-easy-align'
-NeoBundle 'xwsoul/vim-zephir'
+Plug 'junegunn/vim-easy-align'
+Plug 'xwsoul/vim-zephir'
 
-NeoBundle 'violetyk/cake.vim'
+Plug 'violetyk/cake.vim'
 
 " node.js
 " gfでrequire先に移動、ctrl+^で戻れる
-NeoBundle 'moll/vim-node'
+Plug 'moll/vim-node'
 " js indent
-NeoBundle 'pangloss/vim-javascript'
+Plug 'pangloss/vim-javascript'
 " js syntax
-NeoBundle 'jelera/vim-javascript-syntax'
+Plug 'jelera/vim-javascript-syntax'
 
-NeoBundle 'othree/html5.vim'
+Plug 'othree/html5.vim'
 
 " javascript整形 prettier用
-NeoBundle 'prettier/vim-prettier'
+Plug 'prettier/vim-prettier'
 " javascriptソースチェック eslint
-NeoBundle 'vim-syntastic/syntastic.git'
+" install不可になっているので要調査
+"Plug 'vim-syntastic/syntastic.git'
 
-NeoBundle 'vim-scripts/taglist.vim'
+Plug 'vim-scripts/taglist.vim'
 
-NeoBundle 'othree/html5.vim'
+Plug 'othree/html5.vim'
 
 " python
-"NeoBundle 'davidhalter/jedi-vim'
+"Plug 'davidhalter/jedi-vim'
 " cd ~/.vim/plugin/jedi-vim/
 " git submodule update --init
 
 " python文法チェック
-NeoBundle 'andviro/flake8-vim'
+Plug 'andviro/flake8-vim'
 
 " インデントを可視化
-NeoBundle 'Yggdroot/indentLine'
+Plug 'Yggdroot/indentLine'
 
-NeoBundle 'basyura/unite-rails'
+Plug 'basyura/unite-rails'
 
 " .vue色付
-NeoBundle 'posva/vim-vue'
+Plug 'posva/vim-vue'
 
 " ruby 一括コメント Ctrl + -
-NeoBundle 'tomtom/tcomment_vim'
+Plug 'tomtom/tcomment_vim'
 
 " vim ctags サポート
-NeoBundle 'wesleyche/SrcExpl'
+Plug 'wesleyche/SrcExpl'
 
-
-call neobundle#end()
+call plug#end()
 
 
 filetype plugin indent on
