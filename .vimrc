@@ -257,8 +257,9 @@ colorscheme pablo
 
 " 選択した領域の色を設定
 highlight Visual term=reverse cterm=reverse gui=reverse guifg=Grey80 guibg=fg
-" 検索時の背景色
-highlight Search ctermbg=5 ctermfg=2
+" 検索時の背景色ON/OFFをF5で切替
+set hlsearch!
+nnoremap <F5> :set hlsearch!<CR>
 
 autocmd BufRead,BufNewFile *.ect setfiletype eruby.html
 
