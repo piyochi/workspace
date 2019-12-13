@@ -161,4 +161,7 @@ alias git_diff_commit='git log --no-merges --oneline'
 # git_diff_file [master..release] or [master]
 alias git_diff_file='git diff --name-only'
 
+# マージ済のブランチを一括削除（master/release/developは省く）
+alias git_delete_merged_branch="git branch --merged|egrep -v '\*|develop|master|release'|xargs git branch -d"
+
 
