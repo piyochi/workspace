@@ -152,5 +152,13 @@ export PATH="/home/ubuntu/.local/bin:$PATH"
 export PATH="./bin:$PATH"
 
 export PATH="$HOME/.rbenv/versions/2.0.0-p451/bin:$PATH"
+eval "$(rbenv init -)"
+
+# branchを比較しての変更コミット一覧
+# git_diff_commit [master..release] or [master..]
+alias git_diff_commit='git log --no-merges --oneline'
+# branchを比較しての変更ファイル一覧
+# git_diff_file [master..release] or [master]
+alias git_diff_file='git diff --name-only'
 
 
