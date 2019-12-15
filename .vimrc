@@ -81,6 +81,10 @@ Plug 'tomtom/tcomment_vim'
 " vim ctags サポート
 Plug 'wesleyche/SrcExpl'
 
+" ファイル名検索
+Plug 'junegunn/fzf', { 'dir': '~/.fzf', 'do': './install --all' }
+Plug 'junegunn/fzf.vim'
+
 call plug#end()
 
 
@@ -294,3 +298,22 @@ let g:SrcExpl_UpdateTags = 1
 nmap <F9> :SrcExplToggle<CR>
 "プレビューウインドウの高さ
 let g:SrcExpl_WinHeight     = 20
+
+" fzf
+" ファイル一覧を出すときにプレビュー表示
+command! -bang -nargs=? -complete=dir Files call fzf#vim#files(<q-args>, fzf#vim#with_preview(), <bang>0)
+" TODO: GFiles?のプレビューが動かなくなるので要調査
+"command! -bang -nargs=0 GFiles call fzf#vim#gitfiles(<q-args>, fzf#vim#with_preview(), <bang>0)
+command! -bang -nargs=* GGrep
+  \ call fzf#vim#grep(
+  \   'git grep --line-number '.shellescape(<q-args>), 0,
+  \   fzf#vim#with_preview({'dir': systemlist('git rev-parse --show-toplevel')[0]}), <bang>0)
+
+nnoremap <silent> ,f :Files<CR>
+nnoremap <silent> ,g :GFiles<CR>
+nnoremap <silent> ,G :GFiles?<CR>
+nnoremap <silent> ,b :Buffers<CR>
+nnoremap <silent> ,l :BLines<CR>
+nnoremap <silent> ,h :History<CR>
+nnoremap <silent> ,m :Mark<CR>
+

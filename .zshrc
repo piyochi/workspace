@@ -165,3 +165,19 @@ alias git_diff_file='git diff --name-only'
 alias git_delete_merged_branch="git branch --merged|egrep -v '\*|develop|master|release'|xargs git branch -d"
 
 
+# fzf
+# git clone https://github.com/junegunn/fzf.git
+# ./fzf/install
+[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
+# ファイル検索してそのままvimを開く
+fvim() {
+  files=$(git ls-files) &&
+    selected_files=$(echo "$files" | fzf -m --preview 'head -100 {}') &&
+    vim $selected_files
+}
+# ファイル検索してそのままgit add する
+fga() {
+  modified_files=$(git status --short | awk '{print $2}') &&
+    selected_files=$(echo "$modified_files" | fzf -m --preview 'git diff {}') &&
+    git add $selected_files
+}
