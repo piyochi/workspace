@@ -178,6 +178,6 @@ fvim() {
 # ファイル検索してそのままgit add する
 fga() {
   modified_files=$(git status --short | awk '{print $2}') &&
-    selected_files=$(echo "$modified_files" | fzf -m --preview 'git diff {}') &&
+    selected_files=$(echo "$modified_files" | fzf -m --preview 'git diff --color=always {}') &&
     git add $selected_files
 }
