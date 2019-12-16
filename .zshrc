@@ -169,6 +169,7 @@ alias git_delete_merged_branch="git branch --merged|egrep -v '\*|develop|master|
 # git clone https://github.com/junegunn/fzf.git
 # ./fzf/install
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
+export FZF_DEFAULT_OPTS='--preview "bat --style=numbers --color=always {} | head -500"'
 # ファイル検索してそのままvimを開く
 fvim() {
   files=$(git ls-files) &&

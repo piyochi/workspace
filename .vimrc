@@ -299,11 +299,7 @@ nmap <F9> :SrcExplToggle<CR>
 "プレビューウインドウの高さ
 let g:SrcExpl_WinHeight     = 20
 
-" fzf
-" ファイル一覧を出すときにプレビュー表示
-command! -bang -nargs=? -complete=dir Files call fzf#vim#files(<q-args>, fzf#vim#with_preview(), <bang>0)
-" TODO: GFiles?のプレビューが動かなくなるので要調査
-"command! -bang -nargs=0 GFiles call fzf#vim#gitfiles(<q-args>, fzf#vim#with_preview(), <bang>0)
+" fzf ファイル名と中身を曖昧検索・git補助操作
 command! -bang -nargs=* GGrep
   \ call fzf#vim#grep(
   \   'git grep --line-number '.shellescape(<q-args>), 0,
