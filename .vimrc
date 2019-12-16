@@ -18,6 +18,7 @@ Plug 'scrooloose/syntastic'
 Plug 'tpope/vim-rails'
 Plug 'scrooloose/nerdtree'
 Plug 'aghareza/vim-gitgrep'
+Plug 'tjennings/git-grep-vim'
 Plug 'vim-scripts/local_vimrc.vim'
 Plug 'mattn/benchvimrc-vim'
 Plug 'majutsushi/tagbar'
@@ -85,6 +86,9 @@ Plug 'wesleyche/SrcExpl'
 Plug 'junegunn/fzf', { 'dir': '~/.fzf', 'do': './install --all' }
 Plug 'junegunn/fzf.vim'
 
+" vim schema テーマ
+Plug 'sainnhe/neon'
+
 call plug#end()
 
 
@@ -140,8 +144,8 @@ cmap <silent> <C-e> <C-u>:NERDTreeToggle<CR>
 " tagbar
 "nmap <F8> :TagbarToggle<CR>
 
-" first open
-autocmd vimenter * if !argc() | NERDTree | endif
+" first open 左側のtreeをvim起動時に表示
+"autocmd vimenter * if !argc() | NERDTree | endif
 
 autocmd bufenter * if (winnr("$") == 1 && exists("b:NERDTreeType") && b:NERDTreeType == "primary") | q | endif
 let g:NERDTreeShowHidden=1
@@ -251,16 +255,16 @@ set laststatus=2
 set showtabline=2
 set t_Co=16
 set noshowmode
-python3 from powerline.vim import setup as powerline_setup
-python3 powerline_setup()
-python3 del powerline_setup
+"python3 from powerline.vim import setup as powerline_setup
+"python3 powerline_setup()
+"python3 del powerline_setup
 
 
 colorscheme pablo
 "colorscheme peachpuff
 
 " 選択した領域の色を設定
-highlight Visual term=reverse cterm=reverse gui=reverse guifg=Grey80 guibg=fg
+"highlight Visual term=reverse cterm=reverse gui=reverse guifg=Grey80 guibg=fg
 " 検索時の背景色ON/OFFをF5で切替
 set hlsearch!
 nnoremap <F5> :set hlsearch!<CR>
@@ -312,4 +316,11 @@ nnoremap <silent> ,b :Buffers<CR>
 nnoremap <silent> ,l :BLines<CR>
 nnoremap <silent> ,h :History<CR>
 nnoremap <silent> ,m :Mark<CR>
+
+" neon テーマ
+set termguicolors
+set background=dark
+let g:neon_disable_italic_comment = 1
+let g:neon_popup_menu_selection_background = 'green'
+colorscheme neon
 
