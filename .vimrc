@@ -29,8 +29,13 @@ Plug 'thinca/vim-ref'
 " node.js
 Plug 'creationix/nvm'
 " 補完
-Plug 'Shougo/vimproc.vim'
-Plug 'Shougo/neocomplete.vim'
+if has('nvim')
+  Plug 'Shougo/deoplete.nvim', { 'do': ':UpdateRemotePlugins' }
+else
+  Plug 'Shougo/deoplete.nvim'
+  Plug 'roxma/nvim-yarp'
+  Plug 'roxma/vim-hug-neovim-rpc'
+endif
 
 " tmux
 Plug 'tpope/vim-obsession'
@@ -118,17 +123,18 @@ let php_htmlInStrings=1
 let g:sql_type_default='mysql'
 
 " 補完
-let g:neocomplete#enable_at_startup               = 1
-let g:neocomplete#auto_completion_start_length    = 3
-let g:neocomplete#enable_ignore_case              = 1
-let g:neocomplete#enable_smart_case               = 1
-let g:neocomplete#enable_camel_case               = 1
-let g:neocomplete#use_vimproc                     = 1
-let g:neocomplete#sources#buffer#cache_limit_size = 100000
-let g:neocomplete#sources#tags#cache_limit_size   = 3000000
-let g:neocomplete#enable_fuzzy_completion         = 1
-let g:neocomplete#lock_buffer_name_pattern        = '\*ku\*'
-let g:neocomplete_php_locale                      = 'ja'
+" Use deoplete.
+let g:deoplete#enable_at_startup = 1
+let g:deoplete#auto_completion_start_length    = 3
+let g:deoplete#enable_ignore_case              = 1
+let g:deoplete#enable_smart_case               = 1
+let g:deoplete#enable_camel_case               = 1
+let g:deoplete#use_vimproc                     = 1
+let g:deoplete#sources#buffer#cache_limit_size = 100000
+let g:deoplete#sources#tags#cache_limit_size   = 3000000
+let g:deoplete#enable_fuzzy_completion         = 1
+let g:deoplete#lock_buffer_name_pattern        = '\*ku\*'
+let g:deoplete_php_locale                      = 'ja'
 
 nmap <silent> ,, [mv%=<CR>
 "au! BufNewFile,BufRead *.volt set filetype=htmldjango
@@ -323,4 +329,5 @@ set background=dark
 let g:neon_disable_italic_comment = 1
 let g:neon_popup_menu_selection_background = 'green'
 colorscheme neon
+
 
