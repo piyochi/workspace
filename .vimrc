@@ -244,11 +244,6 @@ let g:syntastic_style_error_symbol = 'X'
 let g:syntastic_warning_symbol = '!'
 let g:syntastic_style_warning_symbol = '!'
 
-"highlight link SyntasticErrorSign SignColumn
-"highlight link SyntasticWarningSign SignColumn
-"highlight link SyntasticStyleErrorSign SignColumn
-"highlight link SyntasticStyleWarningSign SignColumn
-
 " Space + c eslint チェック
 nnoremap <Space>c :SyntasticCheck<CR>
 " Space + s eslint 有効無効切替
@@ -276,16 +271,6 @@ set hlsearch!
 nnoremap <F5> :set hlsearch!<CR>
 
 autocmd BufRead,BufNewFile *.ect setfiletype eruby.html
-
-" python jedi-vim
-" .入力時に補完候補を表示しない ctrl+spaceで出る
-"let g:jedi#popup_on_dot = 0
-" 勝手に最初の候補を入力しない
-"let g:jedi#popup_select_first = 0
-" docstringは表示しない
-"autocmd FileType python setlocal completeopt-=preview
-
-"autocmd BufNewFile,BufRead *.rb set syntax=rspec
 
 " :Tlist メソッド一覧
 " 右側に表示
