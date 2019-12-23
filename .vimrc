@@ -94,6 +94,8 @@ Plug 'junegunn/fzf.vim'
 " vim schema テーマ
 Plug 'sainnhe/neon'
 
+Plug 'airblade/vim-gitgutter'
+
 call plug#end()
 
 
@@ -242,10 +244,10 @@ let g:syntastic_style_error_symbol = 'X'
 let g:syntastic_warning_symbol = '!'
 let g:syntastic_style_warning_symbol = '!'
 
-highlight link SyntasticErrorSign SignColumn
-highlight link SyntasticWarningSign SignColumn
-highlight link SyntasticStyleErrorSign SignColumn
-highlight link SyntasticStyleWarningSign SignColumn
+"highlight link SyntasticErrorSign SignColumn
+"highlight link SyntasticWarningSign SignColumn
+"highlight link SyntasticStyleErrorSign SignColumn
+"highlight link SyntasticStyleWarningSign SignColumn
 
 " Space + c eslint チェック
 nnoremap <Space>c :SyntasticCheck<CR>
@@ -269,8 +271,6 @@ set noshowmode
 colorscheme pablo
 "colorscheme peachpuff
 
-" 選択した領域の色を設定
-"highlight Visual term=reverse cterm=reverse gui=reverse guifg=Grey80 guibg=fg
 " 検索時の背景色ON/OFFをF5で切替
 set hlsearch!
 nnoremap <F5> :set hlsearch!<CR>
@@ -325,9 +325,19 @@ nnoremap <silent> ,m :Mark<CR>
 
 " neon テーマ
 set termguicolors
-set background=dark
+"set background=dark
 let g:neon_disable_italic_comment = 1
 let g:neon_popup_menu_selection_background = 'green'
 colorscheme neon
+" 選択した領域の色を設定
+highlight Visual term=reverse cterm=reverse gui=reverse guifg=Grey80 guibg=fg
 
+" vim-gitgutter
+let g:gitgutter_highlight_lines = 1
+set updatetime=250
+nmap ]h <Plug>GitGutterNextHunk
+nmap [h <Plug>GitGutterPrevHunk
+nmap <Leader>hj <Plug>GitGutterStageHunk
+nmap <Leader>hk <Plug>GitGutterRevertHunk
+nmap <Leader>hv <Plug>GitGutterPreviewHunk
 
