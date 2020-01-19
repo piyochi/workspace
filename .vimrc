@@ -97,6 +97,9 @@ Plug 'sainnhe/neon'
 Plug 'airblade/vim-gitgutter'
 
 " vim上でrubocopを走らせる
+" デフォルトのままだと警告1ページ目が勝手に開かれるのでそれを避けるために以下を修正する
+" vim-rubocop/plugin/rubocop.vim: 57
+" cexpr l:rubocop_results -> cgete l:rubocop_results
 Plug 'ngmy/vim-rubocop'
 
 call plug#end()
@@ -258,6 +261,8 @@ let g:vimrubocop_rubocop_cmd = 'bundle exec rubocop '
 nnoremap <Space>R :RuboCop<CR>
 " Space + r rubocop 現在のファイルのみチェック
 nnoremap <Space>r :RuboCop %<CR>
+" Space + a rubocop 現在のファイルを--auto-correctする
+nnoremap <Space>a :RuboCop --auto-correct %<CR>
 
 
 " Powerline settings
