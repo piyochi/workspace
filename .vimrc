@@ -96,6 +96,9 @@ Plug 'sainnhe/neon'
 
 Plug 'airblade/vim-gitgutter'
 
+" vim上でrubocopを走らせる
+Plug 'ngmy/vim-rubocop'
+
 call plug#end()
 
 
@@ -248,6 +251,13 @@ let g:syntastic_style_warning_symbol = '!'
 nnoremap <Space>c :SyntasticCheck<CR>
 " Space + s eslint 有効無効切替
 nnoremap <Space>s :SyntasticToggleMode<CR>
+
+" rubocopのコマンド
+let g:vimrubocop_rubocop_cmd = 'bundle exec rubocop '
+" Space + R rubocop 全体チェック
+nnoremap <Space>R :RuboCop<CR>
+" Space + r rubocop 現在のファイルのみチェック
+nnoremap <Space>r :RuboCop %<CR>
 
 
 " Powerline settings
