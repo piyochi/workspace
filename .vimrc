@@ -330,7 +330,9 @@ let g:neon_disable_italic_comment = 1
 let g:neon_popup_menu_selection_background = 'green'
 colorscheme neon
 " 選択した領域の色を設定
-highlight Visual term=reverse cterm=reverse gui=reverse guifg=Grey80 guibg=fg
+"highlight Visual term=reverse cterm=reverse gui=reverse guifg=Grey80 guibg=fg
+highlight Visual ctermbg=15 guibg=#7a819d
+highlight Search ctermfg=0 ctermbg=11 guifg=#23252e guibg=#a2be8a
 
 " vim-gitgutter
 let g:gitgutter_highlight_lines = 1
