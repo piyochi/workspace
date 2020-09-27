@@ -19,7 +19,8 @@ Plug 'tpope/vim-rails'
 Plug 'scrooloose/nerdtree'
 Plug 'aghareza/vim-gitgrep'
 Plug 'tjennings/git-grep-vim'
-Plug 'vim-scripts/local_vimrc.vim'
+" tpope/vim-fugitive が動かなくなるのでコメント化
+" Plug 'vim-scripts/local_vimrc.vim'
 Plug 'mattn/benchvimrc-vim'
 Plug 'majutsushi/tagbar'
 " PHPのXdebugをvim上で管理できるやつ現状動かないのでPHPやるときに要調査
@@ -102,6 +103,18 @@ Plug 'airblade/vim-gitgutter'
 " cexpr l:rubocop_results -> cgete l:rubocop_results
 Plug 'ngmy/vim-rubocop'
 
+" Gitコマンドをvim上で動かす
+Plug 'tpope/vim-fugitive'
+
+" coc.nvim
+" 補完等
+" 前提
+"   gem install solargraph
+"     command path: /home/ubuntu/.rbenv/versions/2.6.5/bin/solargraph
+"   :PlugInstall の後に以下を実行
+"   :call coc#util#install()
+" Plug 'neoclide/coc.nvim', {'branch': 'release'}
+
 call plug#end()
 
 
@@ -135,7 +148,7 @@ let g:sql_type_default='mysql'
 let g:deoplete#enable_at_startup = 1
 let g:deoplete#auto_completion_start_length    = 3
 let g:deoplete#enable_ignore_case              = 1
-let g:deoplete#enable_smart_case               = 1
+"let g:deoplete#enable_smart_case               = 1
 let g:deoplete#enable_camel_case               = 1
 let g:deoplete#use_vimproc                     = 1
 let g:deoplete#sources#buffer#cache_limit_size = 100000
@@ -342,4 +355,19 @@ nmap [h <Plug>GitGutterPrevHunk
 nmap <Leader>hj <Plug>GitGutterStageHunk
 nmap <Leader>hk <Plug>GitGutterRevertHunk
 nmap <Leader>hv <Plug>GitGutterPreviewHunk
+
+
+" coc.nvim ruby設定
+let g:coc_global_extensions = ['coc-solargraph']
+
+inoremap <silent><expr> <TAB>
+      \ pumvisible() ? "\<C-n>" :
+      \ <SID>check_back_space() ? "\<TAB>" :
+      \ coc#refresh()
+inoremap <expr><S-TAB> pumvisible() ? "\<C-p>" : "\<C-h>"
+
+function! s:check_back_space() abort
+  let col = col('.') - 1
+  return !col || getline('.')[col - 1]  =~# '\s'
+endfunction
 
