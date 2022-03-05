@@ -16,7 +16,9 @@ Plug 'vim-scripts/grep.vim'
 Plug 'vim-scripts/php.vim'
 Plug 'scrooloose/syntastic'
 Plug 'tpope/vim-rails'
-Plug 'scrooloose/nerdtree'
+" Plug 'scrooloose/nerdtree'
+" ファイルツリー
+Plug 'lambdalisue/fern.vim'
 Plug 'aghareza/vim-gitgrep'
 Plug 'tjennings/git-grep-vim'
 " tpope/vim-fugitive が動かなくなるのでコメント化
@@ -57,7 +59,7 @@ Plug 'jelera/vim-javascript-syntax'
 Plug 'othree/html5.vim'
 
 " javascript整形 prettier用
-Plug 'prettier/vim-prettier'
+" Plug 'prettier/vim-prettier'
 " javascriptソースチェック eslint
 " install不可になっているので要調査
 "Plug 'vim-syntastic/syntastic.git'
@@ -162,11 +164,11 @@ nmap <silent> ,, [mv%=<CR>
 
 "nerdtree
 " C-e open close
-nmap <silent> <C-e>      :NERDTreeToggle<CR>
-vmap <silent> <C-e> <Esc>:NERDTreeToggle<CR>
-omap <silent> <C-e>      :NERDTreeToggle<CR>
-imap <silent> <C-e> <Esc>:NERDTreeToggle<CR>
-cmap <silent> <C-e> <C-u>:NERDTreeToggle<CR>
+" nmap <silent> <C-e>      :NERDTreeToggle<CR>
+" vmap <silent> <C-e> <Esc>:NERDTreeToggle<CR>
+" omap <silent> <C-e>      :NERDTreeToggle<CR>
+" imap <silent> <C-e> <Esc>:NERDTreeToggle<CR>
+" cmap <silent> <C-e> <C-u>:NERDTreeToggle<CR>
 
 " tagbar
 "nmap <F8> :TagbarToggle<CR>
@@ -174,12 +176,18 @@ cmap <silent> <C-e> <C-u>:NERDTreeToggle<CR>
 " first open 左側のtreeをvim起動時に表示
 "autocmd vimenter * if !argc() | NERDTree | endif
 
-autocmd bufenter * if (winnr("$") == 1 && exists("b:NERDTreeType") && b:NERDTreeType == "primary") | q | endif
-let g:NERDTreeShowHidden=1
-let g:NERDTreeShowBookmarks=1
-let g:NERDTreeDirArrows=0
+" autocmd bufenter * if (winnr("$") == 1 && exists("b:NERDTreeType") && b:NERDTreeType == "primary") | q | endif
+" let g:NERDTreeShowHidden=1
+" let g:NERDTreeShowBookmarks=1
+" let g:NERDTreeDirArrows=0
+" 
+" let g:NERDTreeIgnore=['\.clean$', '\.swp$', '\.bak$', '\~$']
 
-let g:NERDTreeIgnore=['\.clean$', '\.swp$', '\.bak$', '\~$']
+" fern
+" C-e open close
+nnoremap <C-e> :Fern . -reveal=% -drawer -toggle -width=40<CR>
+" 隠しファイルを表示する
+let g:fern#default_hidden=1
 
 " ステータスバーに文字コードと改行コード表示
 set statusline=%<%f\ %m%r%h%w%{'['.(&fenc!=''?&fenc:&enc).']['.&ff.']'}%=%l,%c%V%8P
@@ -241,9 +249,9 @@ let g:html5_microdata_attributes_complete = 1
 let g:html5_aria_attributes_complete = 1
 
 " javascript整形 prettier
-let g:prettier#autoformat = 0
+" let g:prettier#autoformat = 0
 "autocmd BufWritePre *.js,*.jsx,*.mjs,*.ts,*.tsx,*.css,*.less,*.scss,*.json,*.graphql,*.md,*.vue Prettier
-autocmd BufWritePre *.js,*.jsx,*.mjs,*.ts,*.tsx,*.less,*.json,*.graphql,*.vue Prettier
+" autocmd BufWritePre *.js,*.jsx,*.mjs,*.ts,*.tsx,*.less,*.json,*.graphql,*.vue Prettier
 
 " javascript整形 ESLint configuration
 set statusline+=%#warningmsg#
