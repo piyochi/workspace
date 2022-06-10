@@ -46,8 +46,6 @@ Plug 'tpope/vim-obsession'
 Plug 'junegunn/vim-easy-align'
 Plug 'xwsoul/vim-zephir'
 
-Plug 'violetyk/cake.vim'
-
 " node.js
 " gfでrequire先に移動、ctrl+^で戻れる
 Plug 'moll/vim-node'
@@ -423,3 +421,6 @@ map <silent> [Tag]x :tabclose<CR>
 map <silent> [Tag]n :tabnext<CR>
 " tp 前のタブ
 map <silent> [Tag]p :tabprevious<CR>
+
+let g:python_host_prog = system('(type pyenv &>/dev/null && echo -n "$(pyenv root)/versions/2.7.15/bin/python") || echo -n $(which python2)')
+let g:python3_host_prog = system('(type pyenv &>/dev/null && echo -n "$(pyenv root)/versions/3.6.6/bin/python") || echo -n $(which python3)')
