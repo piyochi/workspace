@@ -115,6 +115,23 @@ Plug 'tpope/vim-fugitive'
 "   :call coc#util#install()
 " Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
+" TSInstall ruby
+" TSInstall html
+" TSInstall css
+" TSInstall javascript
+" TSInstall json
+" TSInstall php
+" TSInstall vim
+" TSInstall vue
+" TSInstall yaml
+Plug 'nvim-treesitter/nvim-treesitter'
+" クラス名やメソッド名をvim上部に固定する機能
+" TSContextEnable
+Plug 'nvim-treesitter/nvim-treesitter-context'
+
+" 縦移動 現在位置から縦に次の文字がある場所へ移動する
+Plug 'haya14busa/vim-edgemotion'
+
 call plug#end()
 
 
@@ -422,5 +439,10 @@ map <silent> [Tag]n :tabnext<CR>
 " tp 前のタブ
 map <silent> [Tag]p :tabprevious<CR>
 
+" NVIM0.8.0 で Pythonが動くように
 let g:python_host_prog = system('(type pyenv &>/dev/null && echo -n "$(pyenv root)/versions/2.7.15/bin/python") || echo -n $(which python2)')
 let g:python3_host_prog = system('(type pyenv &>/dev/null && echo -n "$(pyenv root)/versions/3.6.6/bin/python") || echo -n $(which python3)')
+
+" 縦移動 現在位置から縦に次の文字がある場所へ移動する
+map <C-j> <Plug>(edgemotion-j)
+map <C-k> <Plug>(edgemotion-k)
