@@ -88,9 +88,13 @@ Plug 'tomtom/tcomment_vim'
 " vim ctags サポート
 Plug 'wesleyche/SrcExpl'
 
-" ファイル名検索
+" ファジーファインダー ファイル名検索
+" fzf
 Plug 'junegunn/fzf', { 'dir': '~/.fzf', 'do': './install --all' }
 Plug 'junegunn/fzf.vim'
+" telescope
+Plug 'nvim-lua/plenary.nvim'
+Plug 'nvim-telescope/telescope.nvim'
 
 " vim schema テーマ
 Plug 'sainnhe/neon'
@@ -115,6 +119,7 @@ Plug 'tpope/vim-fugitive'
 "   :call coc#util#install()
 " Plug 'neoclide/coc.nvim', {'branch': 'release'}
 
+" schema変更 neon使ってるので必要ないがcontextで必要
 " TSInstall ruby
 " TSInstall html
 " TSInstall css
@@ -124,6 +129,7 @@ Plug 'tpope/vim-fugitive'
 " TSInstall vim
 " TSInstall vue
 " TSInstall yaml
+" TSInstall markdown
 Plug 'nvim-treesitter/nvim-treesitter'
 " クラス名やメソッド名をvim上部に固定する機能
 " TSContextEnable
@@ -131,6 +137,13 @@ Plug 'nvim-treesitter/nvim-treesitter-context'
 
 " 縦移動 現在位置から縦に次の文字がある場所へ移動する
 Plug 'haya14busa/vim-edgemotion'
+
+" ファイル内検索 高速移動
+Plug 'easymotion/vim-easymotion'
+
+" バッファー削除
+" :Sayonara!
+Plug 'mhinz/vim-sayonara', { 'on': 'Sayonara' }
 
 call plug#end()
 
@@ -354,10 +367,23 @@ command! -bang -nargs=* GGrep
 nnoremap <silent> ,f :Files<CR>
 nnoremap <silent> ,g :GFiles<CR>
 nnoremap <silent> ,G :GFiles?<CR>
+nnoremap <silent> ,r :Rg<CR>
 nnoremap <silent> ,b :Buffers<CR>
 nnoremap <silent> ,l :BLines<CR>
 nnoremap <silent> ,h :History<CR>
 nnoremap <silent> ,m :Mark<CR>
+
+" telescope
+" <leader> は \
+nnoremap <leader>ff <cmd>lua require('telescope.builtin').find_files()<cr>
+nnoremap <leader>fg <cmd>lua require('telescope.builtin').git_files()<cr>
+nnoremap <leader>fr <cmd>lua require('telescope.builtin').live_grep()<cr>
+nnoremap <leader>fb <cmd>lua require('telescope.builtin').buffers()<cr>
+nnoremap <leader>fh <cmd>lua require('telescope.builtin').oldfiles()<cr>
+nnoremap <leader>fm <cmd>lua require('telescope.builtin').marks()<cr>
+nnoremap <leader>ft <cmd>lua require('telescope.builtin').help_tags()<cr>
+nnoremap <leader>fs <cmd>lua require('telescope.builtin').search_history()<cr>
+nnoremap <leader>fc <cmd>lua require('telescope.builtin').command_history()<cr>
 
 " neon テーマ
 set termguicolors
@@ -446,3 +472,11 @@ let g:python3_host_prog = system('(type pyenv &>/dev/null && echo -n "$(pyenv ro
 " 縦移動 現在位置から縦に次の文字がある場所へ移動する
 map <C-j> <Plug>(edgemotion-j)
 map <C-k> <Plug>(edgemotion-k)
+
+" vim-easymotion
+" / 検索のカスタマイズ
+map  / <Plug>(easymotion-sn)
+omap / <Plug>(easymotion-tn)
+" <leader><leader>s (\\s)で2文字検索
+let g:EasyMotion_do_mapping = 0
+nmap s <Plug>(easymotion-overwin-f2)
