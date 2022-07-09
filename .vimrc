@@ -18,7 +18,9 @@ Plug 'scrooloose/syntastic'
 Plug 'tpope/vim-rails'
 " Plug 'scrooloose/nerdtree'
 " ファイルツリー
+" fern で削除が効かないときは apt-get install trash-cli を実行
 Plug 'lambdalisue/fern.vim'
+Plug 'LumaKernel/fern-mapping-fzf.vim'
 Plug 'aghareza/vim-gitgrep'
 Plug 'tjennings/git-grep-vim'
 " tpope/vim-fugitive が動かなくなるのでコメント化
@@ -83,6 +85,7 @@ Plug 'basyura/unite-rails'
 Plug 'posva/vim-vue'
 
 " ruby 一括コメント Ctrl + -
+" 選択 -> gc
 Plug 'tomtom/tcomment_vim'
 
 " vim ctags サポート
@@ -139,11 +142,13 @@ Plug 'nvim-treesitter/nvim-treesitter-context'
 Plug 'haya14busa/vim-edgemotion'
 
 " ファイル内検索 高速移動
-Plug 'easymotion/vim-easymotion'
+" Plug 'easymotion/vim-easymotion'
 
 " バッファー削除
 " :Sayonara!
 Plug 'mhinz/vim-sayonara', { 'on': 'Sayonara' }
+
+Plug 'lucapette/vim-ruby-doc'
 
 call plug#end()
 
@@ -214,6 +219,7 @@ nmap <silent> ,, [mv%=<CR>
 " fern
 " C-e open close
 nnoremap <C-e> :Fern . -reveal=% -drawer -toggle -width=40<CR>
+nnoremap <C-u> :Fern . -reveal=%<CR>
 " 隠しファイルを表示する
 let g:fern#default_hidden=1
 
@@ -475,8 +481,8 @@ map <C-k> <Plug>(edgemotion-k)
 
 " vim-easymotion
 " / 検索のカスタマイズ
-map  / <Plug>(easymotion-sn)
-omap / <Plug>(easymotion-tn)
+" map  / <Plug>(easymotion-sn)
+" omap / <Plug>(easymotion-tn)
 " <leader><leader>s (\\s)で2文字検索
-let g:EasyMotion_do_mapping = 0
-nmap s <Plug>(easymotion-overwin-f2)
+" let g:EasyMotion_do_mapping = 0
+" nmap s <Plug>(easymotion-overwin-f2)
