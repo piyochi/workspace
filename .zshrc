@@ -61,7 +61,10 @@ plugins=(git rails ruby gem)
 
 # User configuration
 
-export PATH=$HOME/.rbenv/shims:$HOME/.rbenv/bin:/usr/local/bin:/bin:/usr/bin:/home/ubuntu/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH
+export PATH="$HOME/.linuxbrew/Library/Homebrew/shims/linux/super:$HOME/.linuxbrew/opt/zstd/bin:$HOME/.linuxbrew/opt/binutils/bin:$PATH"
+export PATH="$HOME/.linuxbrew/bin:$PATH"
+export PATH="$HOME/.linuxbrew/sbin:$PATH"
+export PATH=$HOME/.rbenv/shims:$HOME/.rbenv/bin:/usr/local/bin:/bin:/usr/bin:/home/ubuntu/bin:/usr/local/sbin:/usr/sbin:/sbin:$HOME/.config/composer/vendor/bin:$PATH
 #  export PATH="/usr/local/bin:/bin:/usr/bin:/home/ubuntu/bin:/usr/local/sbin:/usr/sbin:/sbin:/home/ubuntu/.rbenv/shims:/home/ubuntu/.rbenv/bin:/usr/local/bin:/bin:/usr/bin:/home/ubuntu/bin:/usr/local/sbin:/usr/sbin:/sbin:/home/ubuntu/.rbenv/versions/2.0.0-p247/bin/"
 # export MANPATH="/usr/local/man:$MANPATH"
 
@@ -204,4 +207,13 @@ fd() {
                   -o -type d -print 2> /dev/null | fzf +m) &&
   cd "$dir"
 }
+
+# github command gh
+eval "$(gh completion -s zsh)"
+
+# pdftk-java
+# cd ~/.local/bin/
+# wget https://gitlab.com/pdftk-java/pdftk/-/jobs/1527259628/artifacts/raw/build/libs/pdftk-all.jar
+# chmod 0755 pdftk-all.jar
+alias pdftk="java -jar $HOME/.local/bin/pdftk-all.jar"
 
