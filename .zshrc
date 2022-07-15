@@ -215,5 +215,5 @@ eval "$(gh completion -s zsh)"
 # cd ~/.local/bin/
 # wget https://gitlab.com/pdftk-java/pdftk/-/jobs/1527259628/artifacts/raw/build/libs/pdftk-all.jar
 # chmod 0755 pdftk-all.jar
-alias pdftk="java -jar $HOME/.local/bin/pdftk-all.jar"
+# alias pdftk="java -jar $HOME/.local/bin/pdftk-all.jar"
 
