@@ -487,6 +487,6 @@ map <C-k> <Plug>(edgemotion-k)
 " ステータスバーに文字コードと改行コード表示
 set statusline=%<%f\ %m%r%h%w%{'['.(&fenc!=''?&fenc:&enc).']['.&ff.']'}%=%l,%c%V%8P%{fugitive#statusline()}
 " フォーカス中のステーテスバーの色
-hi statusline guifg=#000000 guibg=#CCCCCC
+hi statusline guifg=#FFFFFF guibg=#3399AA
 " フォーカス外のステーテスバーの色
-hi statuslinenc guifg=#FFFFFF guibg=#3399AA
+hi statuslinenc guifg=#000000 guibg=#CCCCCC
