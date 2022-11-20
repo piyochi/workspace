@@ -223,9 +223,6 @@ nnoremap <C-u> :Fern . -reveal=%<CR>
 " 隠しファイルを表示する
 let g:fern#default_hidden=1
 
-" ステータスバーに文字コードと改行コード表示
-set statusline=%<%f\ %m%r%h%w%{'['.(&fenc!=''?&fenc:&enc).']['.&ff.']'}%=%l,%c%V%8P
-
 " Start interactive EasyAlign in visual mode (e.g. vip<Enter>)
 vmap <Enter> <Plug>(EasyAlign)
 " Start interactive EasyAlign for a motion/text object (e.g. gaip)
@@ -486,3 +483,10 @@ map <C-k> <Plug>(edgemotion-k)
 " <leader><leader>s (\\s)で2文字検索
 " let g:EasyMotion_do_mapping = 0
 " nmap s <Plug>(easymotion-overwin-f2)
+
+" ステータスバーに文字コードと改行コード表示
+set statusline=%<%f\ %m%r%h%w%{'['.(&fenc!=''?&fenc:&enc).']['.&ff.']'}%=%l,%c%V%8P%{fugitive#statusline()}
+" フォーカス中のステーテスバーの色
+hi statusline guifg=#000000 guibg=#CCCCCC
+" フォーカス外のステーテスバーの色
+hi statuslinenc guifg=#FFFFFF guibg=#3399AA
