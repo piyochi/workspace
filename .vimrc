@@ -173,6 +173,8 @@ set fileencodings=utf8,iso-2022-jp,sjis,euc-jp
 set backspace=indent,eol,start
 set autoindent
 set ambiwidth=double
+" マウスの右クリックを無効に
+set mouse=
 
 let php_sql_query=1
 let php_htmlInStrings=1
@@ -490,3 +492,10 @@ set statusline=%<%f\ %m%r%h%w%{'['.(&fenc!=''?&fenc:&enc).']['.&ff.']'}%=%l,%c%V
 hi statusline guifg=#FFFFFF guibg=#3399AA
 " フォーカス外のステーテスバーの色
 hi statuslinenc guifg=#000000 guibg=#CCCCCC
+
+" terminal のinsertモードをEscで抜けれるように
+tnoremap <Esc> <C-\><C-n>
+" terminal を開いた時に即インサートモードになる
+autocmd TermOpen * startinsert
+" :T で terminalを画面下に開く
+command! -nargs=* T split | wincmd j | resize 20 | terminal <args>
