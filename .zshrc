@@ -160,6 +160,7 @@ eval "$(rbenv init -)"
 # branchを比較しての変更コミット一覧
 # git_diff_commit [master..release] or [master..]
 alias git_diff_commit='git log --no-merges --oneline'
+alias git_diff_user='git log --no-merges --format="%h %<(15,trunc)%an %s"'
 # branchを比較しての変更ファイル一覧
 # git_diff_file [master..release] or [master]
 alias git_diff_file='git diff --name-only'
