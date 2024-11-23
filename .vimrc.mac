@@ -21,8 +21,8 @@ Plug 'tpope/vim-rails'
 " fern で削除が効かないときは apt-get install trash-cli を実行
 Plug 'lambdalisue/fern.vim'
 Plug 'LumaKernel/fern-mapping-fzf.vim'
-Plug 'aghareza/vim-gitgrep'
-" Plug 'tjennings/git-grep-vim'
+" git grep検索
+Plug 'mhinz/vim-grepper', { 'on': ['Grepper', '<plug>(GrepperOperator)'] }
 " tpope/vim-fugitive が動かなくなるのでコメント化
 " Plug 'vim-scripts/local_vimrc.vim'
 Plug 'mattn/benchvimrc-vim'
