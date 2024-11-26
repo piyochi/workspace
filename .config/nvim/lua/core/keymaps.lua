@@ -30,3 +30,18 @@ vim.api.nvim_set_keymap("n", "tp", ":tabprevious<CR>", { noremap = true, silent 
 vim.api.nvim_set_keymap('n', '<C-j>', '<Plug>(edgemotion-j)', {})
 vim.api.nvim_set_keymap('n', '<C-k>', '<Plug>(edgemotion-k)', {})
 
+-- \fでeslint,prettierのフォーマットを実行
+vim.api.nvim_set_keymap(
+  "n",
+  "<leader>f",
+  "<cmd>lua vim.lsp.buf.format()<CR>",
+  { noremap = true, silent = true }
+)
+
+-- \eでeslinst,prettierのエラーを表示
+vim.api.nvim_set_keymap(
+  "n",
+  "<leader>e",
+  "<cmd>lua vim.diagnostic.open_float()<CR>",
+  { noremap = true, silent = true }
+)

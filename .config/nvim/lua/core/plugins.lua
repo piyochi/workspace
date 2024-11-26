@@ -105,6 +105,13 @@ return require('packer').startup(function(use)
   use 'mfussenegger/nvim-dap'
   use 'mxsdev/nvim-dap-vscode-js'
 
+  -- ファイル保存時にeslintとprettierを自動実行
+  use {
+    "nvimtools/none-ls.nvim",
+    requires = {"nvim-lua/plenary.nvim", "nvimtools/none-ls-extras.nvim"}
+  }
+  use 'prettier/eslint-plugin-prettier'
+
   -- 初回インストール
   if packer_bootstrap then
     require('packer').sync()
