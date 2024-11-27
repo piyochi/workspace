@@ -91,8 +91,20 @@ return require('packer').startup(function(use)
   use 'tpope/vim-fugitive'
 
   -- コード構文解析とハイライト強化
+  -- gf: ファイルを開く gd: 定義にジャンプ gr: 参照を表示 K: ドキュメントを表示
+  use 'neovim/nvim-lspconfig'
   use {'nvim-treesitter/nvim-treesitter', run = ':TSUpdate'}
   use 'nvim-treesitter/nvim-treesitter-context' -- 関数名やクラス名を画面上部に表示
+  -- TypeScript 用の LSP サーバー 事前にnpm install -g typescript-language-server
+  require('lspconfig').ts_ls.setup {
+    on_attach = function(client, bufnr)
+      vim.keymap.set('n', 'gd', vim.lsp.buf.definition, { buffer = bufnr })
+      vim.keymap.set('n', 'gr', vim.lsp.buf.references, { buffer = bufnr })
+      vim.keymap.set('n', 'K', vim.lsp.buf.hover, {})
+    end,
+  }
+  -- Ruby 用の LSP サーバー 事前にgem install solargraph
+  require('lspconfig').solargraph.setup {}
 
   -- ctrl + j or k 縦移動 現在位置から縦に次の文字がある場所へ移動する
   use 'haya14busa/vim-edgemotion'
