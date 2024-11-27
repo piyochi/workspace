@@ -102,8 +102,8 @@ return require('packer').startup(function(use)
   use 'peitalin/vim-jsx-typescript'
 
   -- デバッグツールと VSCode 用デバッグアダプター
-  use 'mfussenegger/nvim-dap'
-  use 'mxsdev/nvim-dap-vscode-js'
+  -- 実際に開発始まってから考える
+  -- use { "mxsdev/nvim-dap-vscode-js", requires = {"mfussenegger/nvim-dap"} }
 
   -- ファイル保存時にeslintとprettierを自動実行
   use {

@@ -13,7 +13,7 @@ require('plugins.fzf')
 require('plugins.telescope')
 require('plugins.vim-gitgutter')
 require('plugins.github-copilot')
-require('plugins.nvim-dap')
+-- require('plugins.nvim-dap')
 require('plugins.none-ls')
 
 require('core.keymaps')
