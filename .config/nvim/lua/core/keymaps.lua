@@ -34,18 +34,31 @@ vim.api.nvim_set_keymap('n', '<C-k>', '<Plug>(edgemotion-k)', { noremap = true, 
 vim.api.nvim_set_keymap('v', '<C-j>', '<Plug>(edgemotion-j)', { noremap = true, silent = true })
 vim.api.nvim_set_keymap('v', '<C-k>', '<Plug>(edgemotion-k)', { noremap = true, silent = true })
 
--- \fでeslint,prettierのフォーマットを実行
+-- \lfでeslint,prettierの自動修正を実行
 vim.api.nvim_set_keymap(
   "n",
-  "<leader>f",
+  "<leader>lf",
   "<cmd>lua vim.lsp.buf.format()<CR>",
   { noremap = true, silent = true }
 )
-
--- \eでeslinst,prettierのエラーを表示
+-- \ltでnone-lsのエラー表示を切り替える
 vim.api.nvim_set_keymap(
   "n",
-  "<leader>e",
+  "<leader>lt",
+  "<cmd>lua require('utils.functions').toggle_diagnostics()<CR>",
+  { noremap = true, silent = true }
+)
+-- \leでカーソル位置のeslinst,prettierエラーをその場に表示
+vim.api.nvim_set_keymap(
+  "n",
+  "<leader>le",
   "<cmd>lua vim.diagnostic.open_float()<CR>",
+  { noremap = true, silent = true }
+)
+-- \ldでカーソル位置のeslinst,prettierエラーをリスト表示
+vim.api.nvim_set_keymap(
+  "n",
+  "<leader>ld",
+  "<cmd>lua vim.diagnostic.setloclist()<CR>",
   { noremap = true, silent = true }
 )

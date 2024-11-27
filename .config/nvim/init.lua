@@ -3,7 +3,7 @@ vim.api.nvim_create_autocmd("BufWritePost", {
   pattern = { "plugins.lua" },
   command = "PackerCompile",
 })
-require('utils.functions')
+-- require('utils.functions')
 require('core.settings')
 
 require('plugins.fern')
