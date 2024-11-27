@@ -27,8 +27,12 @@ vim.api.nvim_set_keymap("n", "tn", ":tabnext<CR>", { noremap = true, silent = tr
 vim.api.nvim_set_keymap("n", "tp", ":tabprevious<CR>", { noremap = true, silent = true })
 
 -- ctrl + j or k 縦移動 現在位置から縦に次の文字がある場所へ移動する
-vim.api.nvim_set_keymap('n', '<C-j>', '<Plug>(edgemotion-j)', {})
-vim.api.nvim_set_keymap('n', '<C-k>', '<Plug>(edgemotion-k)', {})
+-- ノーマルモードでのキーマッピング
+vim.api.nvim_set_keymap('n', '<C-j>', '<Plug>(edgemotion-j)', { noremap = true, silent = true })
+vim.api.nvim_set_keymap('n', '<C-k>', '<Plug>(edgemotion-k)', { noremap = true, silent = true })
+-- ビジュアルモードでのキーマッピング
+vim.api.nvim_set_keymap('v', '<C-j>', '<Plug>(edgemotion-j)', { noremap = true, silent = true })
+vim.api.nvim_set_keymap('v', '<C-k>', '<Plug>(edgemotion-k)', { noremap = true, silent = true })
 
 -- \fでeslint,prettierのフォーマットを実行
 vim.api.nvim_set_keymap(
