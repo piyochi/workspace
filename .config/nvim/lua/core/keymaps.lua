@@ -1,7 +1,8 @@
--- Tab で補完メニューの移動可能に
-vim.api.nvim_set_keymap('i', '<Tab>', [[pumvisible() ? '<C-n>' : ddc#map#manual_complete()]], {expr = true, noremap = true})
--- Shift + Tab で補完メニューの移動可能に
-vim.api.nvim_set_keymap('i', '<S-Tab>', [[pumvisible() ? '<C-p>' : '<C-h>']], {expr = true, noremap = true})
+-- Tab で補完メニュー進む
+-- 普通のtabが効かなくなるのでS-Tabのみにした 矢印キーで補完メニューを操作する
+vim.api.nvim_set_keymap('i', '<S-Tab>', [[pumvisible() ? '<C-n>' : ddc#map#manual_complete()]], {expr = true, noremap = true})
+-- Shift + Tab で補完メニュー戻る
+--vim.api.nvim_set_keymap('i', '<S-Tab>', [[pumvisible() ? '<C-p>' : '<C-h>']], {expr = true, noremap = true})
 
 -- EasyAlign をビジュアルモードで起動
 vim.api.nvim_set_keymap('v', '<CR>', '<Plug>(EasyAlign)', { noremap = false, silent = true })
