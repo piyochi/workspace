@@ -62,3 +62,4 @@ vim.api.nvim_set_keymap(
   "<cmd>lua vim.diagnostic.setloclist()<CR>",
   { noremap = true, silent = true }
 )
+

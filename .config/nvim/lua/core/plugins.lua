@@ -124,6 +124,21 @@ return require('packer').startup(function(use)
   }
   use 'prettier/eslint-plugin-prettier'
 
+  -- GitHub Copilotのチャット機能
+  use {
+    "CopilotC-Nvim/CopilotChat.nvim",
+    branch = "canary",
+    dependencies = {
+      { "github/copilot.vim" }, -- or zbirenbaum/copilot.lua
+      { "nvim-lua/plenary.nvim" }, -- for curl, log wrapper
+    },
+    build = "make tiktoken", -- Only on MacOS or Linux
+    opts = {
+      -- See Configuration section for options
+    },
+    -- See Commands section for default commands if you want to lazy load on them
+  }
+
   -- 初回インストール
   if packer_bootstrap then
     require('packer').sync()
