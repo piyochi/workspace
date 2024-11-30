@@ -37,6 +37,11 @@ require("CopilotChat").setup({
             mapping = '<leader>ct',
             description = "テストコード作成をお願いする",
         },
+        GitDiffTests = {
+            prompt = "/COPILOT_TESTS 選択したgitの差分からファイル毎に詳細な変更分のユニットテストを書いてください。説明は日本語でお願いします。describeは関数名・メソッド名でそれ以外のitやcontextなどは日本語でお願いします。",
+            mapping = '<leader>cy',
+            description = "Git差分からテストコード作成をお願いする",
+        },
         FixDiagnostic = {
             prompt = 'コードの診断結果に従って問題を修正してください。修正内容の説明は日本語でお願いします。',
             mapping = '<leader>cd',
