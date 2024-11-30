@@ -59,6 +59,6 @@ end, { nargs = "*" })
 vim.g.indentLine_color_gui = "#999999"
 
 -- 上部タブ名にファイル名のみを表示
-require('plugins.custom_tabline')
-vim.o.tabline = "%!v:lua.require'plugins.custom_tabline'.my_tabline()"
+require('plugins.custom-tabline')
+vim.o.tabline = "%!v:lua.require'plugins.custom-tabline'.my_tabline()"
 

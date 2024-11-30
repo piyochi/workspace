@@ -1,131 +1,154 @@
--- packer.nvimを自動インストール
-local ensure_packer = function()
-  local fn = vim.fn
-  local install_path = fn.stdpath('data')..'/site/pack/packer/start/packer.nvim'
-  if fn.empty(fn.glob(install_path)) > 0 then
-    fn.system({'git', 'clone', '--depth', '1', 'https://github.com/wbthomason/packer.nvim', install_path})
-    vim.cmd [[packadd packer.nvim]]
-    return true
-  end
-  return false
+-- lazy.nvimを自動インストール
+local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
+if not vim.loop.fs_stat(lazypath) then
+  vim.fn.system({
+    "git",
+    "clone",
+    "--filter=blob:none",
+    "https://github.com/folke/lazy.nvim.git",
+    "--branch=stable", -- 最新安定版
+    lazypath,
+  })
 end
-local packer_bootstrap = ensure_packer()
+vim.opt.rtp:prepend(lazypath)
 
--- packerの初期設定
-return require('packer').startup(function(use)
-  use 'wbthomason/packer.nvim' -- Packer自身を管理
-  use 'nvim-lua/plenary.nvim'  -- 必須の依存プラグイン
+-- lazy.nvimの初期設定
+require("lazy").setup({
+  -- 必須の依存プラグイン
+  { "nvim-lua/plenary.nvim" },
 
   -- 検索結果を操作するためのプラグイン
-  use 'vim-scripts/grep.vim'
+  { "vim-scripts/grep.vim", cmd = { "Grep" }},
 
   -- Rails アプリ開発をサポート
-  use 'tpope/vim-rails'
+  { "tpope/vim-rails", event = { "CmdlineEnter" }},
 
   -- ファイルツリー表示と操作
-  use 'lambdalisue/fern.vim'
-  use 'LumaKernel/fern-mapping-fzf.vim' -- Fern に FZF のマッピングを追加
+  { "lambdalisue/fern.vim", cmd = { "Fern" }},
 
   -- 汎用的な検索と操作用コマンド
-  -- use {'mhinz/vim-grepper', opt = true, cmd = {'Grepper', '<plug>(GrepperOperator)', 'GrepperGit'}}
-  use {
-    'mhinz/vim-grepper',
-    opt = true,
-    cmd = {'Grepper', '<plug>(GrepperOperator)', 'GrepperGit'},
-    setup = function()
-      vim.cmd [[
-      command! -nargs=* GrepperGit lua require('packer').loader('vim-grepper') | exe 'GrepperGit ' . <q-args>
-      ]]
+  {
+    "mhinz/vim-grepper",
+    lazy = true,
+    cmd = { "Grepper", "GrepperGit", "GrepperGrep" },
+    init = function()
+      vim.api.nvim_create_user_command("GrepperGit", function(args)
+        require("lazy").load({ plugins = { "vim-grepper" } })
+        vim.cmd("GrepperGit " .. args.args)
+      end, { nargs = "*" })
     end,
-  }
-
-  -- タグ（関数やクラス）を表示
-  use 'majutsushi/tagbar'
+  },
 
   -- Denops を使用したプラグイン補完システム
-  use 'Shougo/ddc.vim'
-  use 'vim-denops/denops.vim'
-  use 'Shougo/ddc-ui-native'
-  use 'Shougo/ddc-source-around'
-  use 'Shougo/ddc-filter-matcher_head'
-  use 'Shougo/ddc-filter-sorter_rank'
-  use 'LumaKernel/ddc-source-file'
+  {
+    "Shougo/ddc.vim",
+    dependencies = {
+      "vim-denops/denops.vim",             -- Denops の依存プラグイン
+      "Shougo/ddc-source-around",         -- `around` ソース
+      "Shougo/ddc-ui-native",             -- UI の設定
+      "Shougo/ddc-filter-matcher_head",   -- 補完のマッチャー
+      "Shougo/ddc-filter-sorter_rank",    -- 補完結果のソート
+      "LumaKernel/ddc-source-file",       -- ファイル補完ソース
+    },
+    lazy = false, -- 起動時にロード
+    config = function()
+      vim.fn["ddc#custom#patch_global"]({
+        sources = { "around", "file" }, -- 使用するソース
+        sourceOptions = {
+          _ = {
+            matchers = { "matcher_head" },
+            sorters = { "sorter_rank" },
+          },
+        },
+      })
+      -- ddc.vim の有効化
+      vim.cmd([[call ddc#enable()]])
+    end,
+  },
 
   -- 簡単な文字列揃え
-  use 'junegunn/vim-easy-align'
+  { "junegunn/vim-easy-align", cmd = { "EasyAlign" }},
 
-  -- Node.js 開発のサポート gfでrequreやimportをジャンプ
-  use 'moll/vim-node'
+  -- Node.js 開発のサポート gfでrequireやimportをジャンプ
+  { "moll/vim-node", lazy = false},
 
   -- JavaScript 開発のサポート
-  use 'pangloss/vim-javascript'
-  use 'jelera/vim-javascript-syntax'
+  { "pangloss/vim-javascript", lazy = false},
+  { "jelera/vim-javascript-syntax", lazy = false},
 
   -- HTML5 の補完や構文サポート
-  use 'othree/html5.vim'
+  { "othree/html5.vim", lazy = false},
 
-  -- タグリストの操作
-  use 'vim-scripts/taglist.vim'
+  -- タグリストの操作 F8
+  { "majutsushi/tagbar", lazy = false },
 
   -- インデントガイドを表示
-  use 'Yggdroot/indentLine'
-
-  -- Rails アプリのユナイトインターフェース
-  use 'basyura/unite-rails'
+  { "Yggdroot/indentLine", lazy = false },
 
   -- コメントアウト操作を簡単に
   -- gcc でコメントと解除を切り替え
-  use 'tomtom/tcomment_vim'
+  { "tomtom/tcomment_vim" },
 
   -- 高速検索とファイル操作
-  use {'junegunn/fzf', run = './install --all'} -- FZF コマンドラインツール
-  use 'junegunn/fzf.vim' -- FZF の Vim インターフェース
+  { "junegunn/fzf", build = "./install --all", lazy = false }, -- FZF コマンドラインツール
+  { "junegunn/fzf.vim", event = { "CmdlineEnter" }}, -- FZF の Vim インターフェース
 
   -- Telescope フレームワーク
-  use 'nvim-telescope/telescope.nvim'
+  { "nvim-telescope/telescope.nvim" },
 
   -- Git 差分表示 編集行の左側に表示
-  use 'airblade/vim-gitgutter'
+  { "airblade/vim-gitgutter", lazy = false },
 
   -- Git 操作を統合 :Git blame :Git diff :Git log
-  use 'tpope/vim-fugitive'
+  { "tpope/vim-fugitive", lazy = false },
 
   -- コード構文解析とハイライト強化
+  { "nvim-treesitter/nvim-treesitter", build = ":TSUpdate" },
+  { "nvim-treesitter/nvim-treesitter-context" }, -- 関数名やクラス名を画面上部に表示
+
   -- gf: ファイルを開く gd: 定義にジャンプ gr: 参照を表示 K: ドキュメントを表示
-  use 'neovim/nvim-lspconfig'
-  use {'nvim-treesitter/nvim-treesitter', run = ':TSUpdate'}
-  use 'nvim-treesitter/nvim-treesitter-context' -- 関数名やクラス名を画面上部に表示
-  -- TypeScript 用の LSP サーバー 事前にnpm install -g typescript-language-server
-  require('lspconfig').ts_ls.setup {
-    on_attach = function(client, bufnr)
-      vim.keymap.set('n', 'gd', vim.lsp.buf.definition, { buffer = bufnr })
-      vim.keymap.set('n', 'gr', vim.lsp.buf.references, { buffer = bufnr })
-      vim.keymap.set('n', 'K', vim.lsp.buf.hover, {})
+  {
+    "neovim/nvim-lspconfig",
+    lazy = false,
+    config = function()
+      local lspconfig = require("lspconfig")
+
+      -- TypeScript 用の LSP サーバー 事前にnpm install -g typescript-language-server
+      lspconfig.ts_ls.setup {
+        on_attach = function(client, bufnr)
+          vim.keymap.set("n", "gd", vim.lsp.buf.definition, { buffer = bufnr })
+          vim.keymap.set("n", "gr", vim.lsp.buf.references, { buffer = bufnr })
+          vim.keymap.set("n", "K", vim.lsp.buf.hover, {})
+        end,
+      }
+      -- Ruby 用の LSP サーバー 事前にgem install solargraph
+      lspconfig.solargraph.setup {
+        on_attach = function(client, bufnr)
+          vim.keymap.set("n", "gd", vim.lsp.buf.definition, { buffer = bufnr })
+          vim.keymap.set("n", "gr", vim.lsp.buf.references, { buffer = bufnr })
+          vim.keymap.set("n", "K", vim.lsp.buf.hover, {})
+        end,
+      }
     end,
-  }
-  -- Ruby 用の LSP サーバー 事前にgem install solargraph
-  require('lspconfig').solargraph.setup {}
+  },
 
   -- ctrl + j or k 縦移動 現在位置から縦に次の文字がある場所へ移動する
-  use 'haya14busa/vim-edgemotion'
+  { "haya14busa/vim-edgemotion", lazy = false },
 
   -- TypeScript 開発のサポート
-  use 'leafgarland/typescript-vim'
-  use 'peitalin/vim-jsx-typescript'
-
-  -- デバッグツールと VSCode 用デバッグアダプター
-  -- 実際に開発始まってから考える
-  -- use { "mxsdev/nvim-dap-vscode-js", requires = {"mfussenegger/nvim-dap"} }
+  -- { "leafgarland/typescript-vim"}, -- 構文ハイライトだがなくても変わらなかったためコメントアウト
+  -- { "peitalin/vim-jsx-typescript" }, -- 構文ハイライトだがなくても変わらなかったためコメントアウト
 
   -- ファイル保存時にeslintとprettierを自動実行
-  use {
+  {
     "nvimtools/none-ls.nvim",
-    requires = {"nvim-lua/plenary.nvim", "nvimtools/none-ls-extras.nvim"}
-  }
-  use 'prettier/eslint-plugin-prettier'
+    lazy = false,
+    dependencies = { "nvim-lua/plenary.nvim", "nvimtools/none-ls-extras.nvim" },
+  },
+  { "prettier/eslint-plugin-prettier", lazy = false },
 
   -- GitHub Copilotのチャット機能
-  use {
+  {
     "CopilotC-Nvim/CopilotChat.nvim",
     branch = "canary",
     dependencies = {
@@ -133,14 +156,11 @@ return require('packer').startup(function(use)
       { "nvim-lua/plenary.nvim" }, -- for curl, log wrapper
     },
     build = "make tiktoken", -- Only on MacOS or Linux
-    opts = {
-      -- See Configuration section for options
-    },
-    -- See Commands section for default commands if you want to lazy load on them
-  }
+  },
+}, {
+  -- 全プラグインを遅延ロード
+  defaults = {
+    lazy = true,
+  },
+})
 
-  -- 初回インストール
-  if packer_bootstrap then
-    require('packer').sync()
-  end
-end)

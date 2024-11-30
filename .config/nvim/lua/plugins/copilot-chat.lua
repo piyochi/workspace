@@ -33,7 +33,7 @@ require("CopilotChat").setup({
             description = "コードのドキュメント作成をお願いする",
         },
         Tests = {
-            prompt = "/COPILOT_TESTS 選択したコードの詳細なユニットテストを書いてください。説明は日本語でお願いします。",
+            prompt = "/COPILOT_TESTS 選択したコードの詳細なユニットテストを書いてください。説明は日本語でお願いします。describeは関数名・メソッド名でそれ以外のitやcontextなどは日本語でお願いします。",
             mapping = '<leader>ct',
             description = "テストコード作成をお願いする",
         },

@@ -1,14 +1,10 @@
 require('core.plugins')
-vim.api.nvim_create_autocmd("BufWritePost", {
-  pattern = { "plugins.lua" },
-  command = "PackerCompile",
-})
 -- require('utils.functions')
 require('core.settings')
 
 require('plugins.fern')
 require('plugins.ddc')
-require('plugins.taglist')
+require('plugins.tagbar')
 require('plugins.fzf')
 require('plugins.telescope')
 require('plugins.vim-gitgutter')
@@ -18,14 +14,3 @@ require('plugins.copilot-chat')
 require('plugins.none-ls')
 
 require('core.keymaps')
-
--- ~/.vimrc を読み込む
--- vim.cmd([[
---   source ~/.vimrc
--- ]])
---
--- vim.cmd([[
---   set runtimepath^=~/.vim
---   set runtimepath+=~/.vim/after
---   let &packpath = &runtimepath
--- ]])
