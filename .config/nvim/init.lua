@@ -12,5 +12,6 @@ require('plugins.github-copilot')
 require('plugins.copilot-chat')
 -- require('plugins.nvim-dap')
 require('plugins.none-ls')
+require('plugins.avante')
 
 require('core.keymaps')
