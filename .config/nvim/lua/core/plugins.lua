@@ -157,6 +157,82 @@ require("lazy").setup({
     },
     build = "make tiktoken", -- Only on MacOS or Linux
   },
+
+  -- \u で変更履歴を表示
+  {
+    "jiaoshijie/undotree",
+    dependencies = "nvim-lua/plenary.nvim",
+    config = function()
+      require("undotree").setup({
+        window = {
+          winblend = 10, -- ウィンドウの透明度を調整
+        },
+      })
+    end,
+    keys = {
+      { "<leader>u", "<cmd>lua require('undotree').toggle()<cr>" },
+    },
+  },
+
+  -- AI IDE \at でAI用のプロンプトを表示
+  -- cargo を使えるようにしておく
+  --   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  {
+    "yetone/avante.nvim",
+    event = "VeryLazy",
+    lazy = false,
+    version = false, -- set this if you want to always pull the latest change
+    opts = {
+      providers = {
+        {
+          name = 'gemini',
+          api_key = vim.env.GEMINI_API_KEY,
+        },
+        -- {
+        --   name = 'openai',
+        --   api_key = vim.env.OPENAI_API_KEY,
+        -- },
+      },
+      provider = 'gemini',
+    },
+    -- if you want to build from source then do `make BUILD_FROM_SOURCE=true`
+    build = "make",
+    -- build = "powershell -ExecutionPolicy Bypass -File Build.ps1 -BuildFromSource false" -- for windows
+    dependencies = {
+      "nvim-treesitter/nvim-treesitter",
+      "stevearc/dressing.nvim",
+      "nvim-lua/plenary.nvim",
+      "MunifTanjim/nui.nvim",
+      --- The below dependencies are optional,
+      "nvim-tree/nvim-web-devicons", -- or echasnovski/mini.icons
+      "zbirenbaum/copilot.lua", -- for providers='copilot'
+      {
+        -- support for image pasting
+        "HakonHarnes/img-clip.nvim",
+        event = "VeryLazy",
+        opts = {
+          -- recommended settings
+          default = {
+            embed_image_as_base64 = false,
+            prompt_for_file_name = false,
+            drag_and_drop = {
+              insert_mode = true,
+            },
+            -- required for Windows users
+            use_absolute_path = true,
+          },
+        },
+      },
+      {
+        -- Make sure to set this up properly if you have lazy=true
+        'MeanderingProgrammer/render-markdown.nvim',
+        opts = {
+          file_types = { "markdown", "Avante" },
+        },
+        ft = { "markdown", "Avante" },
+      },
+    },
+  },
 }, {
   -- 全プラグインを遅延ロード
   defaults = {
