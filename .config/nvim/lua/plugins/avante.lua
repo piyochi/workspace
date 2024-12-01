@@ -86,7 +86,7 @@ local function create_floating_window()
   local buf = vim.api.nvim_create_buf(false, true) -- 新しいバッファを作成
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "editor",
-    width = 50,
+    width = 60,
     height = #commands, -- リストの行数に合わせて高さを設定
     row = math.floor((vim.o.lines - #commands) / 2),
     col = math.floor((vim.o.columns - 50) / 2),
