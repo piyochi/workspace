@@ -70,7 +70,7 @@ vim.api.nvim_create_user_command("AvanteGitDiffTests", function(opts)
 end, { range = true })
 
 -- 上記のコマンドを選択するためのフローティングウィンドウを作成
-local function create_floating_window()
+local function create_floating_window(mode)
   -- コマンドのリスト
   local commands = {
     { name = "AvanteTests", description = "テスト自動生成" },
@@ -139,7 +139,7 @@ local function create_floating_window()
 
     -- ビジュアルモードの選択範囲を取得
     local selection = get_visual_selection()
-    if selection then
+    if selection and mode == "visual" then
       vim.cmd(string.format(":'<,'> %s", cmd.name))
     else
       vim.cmd(cmd.name)
@@ -168,10 +168,19 @@ local function create_floating_window()
     vim.api.nvim_win_close(win, true)
   end, { buffer = buf, noremap = true, silent = true })
 end
-vim.api.nvim_create_user_command("AvanteCommandPicker", function()
-  create_floating_window()
-end, { range = true })
+-- vim.api.nvim_create_user_command("AvanteCommandPicker", function(opts)
+--   create_floating_window(mode)
+-- end, { range = true })
+vim.api.nvim_create_user_command("AvanteCommandPicker", function(opts)
+  local mode = opts.args -- 引数を取得
+  create_floating_window(mode)
+end, {
+  nargs = 1, -- 引数を1つ受け取る
+  complete = function() -- 補完を提供
+    return { "normal", "visual" }
+  end,
+})
 
 -- AvanteCommandPicker キーバインド設定
-vim.keymap.set("n", "<leader>aw", ":AvanteCommandPicker<CR>", { noremap = true, silent = true, desc = "Pick a command for Avante.nvim" })
-vim.keymap.set("v", "<leader>aw", ":<C-u>AvanteCommandPicker<CR>", { noremap = true, silent = true, desc = "Pick a command for Avante.nvim" })
+vim.keymap.set("n", "<leader>aw", ":AvanteCommandPicker normal<CR>", { noremap = true, silent = true, desc = "Pick a command for Avante.nvim" })
+vim.keymap.set("v", "<leader>aw", ":<C-u>AvanteCommandPicker visual<CR>", { noremap = true, silent = true, desc = "Pick a command for Avante.nvim" })
