@@ -62,3 +62,17 @@ vim.g.indentLine_color_gui = "#999999"
 require('plugins.custom-tabline')
 vim.o.tabline = "%!v:lua.require'plugins.custom-tabline'.my_tabline()"
 
+-- neovim/nvim-lspconfigのソースコードチェックで以下の警告を無視する
+-- 基本的にソースコードのチェックはnone-lsを使うためlspconfigでしか出ない警告は無視する
+--   'json' is deprecated.
+vim.lsp.handlers["textDocument/publishDiagnostics"] = function(_, result, ctx, config)
+  if not result.diagnostics then return end
+
+  -- 'json' is deprecated. のメッセージを除外
+  result.diagnostics = vim.tbl_filter(function(diagnostic)
+    return diagnostic.message ~= "'json' is deprecated."
+  end, result.diagnostics)
+
+  vim.lsp.diagnostic.on_publish_diagnostics(_, result, ctx, config)
+end
+
