@@ -74,6 +74,7 @@ vim.lsp.handlers["textDocument/publishDiagnostics"] = function(_, result, ctx, c
     " implicitly has an 'any' type.", -- Parameter 'e' implicitly has an 'any' type.
     " does not exist on type ", -- Property 'users' does not exist on type '{}'.
     " is not assignable to parameter of type 'ActionFunctionArgs'.",
+    "Object literal may only specify known properties, and ",
   }
 
   -- メッセージが除外リストに含まれているかをチェック
