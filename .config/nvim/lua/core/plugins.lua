@@ -165,7 +165,7 @@ require("lazy").setup({
     config = function()
       require("undotree").setup({
         window = {
-          winblend = 10, -- ウィンドウの透明度を調整
+          winblend = 0, -- ウィンドウの透明度を調整
         },
       })
     end,
