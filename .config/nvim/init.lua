@@ -13,5 +13,6 @@ require('plugins.copilot-chat')
 -- require('plugins.nvim-dap')
 require('plugins.none-ls')
 require('plugins.avante')
+require('plugins.tcomment')
 
 require('core.keymaps')

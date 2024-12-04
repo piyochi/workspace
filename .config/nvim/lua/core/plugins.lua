@@ -87,7 +87,7 @@ require("lazy").setup({
 
   -- コメントアウト操作を簡単に
   -- gcc でコメントと解除を切り替え
-  { "tomtom/tcomment_vim" },
+  { "tomtom/tcomment_vim", lazy = false },
 
   -- 高速検索とファイル操作
   { "junegunn/fzf", build = "./install --all", lazy = false }, -- FZF コマンドラインツール
