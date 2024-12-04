@@ -64,13 +64,27 @@ vim.o.tabline = "%!v:lua.require'plugins.custom-tabline'.my_tabline()"
 
 -- neovim/nvim-lspconfigのソースコードチェックで以下の警告を無視する
 -- 基本的にソースコードのチェックはnone-lsを使うためlspconfigでしか出ない警告は無視する
---   'json' is deprecated.
 vim.lsp.handlers["textDocument/publishDiagnostics"] = function(_, result, ctx, config)
   if not result.diagnostics then return end
 
-  -- 'json' is deprecated. のメッセージを除外
+  -- 除外するメッセージを配列として定義
+  local exclude_messages = {
+    "'json' is deprecated.",
+    "Cannot find name 'JsonifyObject'.",
+    " implicitly has an 'any' type.", -- Parameter 'e' implicitly has an 'any' type.
+    " does not exist on type ", -- Property 'users' does not exist on type '{}'.
+    " is not assignable to parameter of type 'ActionFunctionArgs'.",
+  }
+
+  -- メッセージが除外リストに含まれているかをチェック
   result.diagnostics = vim.tbl_filter(function(diagnostic)
-    return diagnostic.message ~= "'json' is deprecated."
+    for _, msg in ipairs(exclude_messages) do
+      -- if diagnostic.message == msg then 完全一致ならこっち
+      if string.find(diagnostic.message, msg, 1, true) then
+        return false -- 除外リストに含まれている場合は除外
+      end
+    end
+    return true -- 含まれていなければ診断を保持
   end, result.diagnostics)
 
   vim.lsp.diagnostic.on_publish_diagnostics(_, result, ctx, config)
