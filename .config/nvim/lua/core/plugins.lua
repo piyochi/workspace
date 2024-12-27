@@ -183,8 +183,8 @@ require("lazy").setup({
     lazy = false,
     version = false, -- set this if you want to always pull the latest change
     opts = {
-      -- provider = 'openai',
-      provider = 'gemini',
+      provider = 'openai',
+      -- provider = 'gemini',
       openai = {
         model = "gpt-4o-mini",
         temperature = 0.7,

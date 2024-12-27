@@ -35,6 +35,9 @@ vim.api.nvim_set_keymap('n', '<C-k>', '<Plug>(edgemotion-k)', { noremap = true, 
 vim.api.nvim_set_keymap('v', '<C-j>', '<Plug>(edgemotion-j)', { noremap = true, silent = true })
 vim.api.nvim_set_keymap('v', '<C-k>', '<Plug>(edgemotion-k)', { noremap = true, silent = true })
 
+-- gf: ファイルを開く gd: 定義にジャンプ gr: 参照を表示 から元の画面に戻る
+vim.api.nvim_set_keymap("n", "gn", ":bnext<CR>", { noremap = true, silent = true })
+
 -- \lfでeslint,prettierの自動修正を実行
 vim.api.nvim_set_keymap(
   "n",
