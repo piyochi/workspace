@@ -5,6 +5,8 @@ vim.api.nvim_set_keymap("n", "<Leader>ca", ":CopilotChatReset<CR>", { noremap = 
 vim.api.nvim_set_keymap("n", "<Leader>cg", ":CopilotChatToggle<CR>", { noremap = true, silent = true })
 
 require("CopilotChat").setup({
+    -- :CopilotChatModelsでモデルを切り替えることができます。
+    model = "o3-mini",
     show_help = "yes",
     prompts = {
         Explain = {
