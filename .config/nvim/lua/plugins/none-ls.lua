@@ -25,8 +25,8 @@ null_ls.setup({
       args = {
         "--disable-pending-cops", -- 修正済みオプション
         "--auto-correct",         -- 自動修正
-        "--stdin", "$FILENAME",   -- ファイル内容を標準入力から渡す
-        "--format", "json",       -- null-ls 用に JSON 形式で出力
+        "--format", "files",
+        "$FILENAME"
       },
     }),
   },
