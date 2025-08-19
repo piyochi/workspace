@@ -7,6 +7,7 @@ vim.api.nvim_set_keymap("n", "<Leader>cg", ":CopilotChatToggle<CR>", { noremap =
 require("CopilotChat").setup({
     -- :CopilotChatModelsでモデルを切り替えることができます。
     model = "claude-sonnet-4",
+    -- model = "GPT-5",
     show_help = "yes",
     prompts = {
         Explain = {

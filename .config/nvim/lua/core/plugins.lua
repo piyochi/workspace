@@ -182,40 +182,40 @@ require("lazy").setup({
     event = "VeryLazy",
     lazy = false,
     version = false, -- set this if you want to always pull the latest change
-    opts = {
-      provider = 'openai',
-      -- provider = 'gemini',
-      openai = {
-        model = "gpt-4o-mini",
-        temperature = 0.7,
-        max_tokens = 4096,
-      },
-      gemini = {
-        model = "gemini-1.5-flash-latest",
-        temperature = 0.7,
-        max_tokens = 4096,
-      },
-      behaviour = {
-        auto_suggestions = true,
-        auto_set_highlight_group = true,
-        auto_set_keymaps = true,
-        auto_apply_diff_after_generation = true,
-        support_paste_from_clipboard = true,
-      },
-      windows = {
-        position = "right",
-        width = 30,
-        sidebar_header = {
-          align = "center",
-          rounded = false,
-        },
-        ask = {
-          floating = true,
-          start_insert = true,
-          border = "rounded"
-        }
-      },
-    },
+    -- opts = {
+    --   provider = 'openai',
+    --   -- provider = 'gemini',
+    --   openai = {
+    --     model = "gpt-4o-mini",
+    --     temperature = 0.7,
+    --     max_tokens = 4096,
+    --   },
+    --   gemini = {
+    --     model = "gemini-1.5-flash-latest",
+    --     temperature = 0.7,
+    --     max_tokens = 4096,
+    --   },
+    --   behaviour = {
+    --     auto_suggestions = true,
+    --     auto_set_highlight_group = true,
+    --     auto_set_keymaps = true,
+    --     auto_apply_diff_after_generation = true,
+    --     support_paste_from_clipboard = true,
+    --   },
+    --   windows = {
+    --     position = "right",
+    --     width = 30,
+    --     sidebar_header = {
+    --       align = "center",
+    --       rounded = false,
+    --     },
+    --     ask = {
+    --       floating = true,
+    --       start_insert = true,
+    --       border = "rounded"
+    --     }
+    --   },
+    -- },
     -- if you want to build from source then do `make BUILD_FROM_SOURCE=true`
     build = "make",
     -- build = "powershell -ExecutionPolicy Bypass -File Build.ps1 -BuildFromSource false" -- for windows
