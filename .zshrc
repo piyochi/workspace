@@ -218,3 +218,5 @@ eval "$(gh completion -s zsh)"
 # chmod 0755 pdftk-all.jar
 # alias pdftk="java -jar $HOME/.local/bin/pdftk-all.jar"
 
+# 30日毎に更新 https://github.com/settings/personal-access-tokens/8499028
+export GITHUB_MCP_PAT=xxxxxx
