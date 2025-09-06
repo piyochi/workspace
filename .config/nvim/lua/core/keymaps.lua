@@ -39,12 +39,16 @@ vim.api.nvim_set_keymap('v', '<C-k>', '<Plug>(edgemotion-k)', { noremap = true, 
 vim.api.nvim_set_keymap("n", "gn", ":bnext<CR>", { noremap = true, silent = true })
 
 -- \lfでeslint,prettierの自動修正を実行
-vim.api.nvim_set_keymap(
-  "n",
-  "<leader>lf",
-  "<cmd>lua vim.lsp.buf.format()<CR>",
-  { noremap = true, silent = true }
-)
+-- vim.api.nvim_set_keymap(
+--   "n",
+--   "<leader>lf",
+--   "<cmd>lua vim.lsp.buf.format()<CR>",
+--   { noremap = true, silent = true }
+-- )
+vim.keymap.set("n", "<leader>lf", function()
+  require("utils.format").smart_format()
+end, { noremap = true, silent = true })
+
 -- \ltでnone-lsのエラー表示を切り替える
 vim.api.nvim_set_keymap(
   "n",

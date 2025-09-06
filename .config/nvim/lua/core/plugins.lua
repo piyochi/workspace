@@ -113,9 +113,18 @@ require("lazy").setup({
     config = function()
       local lspconfig = require("lspconfig")
 
+      -- 共通 on_attach: tsserver/solargraph のみフォーマットを無効化
+      local function on_attach_common(client, bufnr)
+        if client.name == "tsserver" or client.name == "solargraph" then
+          client.server_capabilities.documentFormattingProvider = false
+          client.server_capabilities.documentRangeFormattingProvider = false
+        end
+      end
+
       -- TypeScript 用の LSP サーバー 事前にnpm install -g typescript-language-server
       lspconfig.ts_ls.setup {
         on_attach = function(client, bufnr)
+          on_attach_common(client, bufnr)
           vim.keymap.set("n", "gd", vim.lsp.buf.definition, { buffer = bufnr })
           vim.keymap.set("n", "gr", vim.lsp.buf.references, { buffer = bufnr })
           vim.keymap.set("n", "K", vim.lsp.buf.hover, {})
@@ -124,6 +133,7 @@ require("lazy").setup({
       -- Ruby 用の LSP サーバー 事前にgem install solargraph
       lspconfig.solargraph.setup {
         on_attach = function(client, bufnr)
+          on_attach_common(client, bufnr)
           vim.keymap.set("n", "gd", vim.lsp.buf.definition, { buffer = bufnr })
           vim.keymap.set("n", "gr", vim.lsp.buf.references, { buffer = bufnr })
           vim.keymap.set("n", "K", vim.lsp.buf.hover, {})

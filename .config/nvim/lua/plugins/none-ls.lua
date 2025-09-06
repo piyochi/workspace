@@ -22,13 +22,18 @@ null_ls.setup({
     -- RuboCop のフォーマッター設定
     null_ls.builtins.formatting.rubocop.with({
       command = "rubocop",
-      args = {
-        "--disable-pending-cops", -- 修正済みオプション
-        "--auto-correct",         -- 自動修正
-        "--format", "files",
-        "$FILENAME"
-      },
+      args = { "--stdin", "$FILENAME", "--auto-correct", "--stderr" }, -- stdin 方式
+      -- prefer_local = "bin", -- bundler 環境なら推奨
     }),
+    -- null_ls.builtins.formatting.rubocop.with({
+    --   command = "rubocop",
+    --   args = {
+    --     "--disable-pending-cops", -- 修正済みオプション
+    --     "--auto-correct",         -- 自動修正
+    --     "--format", "files",
+    --     "$FILENAME"
+    --   },
+    -- }),
   },
 })
 
