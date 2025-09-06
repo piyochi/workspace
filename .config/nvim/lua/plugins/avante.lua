@@ -184,3 +184,41 @@ end, {
 -- AvanteCommandPicker キーバインド設定
 vim.keymap.set("n", "<leader>aw", ":AvanteCommandPicker normal<CR>", { noremap = true, silent = true, desc = "Pick a command for Avante.nvim" })
 vim.keymap.set("v", "<leader>aw", ":<C-u>AvanteCommandPicker visual<CR>", { noremap = true, silent = true, desc = "Pick a command for Avante.nvim" })
+
+-- Avante chat keymaps: \ac / \an / \as
+do
+  local function map(mode, lhs, rhs, desc)
+    vim.keymap.set(mode, lhs, rhs, { noremap = true, silent = true, desc = desc })
+  end
+
+  -- 新規チャット ポップアップ
+  map("n", "<leader>an", "<Cmd>AvanteChatNew<CR>", "Avante: New Chat")
+end
+
+-- --- Avante: <Tab> で画面移動しないようにする -------------------------------
+-- Avante の Ask/Chat ウィンドウでプラグインが付ける <Tab> マップを削除。
+-- これで nvim-cmp の <Tab> 確定や通常のタブ挿入が効くようになる。
+do
+  local aug = vim.api.nvim_create_augroup("my_avante_unmap_tab", { clear = true })
+  vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter", "FileType" }, {
+    group = aug,
+    callback = function(ev)
+      -- Avante のバッファをゆるく判定（環境差に強い）
+      local ft = vim.bo[ev.buf].filetype or ""
+      local name = vim.api.nvim_buf_get_name(ev.buf) or ""
+      local is_avante =
+        ft:match("^avante") or
+        name:match("Avante") or
+        name:match("Ask") or
+        vim.bo[ev.buf].buftype == "nofile"
+
+      if not is_avante then return end
+
+      -- <Tab> を奪っているローカルマップを消す（あってもなくても OK）
+      pcall(vim.keymap.del, "i", "<Tab>", { buffer = ev.buf })
+      pcall(vim.keymap.del, "n", "<Tab>", { buffer = ev.buf })
+      pcall(vim.keymap.del, "v", "<Tab>", { buffer = ev.buf })
+      -- これでウィンドウ移動はデフォの <C-w> 系のみになります
+    end,
+  })
+end

@@ -192,6 +192,56 @@ require("lazy").setup({
     event = "VeryLazy",
     lazy = false,
     version = false, -- set this if you want to always pull the latest change
+    opts = function()
+      -- Copilot を使う前提（OpenAI等にしたい場合は provider を変更）
+      local mcp = require("mcphub")
+      return {
+        provider = "copilot",
+        providers = {
+          copilot = {
+            model = "claude-sonnet-4",   -- 3.7/3.5 を使うならここを変更
+            -- 他に必要な項目があればここへ
+          },
+          -- openai = { model = "gpt-4o-mini", ... },
+          -- gemini = { model = "gemini-1.5-flash-latest", ... },
+        },
+        -- ★ MCP の“System Prompt”を Avante に注入（有効サーバの定義を下敷きに）
+        system_prompt = function()
+          local hub = mcp.get_hub_instance()
+          return hub and hub:get_active_servers_prompt() or ""
+        end,
+        -- ★ MCP ツールを Avante の Tools に1本差し込む
+        custom_tools = function()
+          local ok, ext = pcall(require, "mcphub.extensions.avante")
+          return ok and { ext.mcp_tool() } or {}
+        end,
+        behaviour = {
+          auto_suggestions = true,
+          auto_set_highlight_group = true,
+          auto_set_keymaps = true,
+          auto_apply_diff_after_generation = true,
+          support_paste_from_clipboard = true,
+        },
+        windows = {
+          position = "right",
+          width = 50,
+          wrap = true,
+          sidebar_header = {
+            align = "center",
+            rounded = false,
+          },
+          input = {
+            prefix = "> ",
+            height = 15,
+          },
+          ask = {
+            floating = true,
+            start_insert = true,
+            border = "single",
+          },
+        },
+      }
+    end,
     -- opts = {
     --   provider = 'openai',
     --   -- provider = 'gemini',
@@ -266,6 +316,56 @@ require("lazy").setup({
       --   ft = { "markdown", "Avante" },
       -- },
     },
+  },
+  --- MCP
+  {
+    "ravitemer/mcphub.nvim",
+    dependencies = { "nvim-lua/plenary.nvim" },
+    cmd = { "MCPHub" },
+    build = "npm install -g mcp-hub@latest",
+    event = "VeryLazy",
+    config = function()
+      require("mcphub").setup({
+        -- デフォルトで ~/.config/mcphub/servers.json を読む
+        -- 必要なら env 共有などもここで設定可
+        -- global_env = { "GITHUB_MCP_PAT" },
+        -- まずツール承認ダイアログを省く（UI呼び出しを減らす意味でも有効）
+        auto_approve = true,
+
+        -- ★ ここが本丸：フロートの枠を 1セル幅に固定（エラー回避）
+        ui = {
+          window  = { border = "single" },
+          confirm = { border = "single" },
+          input   = { border = "single" },
+          select  = { border = "single" },
+          preview = { border = "single" },
+        },
+
+        extensions = {
+          avante = {
+            enabled = true,
+            make_slash_commands = true, -- prompts を持つサーバ用（GitHubはtools中心なので出なくても正常）
+          },
+        },
+      })
+    end,
+    -- opts = {
+    --   -- ツール実行の都度の確認ダイアログを省きたい場合は true（UI からも a キーで切替可）
+    --   -- auto_approve = true,
+    --   extensions = {
+    --     avante = {
+    --       enabled = true,
+    --       make_slash_commands = true,  -- /mcp:github:... みたいなスラコマを自動生成
+    --     },
+    --     -- 枠をASCIIに固定（確実に1セル）
+    --     ui = {
+    --       -- 好みで "single" でもOKだが、確実性重視で明示
+    --       border = { "+","-","+","|","+","-","+","|" },   -- tl, t, tr, r, br, b, bl, l
+    --       input  = { border = { "+","-","+","|","+","-","+","|" } },
+    --       select = { border = { "+","-","+","|","+","-","+","|" } },
+    --     },
+    --   },
+    -- },
   },
 }, {
   -- 全プラグインを遅延ロード
