@@ -1,5 +1,15 @@
 -- 共通のプロンプト送信ロジックを関数化
-local function send_prompt(base_prompt, opts)
+local function send_prompt(base_prompt, opts, confirmation_config)
+  -- 確認処理がある場合
+  if confirmation_config then
+    local confirmation_message = confirmation_config.message or "実行してもよろしいですか？"
+    local choice = vim.fn.confirm(confirmation_message, "&Yes\n&No", 2)
+
+    if choice ~= 1 then
+      print("キャンセルされました。")
+      return
+    end
+  end
   local prompt = base_prompt
 
   -- 範囲が指定されている場合、その範囲のテキストを取得
@@ -222,3 +232,67 @@ do
     end,
   })
 end
+
+-- RSpec自動作成コマンド
+-- :GeneratorSpec {args}   例) :GeneratorSpec --last 3   /   :GeneratorSpec --since-branch master
+vim.api.nvim_create_user_command("GeneratorSpec", function(opts)
+  local diff_args = (opts.args ~= "" and opts.args) or "--last 1 --only-app"
+
+  local prompt = string.format([[
+あなたはこのリポの「RSpec自動化コーチ」です。bash ツールと編集ツールを使い、各ステップの結果を要約しながら進めてください。破壊的コマンドは禁止。生成パッチはプレビュー提示（自動適用しない）でお願いします。
+説明はすべて日本語で。以下の前提と方針を厳守してください。
+
+【前提（違反なら即停止・報告）】
+- ai_tooling/avante/check-preconditions.sh を実行し、次を満たすことを確認：
+  1) git が完全クリーン（git status --porcelain が空）
+  2) Rubocop 全体がパス
+  3) RSpec 全体がパス
+  ※ どれかNGなら以降の処理を行わず停止・報告。
+
+【対象】
+- 直前コミット（HEAD^..HEAD）の *.rb（spec/ を除外）。対象が0件なら終了を報告。
+- 変更ファイル一覧の取得は ai_tooling/avante/changed-ruby-files.sh を使用。
+
+【RSpec作成/更新方針（app/配下の型と spec 置き場を厳守）】
+- app/models/**.rb      → spec/models/**_spec.rb        （type: :model）
+- app/controllers/**.rb  → spec/controllers/**_spec.rb   （type: :controller）
+- app/mailers/**.rb      → spec/mailers/**_spec.rb       （type: :mailer）
+- app/services/**.rb     → spec/services/**_spec.rb      （type: :service）
+- app/workers/**.rb      → spec/workers/**_spec.rb       （type: :worker）
+※ 既存の spec がある場合は不足ケースを**追記・修正**（大規模な全面置換は避ける）。
+※ Factory/stub/mock は最小限。アプリ本体（app/**）の修正は原則禁止。必要時は私に相談。
+※ derscribeはメソッド名等のプログラム名称を記載してください。controllerなら'GET #index'という感じに、他のメソッドは'#self.reset_sort_order!'という感じで。
+※ it/context は日本語で記載してください。
+
+【Rubocopの扱い（常にクリーン維持）】
+- spec を編集するたびに Rubocop を spec に対して実行。自動整形で直せるものは直し、残ればテストコード側を修正してパスさせる。
+  - ai_tooling/avante/run-rubocop.sh --fix spec
+
+【実行ループ】
+1) 前提チェック（上記スクリプト）— NGなら即停止
+2) 変更Ruby一覧の取得 → 対象0なら終了
+3) 各ファイルの仕様要約 → 該当 spec を新規作成/追記（上記マッピング & type厳守）
+4) Rubocop（--fix spec）を実行 → なお違反があれば修正して再実行
+5) RSpec 実行：ai_tooling/avante/run-rspec.sh
+6) 失敗があれば失敗内容を要約 → **最小変更**で spec を修正（必要ならFactory/stub追加）→ 4)→5) を繰り返す
+7) すべてグリーンかつ Rubocop 0 で終了。作成/更新した spec の一覧と要点を報告
+
+まず 1) の前提チェックを実行して結果を報告。OKなら 2) に進んでください。
+]], diff_args)
+
+  -- bang（!）が付いていない場合のみ確認処理を追加
+  local confirmation_config = nil
+  if not opts.bang then
+    confirmation_config = {
+      message = "RSpecコーチを実行します。\nこれによりspecファイルの自動作成/修正が行われます。\n実行してもよろしいですか？"
+    }
+  end
+
+  send_prompt(prompt, opts, confirmation_config)
+end, {
+  nargs = "*",
+  bang = true,
+  complete = function()
+    return { "--last", "--vs", "--since-branch", "--range", "--commits", "--only-app" }
+  end,
+})
