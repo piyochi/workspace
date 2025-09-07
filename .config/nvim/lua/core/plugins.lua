@@ -104,7 +104,27 @@ require("lazy").setup({
 
   -- コード構文解析とハイライト強化
   { "nvim-treesitter/nvim-treesitter", build = ":TSUpdate" },
-  { "nvim-treesitter/nvim-treesitter-context" }, -- 関数名やクラス名を画面上部に表示
+  {
+    "nvim-treesitter/nvim-treesitter-context", -- 関数名やクラス名を画面上部に表示
+    build = ":TSUpdate",
+    init = function()
+      local dir = vim.fn.stdpath("data") .. "/parsers"
+      -- 起動直後に runtimepath へ追加（setup より前に）
+      if not string.find(table.concat(vim.opt.runtimepath:get(), ","), dir, 1, true) then
+        vim.opt.runtimepath:append(dir)
+      end
+    end,
+    config = function()
+      local dir = vim.fn.stdpath("data") .. "/parsers"
+      require("nvim-treesitter.configs").setup({
+        parser_install_dir = dir,
+        ensure_installed = { "lua","javascript","python","ruby","go","typescript","tsx","json","html","css","markdown" },
+        highlight = { enable = true },
+        auto_install = false, -- 勝手な再インストールを止める
+        sync_install = false,
+      })
+    end,
+  },
 
   -- gf: ファイルを開く gd: 定義にジャンプ gr: 参照を表示 K: ドキュメントを表示
   {
