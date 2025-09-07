@@ -244,7 +244,7 @@ require("lazy").setup({
         },
         windows = {
           position = "right",
-          width = 50,
+          width = 40,
           wrap = true,
           sidebar_header = {
             align = "center",
