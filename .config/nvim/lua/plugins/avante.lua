@@ -233,9 +233,9 @@ do
   })
 end
 
--- RSpec自動作成コマンド
--- :GeneratorSpec {args}   例) :GeneratorSpec --last 3   /   :GeneratorSpec --since-branch master
-vim.api.nvim_create_user_command("GeneratorSpec", function(opts)
+-- RSpec自動作成コマンド（gitの差分から変更ファイルを特定し、そのファイルに対応するRSpecを自動生成・修正）
+-- :AiGeneratorRSpec {args}   例) :AiGeneratorRSpec --last 3   /   :AiGeneratorRSpec --since-branch master
+vim.api.nvim_create_user_command("AiGeneratorRSpec", function(opts)
   local diff_args = (opts.args ~= "" and opts.args) or "--last 1 --only-app"
 
   local prompt = string.format([[
@@ -284,7 +284,7 @@ vim.api.nvim_create_user_command("GeneratorSpec", function(opts)
   local confirmation_config = nil
   if not opts.bang then
     confirmation_config = {
-      message = "RSpecコーチを実行します。\nこれによりspecファイルの自動作成/修正が行われます。\n実行してもよろしいですか？"
+      message = "RSpec修正を実行します。\nこれによりspecファイルの自動作成/修正が行われます。\n実行してもよろしいですか？"
     }
   end
 
@@ -295,4 +295,89 @@ end, {
   complete = function()
     return { "--last", "--vs", "--since-branch", "--range", "--commits", "--only-app" }
   end,
+})
+
+-- :AiUpdateRSpec {args}
+-- 例) :AiUpdateRSpec           （全体）
+--     :AiUpdateRSpec spec/models/user_spec.rb:42
+--     :AiUpdateRSpec --profile
+vim.api.nvim_create_user_command("AiUpdateRSpec", function(opts)
+  local rspec_args = opts.args or ""
+  local prompt = string.format([[
+あなたはこのリポの「RSpec修復コーチ」です。bash ツールと編集ツールを使い、各ステップの結果を要約しながら進めてください。破壊的コマンドは禁止。生成パッチはプレビュー提示（自動適用しない）でお願いします。
+説明はすべて日本語で。以下の前提と方針を厳守してください。
+
+【ゴール】既存の RSpec をグリーンにする。原則として app/** は変更しない（必要な場合は理由を述べて私の許可を取る）。
+
+【RSpec更新方針（app/配下の型と spec 置き場を厳守）】
+- app/models/**.rb      → spec/models/**_spec.rb        （type: :model）
+- app/controllers/**.rb  → spec/controllers/**_spec.rb   （type: :controller）
+- app/mailers/**.rb      → spec/mailers/**_spec.rb       （type: :mailer）
+- app/services/**.rb     → spec/services/**_spec.rb      （type: :service）
+- app/workers/**.rb      → spec/workers/**_spec.rb       （type: :worker）
+※ Factory/stub/mock は最小限。アプリ本体（app/**）の修正は原則禁止。必要時は私に相談。
+※ derscribeはメソッド名等のプログラム名称を記載してください。controllerなら'GET #index'という感じに、他のメソッドは'#self.reset_sort_order!'という感じで。
+※ it/context は日本語で記載してください。
+
+【手順】
+1) RSpec を実行： ai_tooling/avante/run-rspec.sh %s
+   - 成功(終了コード0)なら「既にグリーン」と報告して終了。
+   - 失敗なら、失敗例/エラーを要約して次へ。
+
+2) 失敗原因に対して、既存の spec を最小変更で修正（不足の context / example / expect の追加、必要最小限の stub/mock/Factory の補完）。
+   - app/** の変更は原則禁止。やむを得ない場合は必ず私に確認。
+
+3) Rubocop を spec に対して適用： ai_tooling/avante/run-rubocop.sh --fix spec
+   - なお違反が残る場合はテストコード側を修正して解消。
+
+4) 再度 RSpec を実行（同コマンド）。グリーンになるまで 2)〜4) を繰り返す。
+
+5) 終了時に、更新/作成した spec の一覧と要点を報告する。
+]], rspec_args)
+
+  -- bang（!）が付いていない場合のみ確認処理を追加
+  local confirmation_config = nil
+  if not opts.bang then
+    confirmation_config = {
+      message = "RSpec修正を実行します。\nこれによりspecファイルの自動作成/修正が行われます。\n実行してもよろしいですか？"
+    }
+  end
+
+  send_prompt(prompt, opts, confirmation_config)
+end, {
+  nargs = "*",
+  bang = true,
+})
+
+-- :AiUpdateRubocop {args}
+-- 例) :AiUpdateRubocop            （既定: spec/ を対象）
+--     :AiUpdateRubocop --all      （リポ全体）
+--     :AiUpdateRubocop app/services app/models/user.rb
+vim.api.nvim_create_user_command("AiUpdateRubocop", function(opts)
+  local scope = (opts.args ~= "" and opts.args) or "spec"
+  local prompt = string.format([[
+あなたはこのリポの「Rubocop整備コーチ」です。以下を実施してください（破壊的コマンド禁止、生成パッチはプレビュー提示）。
+説明はすべて日本語で。以下の前提と方針を厳守してください。
+
+【対象スコープ】%s
+- "--all" または "." を指定した場合、app/** を含む全体を対象にしてよいが、挙動を変えない安全な修正を最優先とする。必要なら私に確認を取る。
+
+【手順】
+1) 現状確認： ai_tooling/avante/run-rubocop.sh %s
+   - 終了コードが非0なら次へ。
+
+2) 自動整形： ai_tooling/avante/run-rubocop.sh --fix %s
+
+3) なお違反が残る場合は、対象スコープ内のファイルを最小変更で修正して解消。
+   - ルール無効化コメントは最終手段。入れる場合は理由をコメントで明記。
+
+4) 最終確認： ai_tooling/avante/run-rubocop.sh %s を再実行し、終了コード0を確認。
+   - 変更点の要約と、恒久的に設定した方が良いルールがあれば提案も出す。
+]], scope, scope, scope, scope)
+
+  send_prompt(prompt, { confirm = true, new_chat = true })
+end, {
+  nargs = "*",
+  bang = true,
+  complete = function() return { "--all" } end,
 })
