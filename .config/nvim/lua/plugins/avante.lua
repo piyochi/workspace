@@ -1,3 +1,71 @@
+local MAX_PROMPT_LINES    = 800  -- プロンプトが長すぎる場合の最大行数
+
+-- ANSIカラーコードを除去（例: \x1b[31m）
+local function strip_ansi(s)
+  return s:gsub("\27%[[0-9;]*[A-Za-z]", "")
+end
+
+-- 非UTF-8バイトを安全に除去（不正シーケンスは "?" に置換）
+local function ensure_valid_utf8(s)
+  if type(s) ~= "string" then
+    return tostring(s)
+  end
+
+  local out = {}
+  local i, len = 1, #s
+  while i <= len do
+    local b = s:byte(i)
+    if not b then break end
+
+    local n =
+    (b < 0x80 and 1)
+    or (b >= 0xC2 and b < 0xE0 and 2)
+    or (b >= 0xE0 and b < 0xF0 and 3)
+    or (b >= 0xF0 and b < 0xF5 and 4)
+    or 1
+
+    if i + n - 1 > len then
+      table.insert(out, "?")
+      i = i + 1
+    else
+      local chunk = s:sub(i, i + n - 1)
+      local valid = true
+
+      if n == 1 then
+        if b >= 0x80 then valid = false end
+      else
+        for j = 2, n do
+          local cb = s:byte(i + j - 1)
+          if not cb or cb < 0x80 or cb > 0xBF then valid = false; break end
+        end
+      end
+
+      if valid then
+        table.insert(out, chunk)
+        i = i + n
+      else
+        table.insert(out, "?")
+        i = i + 1
+      end
+    end
+  end
+  return table.concat(out)
+end
+
+-- 長すぎるテキストを先頭 N 行にトリム。戻り値: (text, was_truncated)
+local function head_lines(text, max_lines)
+  local out, cnt = {}, 0
+  for line in text:gmatch("[^\r\n]+") do
+    cnt = cnt + 1
+    table.insert(out, line)
+    if cnt >= max_lines then
+      table.insert(out, "... (truncated)")
+      return table.concat(out, "\n"), true
+    end
+  end
+  return table.concat(out, "\n"), false
+end
+
 -- 共通のプロンプト送信ロジックを関数化
 local function send_prompt(base_prompt, opts, confirmation_config)
   -- 確認処理がある場合
@@ -10,6 +78,7 @@ local function send_prompt(base_prompt, opts, confirmation_config)
       return
     end
   end
+
   local prompt = base_prompt
 
   -- 範囲が指定されている場合、その範囲のテキストを取得
@@ -19,8 +88,28 @@ local function send_prompt(base_prompt, opts, confirmation_config)
     prompt = prompt .. "\n" .. selected_text
   end
 
-  -- AIにプロンプトを送信
-  require("avante.api").ask(prompt)
+  -- プロンプト全体の安全性チェック（UTF-8検証を先に実行）
+  prompt = ensure_valid_utf8(prompt)
+  prompt = strip_ansi(prompt)
+
+  -- プロンプトが長すぎる場合のチェック
+  local truncated, was_truncated = head_lines(prompt, MAX_PROMPT_LINES)
+  prompt = truncated
+
+  if was_truncated then
+    vim.notify(
+      ("⚠️ プロンプトが長すぎるため先頭 %d 行のみ送信しました"):format(MAX_PROMPT_LINES),
+      vim.log.levels.WARN
+    )
+  end
+
+  -- 最終的な安全性チェック
+  if not vim.fn.has('nvim-0.7') or pcall(vim.validate, { prompt = { prompt, 'string' } }) then
+    -- AIにプロンプトを送信
+    require("avante.api").ask(prompt)
+  else
+    vim.notify("⚠️ プロンプトに無効な文字が含まれています", vim.log.levels.ERROR)
+  end
 end
 
 -- コマンド定義: コード説明
@@ -309,6 +398,10 @@ vim.api.nvim_create_user_command("AiUpdateRSpec", function(opts)
 
 【ゴール】既存の RSpec をグリーンにする。原則として app/** は変更しない（必要な場合は理由を述べて私の許可を取る）。
 
+【前提（違反なら即停止・報告）】
+- ai_tooling/avante/check-preconditions.sh git を実行し、次を満たすことを確認：
+  1) git が完全クリーン（git status --porcelain が空）
+
 【RSpec更新方針（app/配下の型と spec 置き場を厳守）】
 - app/models/**.rb      → spec/models/**_spec.rb        （type: :model）
 - app/controllers/**.rb  → spec/controllers/**_spec.rb   （type: :controller）
@@ -361,6 +454,10 @@ vim.api.nvim_create_user_command("AiUpdateRubocop", function(opts)
 
 【対象スコープ】%s
 - "--all" または "." を指定した場合、app/** を含む全体を対象にしてよいが、挙動を変えない安全な修正を最優先とする。必要なら私に確認を取る。
+
+【前提（違反なら即停止・報告）】
+- ai_tooling/avante/check-preconditions.sh git を実行し、次を満たすことを確認：
+  1) git が完全クリーン（git status --porcelain が空）
 
 【手順】
 1) 現状確認： ai_tooling/avante/run-rubocop.sh %s
