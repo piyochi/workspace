@@ -1,4 +1,5 @@
-local MAX_PROMPT_LINES    = 800  -- プロンプトが長すぎる場合の最大行数
+local MAX_PROMPT_LINES = 200  -- プロンプトが長すぎる場合の最大行数
+local MAX_CHARS = 50000
 
 -- ANSIカラーコードを除去（例: \x1b[31m）
 local function strip_ansi(s)
@@ -66,8 +67,38 @@ local function head_lines(text, max_lines)
   return table.concat(out, "\n"), false
 end
 
+-- より柔軟なプロンプト制限関数
+local function limit_prompt_size(text)
+  -- 行数チェック
+  local line_count = select(2, text:gsub('\n', '\n')) + 1
+
+  -- 行数が制限を超える場合のみ制限
+  if line_count > MAX_PROMPT_LINES then
+    local lines = {}
+    local count = 0
+    for line in text:gmatch("[^\r\n]*") do
+      count = count + 1
+      if count > MAX_PROMPT_LINES then
+        table.insert(lines, "... (行数制限により以下省略)")
+        break
+      end
+      table.insert(lines, line)
+    end
+    text = table.concat(lines, "\n")
+  end
+
+  -- 文字数チェック（最後の手段として）
+  if #text > MAX_CHARS then
+    text = text:sub(1, MAX_CHARS) .. "\n... (文字数制限により省略)"
+  end
+
+  return text
+end
+
 -- 共通のプロンプト送信ロジックを関数化
 local function send_prompt(base_prompt, opts, confirmation_config)
+  opts = opts or {}
+
   -- 確認処理がある場合
   if confirmation_config then
     local confirmation_message = confirmation_config.message or "実行してもよろしいですか？"
@@ -92,24 +123,18 @@ local function send_prompt(base_prompt, opts, confirmation_config)
   prompt = ensure_valid_utf8(prompt)
   prompt = strip_ansi(prompt)
 
-  -- プロンプトが長すぎる場合のチェック
-  local truncated, was_truncated = head_lines(prompt, MAX_PROMPT_LINES)
-  prompt = truncated
+  -- 制限適用（必要な場合のみ）
+  local original_length = #prompt
+  prompt = limit_prompt_size(prompt)
 
-  if was_truncated then
-    vim.notify(
-      ("⚠️ プロンプトが長すぎるため先頭 %d 行のみ送信しました"):format(MAX_PROMPT_LINES),
-      vim.log.levels.WARN
-    )
+  if #prompt < original_length then
+    vim.notify("⚠️ プロンプトが長すぎるため一部省略しました", vim.log.levels.WARN)
   end
 
-  -- 最終的な安全性チェック
-  if not vim.fn.has('nvim-0.7') or pcall(vim.validate, { prompt = { prompt, 'string' } }) then
-    -- AIにプロンプトを送信
+  -- AIにプロンプトを送信
+  pcall(function()
     require("avante.api").ask(prompt)
-  else
-    vim.notify("⚠️ プロンプトに無効な文字が含まれています", vim.log.levels.ERROR)
-  end
+  end)
 end
 
 -- コマンド定義: コード説明
