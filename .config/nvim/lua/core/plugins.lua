@@ -23,8 +23,19 @@ require("lazy").setup({
   -- Rails アプリ開発をサポート
   { "tpope/vim-rails", event = { "CmdlineEnter" }},
 
+  -- Nerd Font アイコン表示
+  { "lambdalisue/nerdfont.vim", lazy = false },
   -- ファイルツリー表示と操作
-  { "lambdalisue/fern.vim", cmd = { "Fern" }},
+  {
+    "lambdalisue/fern.vim",
+    cmd = { "Fern" },
+  },
+  {
+    "lambdalisue/fern-renderer-nerdfont.vim",
+    dependencies = { "lambdalisue/fern.vim", "lambdalisue/nerdfont.vim" },
+    lazy = false,
+  },
+  { "lambdalisue/fern-git-status.vim", lazy = false },
 
   -- 汎用的な検索と操作用コマンド
   {
