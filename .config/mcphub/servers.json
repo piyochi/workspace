@@ -7,6 +7,14 @@
         "Authorization": "Bearer ${env:GITHUB_MCP_PAT}"
       },
       "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "redmine": {
+      "command": "node",
+      "args": ["/Users/piyoh/mcp/mcp-server-redmine/dist/index.js"],
+      "env": {
+        "REDMINE_HOST": "${env:REDMINE_HOST}",
+        "REDMINE_API_KEY": "${env:REDMINE_API_KEY}"
+      }
     }
   }
 }
