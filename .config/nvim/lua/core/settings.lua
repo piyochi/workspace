@@ -15,7 +15,7 @@ vim.o.fileencoding = 'utf-8'
 vim.o.fileencodings = 'utf-8,iso-2022-jp,sjis,euc-jp'
 vim.opt.backspace = {'indent', 'eol', 'start'}
 vim.opt.autoindent = true
-vim.opt.ambiwidth = 'double'
+vim.opt.ambiwidth = 'single'
 -- マウスの右クリックを無効に
 vim.opt.mouse = ''
 -- デフォルトで検索時の背景色をOFFにする
@@ -54,9 +54,6 @@ vim.api.nvim_create_user_command("T", function(opts)
   vim.cmd("resize 20")
   vim.cmd("terminal " .. (opts.args or ""))
 end, { nargs = "*" })
-
--- インデントガイドの色設定
-vim.g.indentLine_color_gui = "#999999"
 
 -- 上部タブ名にファイル名のみを表示
 require('plugins.custom-tabline')

@@ -94,7 +94,70 @@ require("lazy").setup({
   { "majutsushi/tagbar", lazy = false },
 
   -- インデントガイドを表示
-  { "Yggdroot/indentLine", lazy = false },
+  { "lukas-reineke/indent-blankline.nvim",
+    main = "ibl",
+    opts = {
+      indent = { char = "┆", highlight = "IblIndent" },
+      scope = {
+        enabled = true,
+        -- show_start = true, -- 開始行をうっすら強調
+        highlight = "IblScope",
+        include = {
+          node_type = {
+            ruby = {
+              -- 定義/構造
+              "class", "module", "method",
+              -- ブロック
+              "block", "do_block",
+              -- 制御構文
+              "if", "if_modifier", "elsif", "unless", "unless_modifier",
+              "case", "when", "while", "until", "for",
+              "begin", "rescue", "ensure",
+            },
+            javascript = {
+              "function", "function_declaration", "function_expression",
+              "method_definition", "class_declaration",
+              "arrow_function", "statement_block", "object", "array",
+            },
+            typescript = {
+              "function", "function_declaration", "function_signature",
+              "method_definition", "class_declaration",
+              "arrow_function", "statement_block", "object", "array", "module",
+            },
+            -- React/JSX 系
+            javascriptreact = {
+              "arrow_function", "function_declaration", "method_definition",
+              "jsx_element", "jsx_self_closing_element", "jsx_fragment",
+              "statement_block",
+            },
+            typescriptreact = {
+              "arrow_function", "function_declaration", "method_definition",
+              "jsx_element", "jsx_self_closing_element", "jsx_fragment",
+              "statement_block",
+            },
+            tsx = {  -- 一部の環境では filetype=tsx を見ることもある
+              "arrow_function", "function_declaration", "method_definition",
+              "jsx_element", "jsx_fragment", "statement_block",
+            },
+          },
+        },
+      },
+      exclude = {
+        filetypes = { "help", "terminal", "dashboard" },
+        buftypes = { "terminal" },
+      },
+    },
+    config = function(_, opts)
+      local hooks = require("ibl.hooks")
+      hooks.register(hooks.type.HIGHLIGHT_SETUP, function()
+        vim.api.nvim_set_hl(0, "IblIndent", { fg = "#444444", nocombine = true })
+        vim.api.nvim_set_hl(0, "IblScope",  { fg = "#CCCCCC", nocombine = true })
+      end)
+
+      require("ibl").setup(opts)
+    end,
+    lazy = false,
+  },
 
   -- コメントアウト操作を簡単に
   -- gcc でコメントと解除を切り替え
@@ -130,7 +193,12 @@ require("lazy").setup({
       require("nvim-treesitter.configs").setup({
         parser_install_dir = dir,
         ensure_installed = { "lua","javascript","python","ruby","go","typescript","tsx","json","html","css","markdown" },
-        highlight = { enable = true },
+        highlight = {
+          enable = true,
+          disable = {
+            'markdown', -- ```とかでリアルタイムプレビューして見にくくなるので無効化
+          },
+        },
         auto_install = false, -- 勝手な再インストールを止める
         sync_install = false,
       })
