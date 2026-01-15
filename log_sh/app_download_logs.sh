@@ -41,13 +41,13 @@ SERVERS=()
 SERVERS+=("ticketv2.app01.production")
 SERVERS+=("ticketv2.app02.production")
 SERVERS+=("ticketv2.group01.production")
-SERVERS+=("ticketv2.group02.production")
+# SERVERS+=("ticketv2.group02.production")
 SERVERS+=("ticketv2.event01.production")
-SERVERS+=("ticketv2.event02.production")
+# SERVERS+=("ticketv2.event02.production")
 SERVERS+=("ticketv2.user_group01.production")
 SERVERS+=("ticketv2.user_group02.production")
 SERVERS+=("ticketv2.panel01.production")
-SERVERS+=("ticketv2.panel02.production")
+# SERVERS+=("ticketv2.panel02.production")
 
 for server in "${SERVERS[@]}"; do
   DOWNLOAD_DIR="./old_logs/$server/"
