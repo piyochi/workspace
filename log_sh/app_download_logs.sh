@@ -3,12 +3,17 @@
 # ticketv2 APPのログをまとめてダウンロードする
 # ./app_download_logs.sh [パターン] [日付] [gzip]
 # ./app_download_logs.sh
+# ./app_download_logs.sh all
+# ./app_download_logs.sh all 20250109
 # ./app_download_logs.sh sidekiq
 # ./app_download_logs.sh sidekiq 20250109
 # ./app_download_logs.sh sidekiq 20250109 true
 
-# パターン (デフォルト: *)
-PATTERN="${1:-*}"
+# パターン (デフォルト: all = *)
+PATTERN="${1:-all}"
+if [ "$PATTERN" = "all" ]; then
+  PATTERN="*"
+fi
 
 # 日付 (デフォルト: today)
 DATE="${2:-today}"

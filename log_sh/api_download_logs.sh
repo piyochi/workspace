@@ -3,12 +3,17 @@
 # ticketv2 APIのログをまとめてダウンロードする
 # ./api_download_logs.sh [パターン] [日付] [gzip]
 # ./api_download_logs.sh
+# ./api_download_logs.sh all
+# ./api_download_logs.sh all 20250109
 # ./api_download_logs.sh sidekiq
 # ./api_download_logs.sh sidekiq 20250109
 # ./api_download_logs.sh sidekiq 20250109 true
 
-# パターン (デフォルト: *)
-PATTERN="${1:-*}"
+# パターン (デフォルト: all = *)
+PATTERN="${1:-all}"
+if [ "$PATTERN" = "all" ]; then
+  PATTERN="*"
+fi
 
 # 日付 (デフォルト: today)
 DATE="${2:-today}"
