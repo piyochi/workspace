@@ -54,7 +54,7 @@ for server in "${SERVERS[@]}"; do
 
   echo "download $server."
 
-  scp "$server:$LOG_DIR$FILE_PATTERN" "$DOWNLOAD_DIR"
+  rsync -avz "$server:$LOG_DIR$FILE_PATTERN" "$DOWNLOAD_DIR"
 
   # 未圧縮なら圧縮する
   if [ $GZ = false ]; then
