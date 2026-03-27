@@ -1,0 +1,596 @@
+#!/bin/bash
+# ============================================================================
+#  claude-monitor — tmux内専用
+#  今いるtmuxセッションに新しいウィンドウを作り、
+#  メイン(フォーカス用大画面) + グリッド(ペイン一覧) を展開する
+#
+#  ※ tmux の中から実行してください
+#
+#  使い方:
+#    claude-monitor ~/proj-a ~/proj-b ~/proj-c       # 空シェル3つ
+#    claude-monitor -c ~/proj-a ~/proj-b              # claude自動起動
+#    claude-monitor -g 2x3 -f projects.txt
+#    claude-monitor -n 4 -g 2x2                       # カレントdir×4
+#    claude-monitor -n 6 -l top -w 40%                # 上メイン40%+下リスト60%
+#    claude-monitor -a ~/new-proj                     # 後から追加
+#    claude-monitor                                   # 対話的に設定
+#
+#  レイアウト (-l):
+#    left    左メイン + 右リスト (デフォルト)
+#    right   右メイン + 左リスト
+#    top     上メイン + 下リスト
+#    bottom  下メイン + 上リスト
+#
+#  設定ファイル (projects.txt):
+#    # ディレクトリだけ → 空シェル
+#    ~/project-alpha
+#    # ディレクトリ | コマンド → コマンド自動実行
+#    ~/project-beta | claude
+#    ~/project-gamma | claude --model sonnet
+#    ~/logs | tail -f /var/log/app.log
+#    ~/infra | htop
+#
+#  操作:
+#    Alt + 1~9          prefix不要で即切り替え
+#    prefix + F1~F12    10~21番目を切り替え
+#    ペインクリック → prefix + Enter でメインに持ってくる
+#    prefix + a         新しいペインを追加
+# ============================================================================
+
+set -eo pipefail
+
+# =============================================
+#  tmux内チェック
+# =============================================
+if [[ -z "${TMUX:-}" ]]; then
+  echo "エラー: tmuxの中から実行してください"
+  echo ""
+  echo "  tmux を起動してから再度実行:"
+  echo "    tmux"
+  echo "    $0 $*"
+  exit 1
+fi
+
+CURRENT_SESSION=$(tmux display-message -p '#{session_name}')
+WINDOW_NAME="claude-monitor"
+SWAP_SCRIPT="/tmp/claude-monitor-swap.sh"
+ADD_SCRIPT="/tmp/claude-monitor-add.sh"
+CLICK_SCRIPT="/tmp/claude-monitor-click.sh"
+LIST_SIZE="50%"
+LAYOUT="left"
+GRID=""
+MODE="normal"
+AUTO_CLAUDE=false
+
+# 各ペインの設定: [dir]と[cmd]を並列配列で管理
+declare -a DIRS=()
+declare -a CMDS=()
+
+# =============================================
+#  引数パース
+# =============================================
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -g|--grid)
+      shift; GRID="$1"; shift ;;
+    -c|--claude)
+      AUTO_CLAUDE=true; shift ;;
+    -l|--layout)
+      shift
+      case "$1" in
+        left|right|top|bottom) LAYOUT="$1" ;;
+        *) echo "エラー: -l は left, right, top, bottom のいずれか"; exit 1 ;;
+      esac
+      shift ;;
+    -f|--file)
+      shift
+      [[ ! -f "$1" ]] && { echo "エラー: ファイル '$1' が見つかりません"; exit 1; }
+      while IFS= read -r line; do
+        [[ -z "$line" || "$line" =~ ^# ]] && continue
+        if [[ "$line" == *"|"* ]]; then
+          dir=$(echo "$line" | cut -d'|' -f1 | xargs)
+          cmd=$(echo "$line" | cut -d'|' -f2- | xargs)
+          DIRS+=("$(eval echo "$dir")")
+          CMDS+=("$cmd")
+        else
+          DIRS+=("$(eval echo "$(echo "$line" | xargs)")")
+          CMDS+=("")
+        fi
+      done < "$1"
+      shift ;;
+    -n|--count)
+      shift
+      for ((i = 1; i <= $1; i++)); do
+        DIRS+=("$(pwd)")
+        CMDS+=("")
+      done
+      shift ;;
+    -d|--destroy)
+      MODE="destroy"; shift ;;
+    -a|--add)
+      MODE="add"; shift
+      if [[ $# -gt 0 && ! "$1" =~ ^- ]]; then DIRS+=("$1"); shift
+      else DIRS+=("$(pwd)"); fi
+      CMDS+=("")
+      ;;
+    -w|--width)
+      shift; LIST_SIZE="$1"; shift ;;
+    -h|--help)
+      cat << 'EOF'
+Usage: claude-monitor [OPTIONS] [DIR1 DIR2 ...]
+  ※ tmuxの中から実行してください
+
+起動モード:
+  (引数なし)            対話的に設定
+  DIR1 DIR2 ...         指定ディレクトリで空シェル起動
+  -f, --file FILE       ファイルからディレクトリ&コマンドを読み込み
+  -n, --count N         カレントディレクトリでN個起動
+  -a, --add [DIR]       既存モニターに新しいペインを追加
+  -d, --destroy         モニターウィンドウを破棄
+
+オプション:
+  -c, --claude          全ペインで claude を自動起動
+  -g, --grid COLSxROWS  グリッドレイアウト (例: 2x3, 3x4)
+                        省略時は自動計算
+  -l, --layout POSITION メインペインの位置 (デフォルト: left)
+                        left:  左メイン + 右リスト
+                        right: 右メイン + 左リスト
+                        top:   上メイン + 下リスト
+                        bottom:下メイン + 上リスト
+  -w, --width PERCENT   リスト側のサイズ (デフォルト: 50%)
+  -h, --help            このヘルプ
+
+操作キー:
+  Alt + 1~9             prefix不要で即切り替え
+  prefix + F1~F12       10~21番目を切り替え
+  ペインクリック + prefix+Enter  クリックしたペインをメインに
+  prefix + a            新しいペインを追加
+
+設定ファイル例 (projects.txt):
+  # ディレクトリだけ → 空シェル
+  ~/project-alpha
+
+  # ディレクトリ | コマンド → 自動実行
+  ~/project-beta | claude
+  ~/project-gamma | claude --model sonnet
+  ~/logs | tail -f /var/log/app.log
+  ~/infra | htop
+EOF
+      exit 0 ;;
+    *)
+      DIRS+=("$1"); CMDS+=(""); shift ;;
+  esac
+done
+
+# =============================================
+#  ヘルパー関数
+# =============================================
+get_monitor_window() {
+  tmux show-environment -t "$CURRENT_SESSION" CM_WINDOW_ID 2>/dev/null | cut -d= -f2 || true
+}
+
+get_all_pane_ids() {
+  local win_id="$1"
+  tmux list-panes -t "$win_id" -F '#{pane_id}' | sort
+}
+
+get_pane_index() {
+  local win_id="$1"
+  local pane_id="$2"
+  tmux list-panes -t "$win_id" -F '#{pane_id} #{pane_index}' \
+    | grep "^${pane_id} " | awk '{print $2}'
+}
+
+# レイアウトに応じた方向ラベル
+get_direction_label() {
+  case "$LAYOUT" in
+    left)   echo "left" ;;
+    right)  echo "right" ;;
+    top)    echo "top" ;;
+    bottom) echo "bottom" ;;
+  esac
+}
+
+# =============================================
+#  破棄モード (-d)
+# =============================================
+if [[ "$MODE" == "destroy" ]]; then
+  WIN_ID=$(get_monitor_window)
+  if [[ -z "$WIN_ID" ]]; then
+    echo "モニターウィンドウは存在しません。"
+    exit 0
+  fi
+  tmux kill-window -t "$WIN_ID" 2>/dev/null
+  # 環境変数をクリア
+  CLI_COUNT=$(tmux show-environment -t "$CURRENT_SESSION" CM_CLI_COUNT 2>/dev/null | cut -d= -f2 || true)
+  for key in CM_WINDOW_ID CM_LAYOUT CM_FOCUS_IDX CM_CLI_COUNT CM_FOCUSED_CLI; do
+    tmux set-environment -t "$CURRENT_SESSION" -u "$key" 2>/dev/null || true
+  done
+  if [[ -n "$CLI_COUNT" ]]; then
+    for ((i = 1; i <= CLI_COUNT; i++)); do
+      tmux set-environment -t "$CURRENT_SESSION" -u "CM_CLI_${i}_IDX" 2>/dev/null || true
+      tmux set-environment -t "$CURRENT_SESSION" -u "CM_CLI_${i}_TITLE" 2>/dev/null || true
+    done
+  fi
+  rm -f /tmp/claude-monitor-swap.sh /tmp/claude-monitor-add.sh /tmp/claude-monitor-click.sh
+  echo "✅ モニターウィンドウを破棄しました"
+  exit 0
+fi
+
+# =============================================
+#  追加モード (-a)
+# =============================================
+if [[ "$MODE" == "add" ]]; then
+  WIN_ID=$(get_monitor_window)
+  if [[ -z "$WIN_ID" ]]; then
+    echo "エラー: モニターウィンドウが見つかりません。先に起動してください。"
+    exit 1
+  fi
+
+  dir="${DIRS[0]}"
+  LAYOUT=$(tmux show-environment -t "$CURRENT_SESSION" CM_LAYOUT 2>/dev/null | cut -d= -f2 || echo "left")
+
+  CLI_COUNT=$(tmux show-environment -t "$CURRENT_SESSION" CM_CLI_COUNT 2>/dev/null | cut -d= -f2 || true)
+  [[ -z "$CLI_COUNT" ]] && CLI_COUNT=0
+  NEW_NUM=$((CLI_COUNT + 1))
+
+  LAST_IDX=$(tmux show-environment -t "$CURRENT_SESSION" "CM_CLI_${CLI_COUNT}_IDX" 2>/dev/null | cut -d= -f2 || true)
+  [[ -z "$LAST_IDX" ]] && LAST_IDX=1
+
+  before=$(get_all_pane_ids "$WIN_ID")
+  tmux split-window -t "${WIN_ID}.${LAST_IDX}" -v -c "$dir"
+  after=$(get_all_pane_ids "$WIN_ID")
+  new_id=$(comm -13 <(echo "$before") <(echo "$after") | head -1)
+  new_idx=$(get_pane_index "$WIN_ID" "$new_id")
+
+  tmux set-environment -t "$CURRENT_SESSION" "CM_CLI_${NEW_NUM}_IDX" "$new_idx"
+  tmux set-environment -t "$CURRENT_SESSION" CM_CLI_COUNT "$NEW_NUM"
+  tmux select-pane -t "$new_id" -T "[$NEW_NUM] $(basename "$dir")"
+
+  if [[ $NEW_NUM -le 9 ]]; then
+    tmux bind-key -T root "M-$NEW_NUM" run-shell "$SWAP_SCRIPT $NEW_NUM"
+  elif [[ $NEW_NUM -le 21 ]]; then
+    fkey=$((NEW_NUM - 9))
+    tmux bind-key -T prefix "F$fkey" run-shell "$SWAP_SCRIPT $NEW_NUM"
+  fi
+
+  echo "✅ [$NEW_NUM] を追加しました ($dir) — 空シェル"
+  exit 0
+fi
+
+# =============================================
+#  対話モード (引数なし)
+# =============================================
+if [[ ${#DIRS[@]} -eq 0 ]]; then
+  echo "=== Claude Monitor セットアップ ==="
+  echo ""
+  read -rp "いくつペインを作りますか？ [3]: " count
+  count=${count:-3}
+  for ((i = 1; i <= count; i++)); do
+    read -rp "[$i] ディレクトリ [$PWD]: " dir
+    dir=${dir:-$PWD}; dir="${dir/#\~/$HOME}"
+    DIRS+=("$dir")
+
+    read -rp "[$i] 起動コマンド (空Enter=シェルのみ): " cmd
+    CMDS+=("$cmd")
+  done
+  echo ""
+fi
+
+NUM=${#DIRS[@]}
+[[ $NUM -lt 1 ]] && { echo "エラー: 最低1つのペインが必要です"; exit 1; }
+
+# -c フラグ: コマンド未指定のペインにclaude を設定
+if [[ "$AUTO_CLAUDE" == true ]]; then
+  for ((i = 0; i < NUM; i++)); do
+    [[ -z "${CMDS[$i]}" ]] && CMDS[$i]="claude"
+  done
+fi
+
+if [[ $NUM -gt 9 ]]; then
+  echo "⚠ 10個以上: prefix+F1~F12 / マウス+prefix+Enter で操作。"
+fi
+
+# =============================================
+#  グリッド計算
+# =============================================
+if [[ -n "$GRID" ]]; then
+  GRID_COLS=$(echo "$GRID" | cut -dx -f1)
+  GRID_ROWS=$(echo "$GRID" | cut -dx -f2)
+  GRID_TOTAL=$((GRID_COLS * GRID_ROWS))
+  if [[ $NUM -gt $GRID_TOTAL ]]; then
+    echo "⚠ CLI数($NUM) > グリッド容量(${GRID}=$GRID_TOTAL) → ${GRID_TOTAL}個まで"
+    NUM=$GRID_TOTAL
+  fi
+else
+  if [[ $NUM -le 6 ]]; then
+    GRID_COLS=1; GRID_ROWS=$NUM
+  elif [[ $NUM -le 12 ]]; then
+    GRID_COLS=2; GRID_ROWS=$(( (NUM + 1) / 2 ))
+  elif [[ $NUM -le 18 ]]; then
+    GRID_COLS=3; GRID_ROWS=$(( (NUM + 2) / 3 ))
+  else
+    GRID_COLS=4; GRID_ROWS=$(( (NUM + 3) / 4 ))
+  fi
+  GRID="${GRID_COLS}x${GRID_ROWS}"
+fi
+
+# =============================================
+#  既存モニターウィンドウ確認
+# =============================================
+EXISTING_WIN=$(get_monitor_window)
+if [[ -n "$EXISTING_WIN" ]]; then
+  if tmux list-panes -t "$EXISTING_WIN" &>/dev/null; then
+    echo "モニターウィンドウは既に存在します。"
+    echo "  切り替え:   tmux select-window -t $EXISTING_WIN"
+    echo "  ペイン追加: $0 -a ~/new-project"
+    echo "  破棄再作成: tmux kill-window -t $EXISTING_WIN && $0 ..."
+    exit 1
+  fi
+fi
+
+DIR_LABEL=$(get_direction_label)
+echo "🚀 起動: $NUM ペイン (グリッド: ${GRID}, レイアウト: ${LAYOUT}, リスト: ${LIST_SIZE})"
+for i in "${!DIRS[@]}"; do
+  cmd="${CMDS[$i]}"
+  label="${cmd:-shell}"
+  echo "  [$((i + 1))] ${DIRS[$i]}  →  $label"
+done
+echo ""
+
+# =============================================
+#  新しいウィンドウを作成
+# =============================================
+tmux new-window -n "$WINDOW_NAME"
+WIN_ID=$(tmux display-message -p '#{window_id}')
+tmux set-environment -t "$CURRENT_SESSION" CM_WINDOW_ID "$WIN_ID"
+tmux set-environment -t "$CURRENT_SESSION" CM_LAYOUT "$LAYOUT"
+
+# =============================================
+#  ヘルパースクリプト生成
+# =============================================
+
+# ---- スワップ ----
+cat > "$SWAP_SCRIPT" << SWAPEOF
+#!/bin/bash
+SESSION="$CURRENT_SESSION"
+WIN_ID="$WIN_ID"
+DIR_LABEL="$DIR_LABEL"
+TARGET=\$1
+
+[[ -z "\$TARGET" || "\$TARGET" -lt 1 ]] 2>/dev/null && exit 0
+
+TARGET_IDX=\$(tmux show-environment -t "\$SESSION" "CM_CLI_\${TARGET}_IDX" 2>/dev/null | cut -d= -f2)
+[[ -z "\$TARGET_IDX" ]] && exit 0
+
+FOCUS_IDX=\$(tmux show-environment -t "\$SESSION" CM_FOCUS_IDX 2>/dev/null | cut -d= -f2)
+[[ -z "\$FOCUS_IDX" ]] && exit 0
+
+CURRENT=\$(tmux show-environment -t "\$SESSION" CM_FOCUSED_CLI 2>/dev/null | cut -d= -f2)
+[[ -z "\$CURRENT" ]] && CURRENT="none"
+
+[[ "\$TARGET" = "\$CURRENT" ]] && {
+  tmux select-pane -t "\${WIN_ID}.\${FOCUS_IDX}"
+  exit 0
+}
+
+if [[ "\$CURRENT" != "none" ]]; then
+  CURRENT_IDX=\$(tmux show-environment -t "\$SESSION" "CM_CLI_\${CURRENT}_IDX" 2>/dev/null | cut -d= -f2)
+  if [[ -n "\$CURRENT_IDX" ]]; then
+    CURRENT_TITLE=\$(tmux show-environment -t "\$SESSION" "CM_CLI_\${CURRENT}_TITLE" 2>/dev/null | cut -d= -f2)
+    tmux swap-pane -t "\${WIN_ID}.\${FOCUS_IDX}" -s "\${WIN_ID}.\${CURRENT_IDX}"
+    tmux select-pane -t "\${WIN_ID}.\${CURRENT_IDX}" -T "\${CURRENT_TITLE:-[$CURRENT]}"
+  fi
+fi
+
+TARGET_TITLE=\$(tmux show-environment -t "\$SESSION" "CM_CLI_\${TARGET}_TITLE" 2>/dev/null | cut -d= -f2)
+tmux swap-pane -t "\${WIN_ID}.\${FOCUS_IDX}" -s "\${WIN_ID}.\${TARGET_IDX}"
+tmux set-environment -t "\$SESSION" CM_FOCUSED_CLI "\$TARGET"
+
+tmux select-pane -t "\${WIN_ID}.\${FOCUS_IDX}" -T "★ FOCUS \${TARGET_TITLE:-[\$TARGET]}"
+tmux select-pane -t "\${WIN_ID}.\${TARGET_IDX}" -T "[\$TARGET] → \$DIR_LABEL"
+tmux select-pane -t "\${WIN_ID}.\${FOCUS_IDX}"
+SWAPEOF
+chmod +x "$SWAP_SCRIPT"
+
+# ---- 追加 ----
+cat > "$ADD_SCRIPT" << ADDEOF
+#!/bin/bash
+SESSION="$CURRENT_SESSION"
+WIN_ID="$WIN_ID"
+SWAP_SCRIPT="$SWAP_SCRIPT"
+CLI_COUNT=\$(tmux show-environment -t "\$SESSION" CM_CLI_COUNT 2>/dev/null | cut -d= -f2)
+[ -z "\$CLI_COUNT" ] && CLI_COUNT=0
+NEW_NUM=\$((CLI_COUNT + 1))
+LAST_IDX=\$(tmux show-environment -t "\$SESSION" "CM_CLI_\${CLI_COUNT}_IDX" 2>/dev/null | cut -d= -f2)
+[ -z "\$LAST_IDX" ] && LAST_IDX=1
+
+tmux command-prompt -p "ディレクトリ:" "\
+  split-window -t \${WIN_ID}.\${LAST_IDX} -v -c '%1' ; \
+  run-shell 'sleep 0.3 && \
+    NEW_IDX=\\\$(tmux list-panes -t \${WIN_ID} -F \"#{pane_active} #{pane_index}\" | grep ^1 | awk \"{print \\\\\\\$2}\") && \
+    tmux select-pane -t \${WIN_ID}.\\\$NEW_IDX -T \"[\${NEW_NUM}] shell\" && \
+    tmux set-environment -t \${SESSION} CM_CLI_\${NEW_NUM}_IDX \\\$NEW_IDX && \
+    tmux set-environment -t \${SESSION} CM_CLI_\${NEW_NUM}_TITLE \"[\${NEW_NUM}] shell\" && \
+    tmux set-environment -t \${SESSION} CM_CLI_COUNT \${NEW_NUM} && \
+    if [ \${NEW_NUM} -le 9 ]; then \
+      tmux bind-key -T root M-\${NEW_NUM} run-shell \"\${SWAP_SCRIPT} \${NEW_NUM}\" ; \
+    fi'"
+ADDEOF
+chmod +x "$ADD_SCRIPT"
+
+# ---- クリック→フォーカス ----
+cat > "$CLICK_SCRIPT" << CLICKEOF
+#!/bin/bash
+SESSION="$CURRENT_SESSION"
+SWAP_SCRIPT="$SWAP_SCRIPT"
+CLICKED_IDX=\$1
+CLI_COUNT=\$(tmux show-environment -t "\$SESSION" CM_CLI_COUNT 2>/dev/null | cut -d= -f2)
+[ -z "\$CLI_COUNT" ] && exit 0
+
+for ((n = 1; n <= CLI_COUNT; n++)); do
+  idx=\$(tmux show-environment -t "\$SESSION" "CM_CLI_\${n}_IDX" 2>/dev/null | cut -d= -f2)
+  if [ "\$idx" = "\$CLICKED_IDX" ]; then
+    exec "\$SWAP_SCRIPT" "\$n"
+  fi
+done
+CLICKEOF
+chmod +x "$CLICK_SCRIPT"
+
+# =============================================
+#  見た目設定
+# =============================================
+tmux set-option -t "$CURRENT_SESSION" mouse on
+tmux unbind-key -T root MouseDown3Pane
+tmux set-option -w -t "$WIN_ID" pane-border-status top
+tmux set-option -w -t "$WIN_ID" pane-border-format " #[bold]#{pane_title} #[default]"
+
+# =============================================
+#  レイアウト構築
+# =============================================
+FOCUS_PANE_ID=$(get_all_pane_ids "$WIN_ID")
+
+# メイン+リスト分割 (レイアウトに応じて方向とサイズを決定)
+before=$(get_all_pane_ids "$WIN_ID")
+case "$LAYOUT" in
+  left)
+    # 左メイン + 右リスト: 右側にリストを作る
+    tmux split-window -t "${WIN_ID}.0" -h -l "$LIST_SIZE"
+    ;;
+  right)
+    # 右メイン + 左リスト: 左側にリストを作る (右が残る=メイン)
+    tmux split-window -t "${WIN_ID}.0" -h -b -l "$LIST_SIZE"
+    ;;
+  top)
+    # 上メイン + 下リスト: 下側にリストを作る
+    tmux split-window -t "${WIN_ID}.0" -v -l "$LIST_SIZE"
+    ;;
+  bottom)
+    # 下メイン + 上リスト: 上側にリストを作る (下が残る=メイン)
+    tmux split-window -t "${WIN_ID}.0" -v -b -l "$LIST_SIZE"
+    ;;
+esac
+after=$(get_all_pane_ids "$WIN_ID")
+FIRST_LIST_ID=$(comm -13 <(echo "$before") <(echo "$after") | head -1)
+
+# right/bottom の場合、フォーカスペインIDが変わる可能性があるので再取得
+all_after=$(get_all_pane_ids "$WIN_ID")
+FOCUS_PANE_ID=$(echo "$all_after" | grep -v "^${FIRST_LIST_ID}$" | head -1)
+
+# =============================================
+#  グリッド構築
+# =============================================
+declare -a CLI_IDS=()
+declare -a COL_IDS=()
+
+# グリッドの分割方向: レイアウトに関わらず常に横=列、縦=行
+GRID_SPLIT_COL="-h"
+GRID_SPLIT_ROW="-v"
+
+COL_IDS=("$FIRST_LIST_ID")
+
+for ((c = 1; c < GRID_COLS; c++)); do
+  prev_col="${COL_IDS[$((c - 1))]}"
+  remaining=$((GRID_COLS - c))
+  pct=$(( remaining * 100 / (remaining + 1) ))
+  [[ $pct -lt 10 ]] && pct=50
+
+  before=$(get_all_pane_ids "$WIN_ID")
+  tmux split-window -t "$prev_col" $GRID_SPLIT_COL -l "${pct}%"
+  after=$(get_all_pane_ids "$WIN_ID")
+  new_col=$(comm -13 <(echo "$before") <(echo "$after") | head -1)
+  COL_IDS+=("$new_col")
+done
+
+cli_num=0
+for ((c = 0; c < GRID_COLS; c++)); do
+  col_pane="${COL_IDS[$c]}"
+
+  cli_num=$((cli_num + 1))
+  if [[ $cli_num -le $NUM ]]; then
+    CLI_IDS+=("$col_pane")
+  fi
+
+  last_in_col="$col_pane"
+  for ((r = 1; r < GRID_ROWS; r++)); do
+    cli_num=$((cli_num + 1))
+    [[ $cli_num -gt $NUM ]] && break
+
+    remaining=$((GRID_ROWS - r))
+    pct=$(( remaining * 100 / (remaining + 1) ))
+    [[ $pct -lt 10 ]] && pct=50
+
+    before=$(get_all_pane_ids "$WIN_ID")
+    tmux split-window -t "$last_in_col" $GRID_SPLIT_ROW -l "${pct}%"
+    after=$(get_all_pane_ids "$WIN_ID")
+    new_row=$(comm -13 <(echo "$before") <(echo "$after") | head -1)
+    CLI_IDS+=("$new_row")
+    last_in_col="$new_row"
+  done
+done
+
+# =============================================
+#  マッピング保存 & ペイン設定
+# =============================================
+FOCUS_INDEX=$(get_pane_index "$WIN_ID" "$FOCUS_PANE_ID")
+tmux set-environment -t "$CURRENT_SESSION" CM_FOCUS_IDX "$FOCUS_INDEX"
+tmux set-environment -t "$CURRENT_SESSION" CM_CLI_COUNT "$NUM"
+
+for ((i = 0; i < ${#CLI_IDS[@]}; i++)); do
+  cli_n=$((i + 1))
+  pane_id="${CLI_IDS[$i]}"
+  pane_idx=$(get_pane_index "$WIN_ID" "$pane_id")
+  dir="${DIRS[$i]}"
+  cmd="${CMDS[$i]}"
+  dirname=$(basename "$dir")
+
+  tmux set-environment -t "$CURRENT_SESSION" "CM_CLI_${cli_n}_IDX" "$pane_idx"
+
+  if [[ -n "$cmd" ]]; then
+    title="[$cli_n] $cmd"
+  else
+    title="[$cli_n] $dirname"
+  fi
+  tmux set-environment -t "$CURRENT_SESSION" "CM_CLI_${cli_n}_TITLE" "$title"
+  tmux select-pane -t "$pane_id" -T "$title"
+
+  tmux send-keys -t "$pane_id" "mkdir -p '$dir' && cd '$dir'" Enter
+
+  if [[ -n "$cmd" ]]; then
+    tmux send-keys -t "$pane_id" "$cmd" Enter
+  fi
+done
+
+# ---- 初期状態: ペイン1をメインにフォーカス ----
+sleep 0.5
+first_title=$(tmux show-environment -t "$CURRENT_SESSION" CM_CLI_1_TITLE | cut -d= -f2)
+CLI1_IDX=$(tmux show-environment -t "$CURRENT_SESSION" CM_CLI_1_IDX | cut -d= -f2)
+tmux swap-pane -t "${WIN_ID}.${FOCUS_INDEX}" -s "${WIN_ID}.${CLI1_IDX}"
+tmux set-environment -t "$CURRENT_SESSION" CM_FOCUSED_CLI "1"
+tmux select-pane -t "${WIN_ID}.${FOCUS_INDEX}" -T "★ FOCUS $first_title"
+tmux select-pane -t "${WIN_ID}.${CLI1_IDX}" -T "[1] → $DIR_LABEL"
+
+# =============================================
+#  キーバインド (Alt+数字のみ、prefix+数字は使わない)
+# =============================================
+MAX9=$((NUM > 9 ? 9 : NUM))
+for ((i = 1; i <= MAX9; i++)); do
+  tmux bind-key -T root "M-$i" run-shell "$SWAP_SCRIPT $i"
+done
+
+if [[ $NUM -gt 9 ]]; then
+  MAX_FK=$((NUM > 21 ? 21 : NUM))
+  for ((i = 10; i <= MAX_FK; i++)); do
+    fkey=$((i - 9))
+    tmux bind-key -T prefix "F$fkey" run-shell "$SWAP_SCRIPT $i"
+  done
+fi
+
+tmux bind-key -T prefix Enter run-shell "$CLICK_SCRIPT #{pane_index}"
+tmux bind-key -T prefix a run-shell "$ADD_SCRIPT"
+
+# =============================================
+#  完了
+# =============================================
+tmux select-pane -t "${WIN_ID}.${FOCUS_INDEX}"
+echo "✅ ウィンドウ '${WINDOW_NAME}' を作成しました (${GRID}, ${LAYOUT})"

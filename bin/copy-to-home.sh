@@ -4,12 +4,14 @@
 SOURCE_NVIM_INIT="$HOME/workspace/.config/nvim/init.lua"
 SOURCE_NVIM_LUA="$HOME/workspace/.config/nvim/lua/"
 SOURCE_MCPHUB="$HOME/workspace/.config/mcphub/"
+SOURCE_BIN="$HOME/workspace/bin/claude-monitor"
 DEST_NVIM="$HOME/.config/nvim/"
 DEST_NVIM_LUA="$HOME/.config/nvim/lua/"
 DEST_MCPHUB="$HOME/.config/mcphub/"
+DEST_BIN="$HOME/bin/"
 
 # 確認プロンプトを表示
-read -p "設定ファイル (nvim, mcphub) を home にコピーしますか？ [Y/n]: " CONFIRM
+read -p "設定ファイル (nvim, mcphub, bin) を home にコピーしますか？ [Y/n]: " CONFIRM
 
 # 入力を大文字に変換して確認
 CONFIRM=${CONFIRM^^} # 小文字を大文字に変換
@@ -35,6 +37,16 @@ if [ -d "$SOURCE_MCPHUB" ]; then
   rsync -av --exclude='.DS_Store' "$SOURCE_MCPHUB" "$DEST_MCPHUB"
 else
   echo "Warning: $SOURCE_MCPHUB が見つかりません。スキップします。"
+fi
+
+# claude-monitor を ~/bin/ にコピー
+if [ -f "$SOURCE_BIN" ]; then
+  echo "Copying $SOURCE_BIN to $DEST_BIN..."
+  mkdir -p "$DEST_BIN"
+  cp "$SOURCE_BIN" "${DEST_BIN}claude-monitor"
+  chmod +x "${DEST_BIN}claude-monitor"
+else
+  echo "Warning: $SOURCE_BIN が見つかりません。スキップします。"
 fi
 
 if [ $? -eq 0 ]; then
