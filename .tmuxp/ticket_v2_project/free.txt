@@ -1,0 +1,9 @@
+# Row 1: 環境1
+~/www/ticket_v2/ticket_v2_api | docker compose -f docker/docker-compose.yml exec ticket_v2_api_app bundle exec rake sqs:worker | env1 sqs
+~/www/ticket_v2 | | env1 shell
+~/www/ticket_v2 | | env1 shell
+
+# Row 2: 環境2
+~/www/ticket_v2_second/ticket_v2_api | docker exec ticket_v2_api_2_app bundle exec rake sqs:worker | env2 sqs
+~/www/ticket_v2_second | | env2 shell
+~/www/ticket_v2_second | | env2 shell

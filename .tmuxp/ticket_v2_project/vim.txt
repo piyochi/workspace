@@ -1,0 +1,7 @@
+# Row 1: 環境1
+~/www/ticket_v2/ticket_v2_api | | env1 api
+~/www/ticket_v2/ticket_v2 | | env1 app
+
+# Row 2: 環境2
+~/www/ticket_v2_second/ticket_v2_api | | env2 api
+~/www/ticket_v2_second/ticket_v2 | | env2 app

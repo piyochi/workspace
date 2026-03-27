@@ -1,0 +1,18 @@
+session_name: ticket_v2_project
+start_directory: ~/www/ticket_v2
+windows:
+- panes:
+  - null
+  window_name: zsh
+- panes:
+  - ~/bin/claude-monitor --no-window --name vim -f ~/.tmuxp/ticket_v2_project/vim.txt -l left -w 50% -g 2x2
+  window_name: vim
+- panes:
+  - ~/bin/claude-monitor --no-window --name monitor -f ~/.tmuxp/ticket_v2_project/monitor.txt -l left -w 65% -g 6x3
+  window_name: monitor
+- panes:
+  - ~/bin/claude-monitor --no-window --name db -f ~/.tmuxp/ticket_v2_project/db.txt -l left -w 65% -g 3x2
+  window_name: db
+- panes:
+  - ~/bin/claude-monitor --no-window --name free -f ~/.tmuxp/ticket_v2_project/free.txt -l left -w 65% -g 3x2
+  window_name: free

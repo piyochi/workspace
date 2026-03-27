@@ -5,13 +5,17 @@ SOURCE_NVIM_INIT="$HOME/workspace/.config/nvim/init.lua"
 SOURCE_NVIM_LUA="$HOME/workspace/.config/nvim/lua/"
 SOURCE_MCPHUB="$HOME/workspace/.config/mcphub/"
 SOURCE_BIN="$HOME/workspace/bin/claude-monitor"
+SOURCE_TMUXP="$HOME/workspace/.tmuxp/ticket_v2_project"
+SOURCE_TMUXP_YAML="$HOME/workspace/.tmuxp/ticket_v2_project.yaml"
 DEST_NVIM="$HOME/.config/nvim/"
 DEST_NVIM_LUA="$HOME/.config/nvim/lua/"
 DEST_MCPHUB="$HOME/.config/mcphub/"
 DEST_BIN="$HOME/bin/"
+DEST_TMUXP="$HOME/.tmuxp/ticket_v2_project/"
+DEST_TMUXP_YAML="$HOME/.tmuxp/"
 
 # 確認プロンプトを表示
-read -p "設定ファイル (nvim, mcphub, bin) を home にコピーしますか？ [Y/n]: " CONFIRM
+read -p "設定ファイル (nvim, mcphub, bin, tmuxp) を home にコピーしますか？ [Y/n]: " CONFIRM
 
 # 入力を大文字に変換して確認
 CONFIRM=${CONFIRM^^} # 小文字を大文字に変換
@@ -47,6 +51,17 @@ if [ -f "$SOURCE_BIN" ]; then
   chmod +x "${DEST_BIN}claude-monitor"
 else
   echo "Warning: $SOURCE_BIN が見つかりません。スキップします。"
+fi
+
+# tmuxp ticket_v2_project をコピー
+if [ -d "$SOURCE_TMUXP" ]; then
+  echo "Copying $SOURCE_TMUXP to $DEST_TMUXP..."
+  mkdir -p "$DEST_TMUXP"
+  rsync -av --exclude='.DS_Store' "$SOURCE_TMUXP/" "$DEST_TMUXP"
+fi
+if [ -f "$SOURCE_TMUXP_YAML" ]; then
+  echo "Copying $SOURCE_TMUXP_YAML to $DEST_TMUXP_YAML..."
+  cp "$SOURCE_TMUXP_YAML" "$DEST_TMUXP_YAML"
 fi
 
 if [ $? -eq 0 ]; then

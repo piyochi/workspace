@@ -1,0 +1,9 @@
+# Row 1: 環境1
+~/www/ticket_v2/ticket_v2_api | docker compose -f docker/docker-compose.yml run ticket_v2_api_app mysql ticket_v2_api_local -u root -h ticket_v2_api_db -proot | env1 primary
+~/www/ticket_v2/ticket_v2_api | docker compose -f docker/docker-compose.yml run ticket_v2_api_app mysql ticket_v2_api_portal_local -u root -h ticket_v2_api_portal_db -proot | env1 portal
+~/www/ticket_v2/ticket_v2_api | docker compose -f docker/docker-compose.yml run ticket_v2_api_app mysql ticket_v2_api_promoter_local_6 -u root -h ticket_v2_api_promoter_db -proot | env1 promoter
+
+# Row 2: 環境2
+~/www/ticket_v2_second/ticket_v2_api | docker compose -f docker/docker-compose.yml -p ticket_v2_api_2 run ticket_v2_api_app mysql ticket_v2_api_2_local -u root -h ticket_v2_api_db -proot | env2 primary
+~/www/ticket_v2_second/ticket_v2_api | docker compose -f docker/docker-compose.yml -p ticket_v2_api_2 run ticket_v2_api_app mysql ticket_v2_api_2_portal_local -u root -h ticket_v2_api_portal_db -proot | env2 portal
+~/www/ticket_v2_second/ticket_v2_api | docker compose -f docker/docker-compose.yml -p ticket_v2_api_2 run ticket_v2_api_app mysql ticket_v2_api_2_promoter_local_6 -u root -h ticket_v2_api_promoter_db -proot | env2 promoter
