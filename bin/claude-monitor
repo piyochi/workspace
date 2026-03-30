@@ -205,6 +205,9 @@ done
 #  スクリプトパス (名前空間付き)
 # =============================================
 DISPATCH_SCRIPT="/tmp/claude-monitor-dispatch.sh"
+DISPATCH_CLICK_SCRIPT="/tmp/claude-monitor-dispatch-click.sh"
+MOVE_SCRIPT="/tmp/claude-monitor-move.sh"
+VIEW_SCRIPT="/tmp/claude-monitor-view.sh"
 SWAP_SCRIPT="/tmp/claude-monitor-swap-${MONITOR_NAME}.sh"
 ADD_SCRIPT="/tmp/claude-monitor-add-${MONITOR_NAME}.sh"
 CLICK_SCRIPT="/tmp/claude-monitor-click-${MONITOR_NAME}.sh"
@@ -279,7 +282,7 @@ if [[ "$MODE" == "destroy" ]]; then
   fi
   # 環境変数をクリア
   CLI_COUNT=$(env_get CLI_COUNT)
-  for key in WINDOW_ID LAYOUT FOCUS_IDX CLI_COUNT FOCUSED_CLI NO_WINDOW; do
+  for key in WINDOW_ID LAYOUT FOCUS_IDX CLI_COUNT FOCUSED_CLI NO_WINDOW LIST_SIZE VIEW_STATE; do
     env_unset "$key"
   done
   if [[ -n "$CLI_COUNT" ]]; then
@@ -293,7 +296,9 @@ if [[ "$MODE" == "destroy" ]]; then
   # ディスパッチャーは他のmonitorが残っていれば残す
   remaining_names=$(tmux show-environment -t "$CURRENT_SESSION" CM_NAMES 2>/dev/null | cut -d= -f2 || true)
   if [[ -z "$remaining_names" ]]; then
-    rm -f "$DISPATCH_SCRIPT"
+    rm -f "$DISPATCH_SCRIPT" "$DISPATCH_CLICK_SCRIPT" "$MOVE_SCRIPT" "$VIEW_SCRIPT"
+    tmux set-environment -t "$CURRENT_SESSION" -u CM_PICK_NAME 2>/dev/null || true
+    tmux set-environment -t "$CURRENT_SESSION" -u CM_PICK_CLI 2>/dev/null || true
   fi
   echo "✅ モニター '${MONITOR_NAME}' を破棄しました"
   exit 0
@@ -432,6 +437,8 @@ fi
 env_set WINDOW_ID "$WIN_ID"
 env_set LAYOUT "$LAYOUT"
 env_set NO_WINDOW "$NO_WINDOW"
+env_set LIST_SIZE "$LIST_SIZE"
+env_set VIEW_STATE "standard"
 register_monitor_name
 
 # =============================================
@@ -445,20 +452,177 @@ SESSION=$(tmux display-message -p '#{session_name}')
 CURRENT_WIN=$(tmux display-message -p '#{window_id}')
 TARGET=$1
 
-NAMES=$(tmux show-environment -t "$SESSION" CM_NAMES 2>/dev/null | cut -d= -f2)
-[ -z "$NAMES" ] && exit 0
-
-IFS=',' read -ra NAME_ARR <<< "$NAMES"
-for name in "${NAME_ARR[@]}"; do
-  WIN=$(tmux show-environment -t "$SESSION" "CM_${name}_WINDOW_ID" 2>/dev/null | cut -d= -f2)
-  if [ "$WIN" = "$CURRENT_WIN" ]; then
-    SWAP="/tmp/claude-monitor-swap-${name}.sh"
-    [ -x "$SWAP" ] && exec "$SWAP" "$TARGET"
-    exit 0
+# /tmp/claude-monitor-swap-*.sh をスキャンしてマッチするウィンドウを探す
+# CM_NAMESへの依存をなくし、タイミング競合を回避
+for swap_script in /tmp/claude-monitor-swap-*.sh; do
+  [ -x "$swap_script" ] || continue
+  # スクリプトから WIN_ID を抽出
+  win=$(grep "^WIN_ID=" "$swap_script" 2>/dev/null | cut -d'"' -f2)
+  if [ "$win" = "$CURRENT_WIN" ]; then
+    exec "$swap_script" "$TARGET"
   fi
 done
 DISPATCHEOF
 chmod +x "$DISPATCH_SCRIPT"
+
+# ---- クリック用ディスパッチャー (全monitor共有) ----
+cat > "$DISPATCH_CLICK_SCRIPT" << 'DISPATCHCLICKEOF'
+#!/bin/bash
+SESSION=$(tmux display-message -p '#{session_name}')
+CURRENT_WIN=$(tmux display-message -p '#{window_id}')
+CLICKED_IDX=$1
+
+for swap_script in /tmp/claude-monitor-swap-*.sh; do
+  [ -x "$swap_script" ] || continue
+  win=$(grep "^WIN_ID=" "$swap_script" 2>/dev/null | cut -d'"' -f2)
+  if [ "$win" = "$CURRENT_WIN" ]; then
+    # swap script名からmonitor名を取得してclick scriptを実行
+    name=$(basename "$swap_script" | sed 's/claude-monitor-swap-//' | sed 's/\.sh$//')
+    click="/tmp/claude-monitor-click-${name}.sh"
+    [ -x "$click" ] && exec "$click" "$CLICKED_IDX"
+    exit 0
+  fi
+done
+DISPATCHCLICKEOF
+chmod +x "$DISPATCH_CLICK_SCRIPT"
+
+# ---- ムーブ (全monitor共有、prefix+m) ----
+cat > "$MOVE_SCRIPT" << 'MOVEEOF'
+#!/bin/bash
+SESSION=$(tmux display-message -p '#{session_name}')
+CURRENT_WIN=$(tmux display-message -p '#{window_id}')
+ACTIVE_IDX=$(tmux display-message -p '#{pane_index}')
+
+# 現在のウィンドウのmonitor名を取得
+cur_name=""
+for swap_script in /tmp/claude-monitor-swap-*.sh; do
+  [ -x "$swap_script" ] || continue
+  win=$(grep "^WIN_ID=" "$swap_script" 2>/dev/null | cut -d'"' -f2)
+  if [ "$win" = "$CURRENT_WIN" ]; then
+    cur_name=$(basename "$swap_script" | sed 's/claude-monitor-swap-//' | sed 's/\.sh$//')
+    break
+  fi
+done
+[ -z "$cur_name" ] && exit 0
+
+focus_idx=$(tmux show-environment -t "$SESSION" "CM_${cur_name}_FOCUS_IDX" 2>/dev/null | cut -d= -f2)
+focused_cli=$(tmux show-environment -t "$SESSION" "CM_${cur_name}_FOCUSED_CLI" 2>/dev/null | cut -d= -f2)
+cli_count=$(tmux show-environment -t "$SESSION" "CM_${cur_name}_CLI_COUNT" 2>/dev/null | cut -d= -f2)
+
+# アクティブなペインのCLI番号を逆引き
+# フォーカスエリアにいる場合はFOCUSED_CLIを使う
+# グリッドにいる場合はCLI_n_IDXを検索
+cur_cli=""
+cur_physical_idx=""
+
+if [ "$ACTIVE_IDX" = "$focus_idx" ] && [ -n "$focused_cli" ] && [ "$focused_cli" != "none" ]; then
+  cur_cli="$focused_cli"
+  cur_physical_idx="$focus_idx"
+else
+  for ((n=1; n<=cli_count; n++)); do
+    idx=$(tmux show-environment -t "$SESSION" "CM_${cur_name}_CLI_${n}_IDX" 2>/dev/null | cut -d= -f2)
+    if [ "$idx" = "$ACTIVE_IDX" ]; then
+      # フォーカスされているCLIの元グリッド位置は実際にはFOCUSエリアにある
+      if [ "$focused_cli" = "$n" ]; then
+        cur_cli="$n"
+        cur_physical_idx="$focus_idx"
+      else
+        cur_cli="$n"
+        cur_physical_idx="$ACTIVE_IDX"
+      fi
+      break
+    fi
+  done
+fi
+
+[ -z "$cur_cli" ] && exit 0
+cur_title=$(tmux show-environment -t "$SESSION" "CM_${cur_name}_CLI_${cur_cli}_TITLE" 2>/dev/null | cut -d= -f2)
+
+# ピック状態確認
+pick_name=$(tmux show-environment -t "$SESSION" CM_PICK_NAME 2>/dev/null | cut -d= -f2)
+pick_cli=$(tmux show-environment -t "$SESSION" CM_PICK_CLI 2>/dev/null | cut -d= -f2)
+
+if [ -n "$pick_name" ]; then
+  # キャンセル: 同じペイン
+  if [ "$pick_name" = "$cur_name" ] && [ "$pick_cli" = "$cur_cli" ]; then
+    tmux set-option -t "${CURRENT_WIN}.${cur_physical_idx}" -p @cm_title "$cur_title"
+    tmux set-environment -t "$SESSION" -u CM_PICK_NAME
+    tmux set-environment -t "$SESSION" -u CM_PICK_CLI
+    exit 0
+  fi
+
+  # ドロップ: スワップ実行
+  pick_win=$(grep "^WIN_ID=" "/tmp/claude-monitor-swap-${pick_name}.sh" 2>/dev/null | cut -d'"' -f2)
+  pick_focus_idx=$(tmux show-environment -t "$SESSION" "CM_${pick_name}_FOCUS_IDX" 2>/dev/null | cut -d= -f2)
+  pick_focused_cli=$(tmux show-environment -t "$SESSION" "CM_${pick_name}_FOCUSED_CLI" 2>/dev/null | cut -d= -f2)
+  pick_title=$(tmux show-environment -t "$SESSION" "CM_${pick_name}_CLI_${pick_cli}_TITLE" 2>/dev/null | cut -d= -f2)
+
+  # ピックの物理位置を取得
+  if [ "$pick_focused_cli" = "$pick_cli" ]; then
+    pick_physical_idx="$pick_focus_idx"
+  else
+    pick_physical_idx=$(tmux show-environment -t "$SESSION" "CM_${pick_name}_CLI_${pick_cli}_IDX" 2>/dev/null | cut -d= -f2)
+  fi
+
+  # swap-pane でコンテンツを入れ替え
+  tmux swap-pane -s "${pick_win}.${pick_physical_idx}" -t "${CURRENT_WIN}.${cur_physical_idx}"
+
+  # タイトルを入れ替え
+  tmux set-environment -t "$SESSION" "CM_${pick_name}_CLI_${pick_cli}_TITLE" "$cur_title"
+  tmux set-environment -t "$SESSION" "CM_${cur_name}_CLI_${cur_cli}_TITLE" "$pick_title"
+  # スワップ後: pick位置にcurの内容が、cur位置にpickの内容が入る
+  tmux set-option -t "${pick_win}.${pick_physical_idx}" -p @cm_title "$cur_title"
+  tmux set-option -t "${CURRENT_WIN}.${cur_physical_idx}" -p @cm_title "$pick_title"
+
+  tmux set-environment -t "$SESSION" -u CM_PICK_NAME
+  tmux set-environment -t "$SESSION" -u CM_PICK_CLI
+  tmux refresh-client
+else
+  # ピック: マーク
+  tmux set-environment -t "$SESSION" CM_PICK_NAME "$cur_name"
+  tmux set-environment -t "$SESSION" CM_PICK_CLI "$cur_cli"
+  tmux set-option -t "${CURRENT_WIN}.${cur_physical_idx}" -p @cm_title "📦 PICK: ${cur_title}"
+fi
+MOVEEOF
+chmod +x "$MOVE_SCRIPT"
+
+# ---- ビュートグル (全monitor共有、prefix+z) ----
+cat > "$VIEW_SCRIPT" << 'VIEWEOF'
+#!/bin/bash
+SESSION=$(tmux display-message -p '#{session_name}')
+CURRENT_WIN=$(tmux display-message -p '#{window_id}')
+
+name=""
+for swap_script in /tmp/claude-monitor-swap-*.sh; do
+  [ -x "$swap_script" ] || continue
+  win=$(grep "^WIN_ID=" "$swap_script" 2>/dev/null | cut -d'"' -f2)
+  if [ "$win" = "$CURRENT_WIN" ]; then
+    name=$(basename "$swap_script" | sed 's/claude-monitor-swap-//' | sed 's/\.sh$//')
+    break
+  fi
+done
+
+if [ -z "$name" ]; then
+  tmux resize-pane -Z
+  exit 0
+fi
+
+focus_idx=$(tmux show-environment -t "$SESSION" "CM_${name}_FOCUS_IDX" 2>/dev/null | cut -d= -f2)
+layout=$(tmux show-environment -t "$SESSION" "CM_${name}_LAYOUT" 2>/dev/null | cut -d= -f2)
+list_size=$(tmux show-environment -t "$SESSION" "CM_${name}_LIST_SIZE" 2>/dev/null | cut -d= -f2)
+state=$(tmux show-environment -t "$SESSION" "CM_${name}_VIEW_STATE" 2>/dev/null | cut -d= -f2)
+col_ids_str=$(tmux show-environment -t "$SESSION" "CM_${name}_GRID_COL_IDS" 2>/dev/null | cut -d= -f2)
+grid_cols=$(tmux show-environment -t "$SESSION" "CM_${name}_GRID_COLS" 2>/dev/null | cut -d= -f2)
+[ -z "$state" ] && state="standard"
+[ -z "$list_size" ] && list_size="65%"
+
+list_pct=${list_size/\%/}
+main_pct=$((100 - list_pct))
+
+# 2状態トグル: standard ↔ main_zoom
+tmux resize-pane -t "${CURRENT_WIN}.${focus_idx}" -Z
+VIEWEOF
+chmod +x "$VIEW_SCRIPT"
 
 # ---- スワップ (monitor名ごと) ----
 cat > "$SWAP_SCRIPT" << SWAPEOF
@@ -652,6 +816,10 @@ done
 FOCUS_INDEX=$(get_pane_index "$WIN_ID" "$FOCUS_PANE_ID")
 env_set FOCUS_IDX "$FOCUS_INDEX"
 env_set CLI_COUNT "$NUM"
+env_set GRID_COLS "$GRID_COLS"
+# 各列のルートペインIDを保存（grid_onlyで均等化に使用）
+col_ids_str=$(IFS=,; echo "${COL_IDS[*]}")
+env_set GRID_COL_IDS "$col_ids_str"
 
 for ((i = 0; i < ${#CLI_IDS[@]}; i++)); do
   cli_n=$((i + 1))
@@ -709,7 +877,10 @@ if [[ $NUM -gt 9 ]]; then
   done
 fi
 
-tmux bind-key -T prefix Enter run-shell "$CLICK_SCRIPT #{pane_index}"
+tmux bind-key -T prefix Enter run-shell "$DISPATCH_CLICK_SCRIPT #{pane_index}"
+tmux bind-key -T prefix m run-shell "$MOVE_SCRIPT"
+tmux bind-key -T root F4 run-shell "$MOVE_SCRIPT"
+tmux bind-key -T prefix z run-shell "$VIEW_SCRIPT"
 tmux bind-key -T prefix a run-shell "$ADD_SCRIPT"
 
 # =============================================
