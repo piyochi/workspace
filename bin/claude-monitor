@@ -567,12 +567,15 @@ if [ -n "$pick_name" ]; then
   # swap-pane でコンテンツを入れ替え
   tmux swap-pane -s "${pick_win}.${pick_physical_idx}" -t "${CURRENT_WIN}.${cur_physical_idx}"
 
-  # タイトルを入れ替え
-  tmux set-environment -t "$SESSION" "CM_${pick_name}_CLI_${pick_cli}_TITLE" "$cur_title"
-  tmux set-environment -t "$SESSION" "CM_${cur_name}_CLI_${cur_cli}_TITLE" "$pick_title"
-  # スワップ後: pick位置にcurの内容が、cur位置にpickの内容が入る
-  tmux set-option -t "${pick_win}.${pick_physical_idx}" -p @cm_title "$cur_title"
-  tmux set-option -t "${CURRENT_WIN}.${cur_physical_idx}" -p @cm_title "$pick_title"
+  # タイトルを入れ替え: 番号は元の位置番号を保ち、ラベルだけ入れ替える
+  pick_label=$(echo "$pick_title" | sed 's/^\[[0-9]*\] //')
+  cur_label=$(echo "$cur_title" | sed 's/^\[[0-9]*\] //')
+  new_pick_title="[$pick_cli] $cur_label"
+  new_cur_title="[$cur_cli] $pick_label"
+  tmux set-environment -t "$SESSION" "CM_${pick_name}_CLI_${pick_cli}_TITLE" "$new_pick_title"
+  tmux set-environment -t "$SESSION" "CM_${cur_name}_CLI_${cur_cli}_TITLE" "$new_cur_title"
+  tmux set-option -t "${pick_win}.${pick_physical_idx}" -p @cm_title "$new_pick_title"
+  tmux set-option -t "${CURRENT_WIN}.${cur_physical_idx}" -p @cm_title "$new_cur_title"
 
   tmux set-environment -t "$SESSION" -u CM_PICK_NAME
   tmux set-environment -t "$SESSION" -u CM_PICK_CLI
