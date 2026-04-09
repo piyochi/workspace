@@ -1,0 +1,17 @@
+# Row 1: シェル
+~/www/ticket_v2/ticket_v2_api | | env1 ticket_v2_api
+~/www/ticket_v2/ticket_v2 | | env1 ticket_v2
+~/www/ticket_v2 | | env1 shell
+~/www/ticket_v2 | | env1 free1
+
+# Row 2: DB
+~/www/ticket_v2/ticket_v2_api | docker compose -f docker/docker-compose.yml run ticket_v2_api_app mysql ticket_v2_api_local -u root -h ticket_v2_api_db -proot | env1 primary
+~/www/ticket_v2/ticket_v2_api | docker compose -f docker/docker-compose.yml run ticket_v2_api_app mysql ticket_v2_api_portal_local -u root -h ticket_v2_api_portal_db -proot | env1 portal
+~/www/ticket_v2/ticket_v2_api | docker compose -f docker/docker-compose.yml run ticket_v2_api_app mysql ticket_v2_api_promoter_local_6 -u root -h ticket_v2_api_promoter_db -proot | env1 promoter
+~/www/ticket_v2 | | env1 free2
+
+# Row 3: ワーカー・ログ
+~/www/ticket_v2/ticket_v2_api | docker compose -f docker/docker-compose.yml exec ticket_v2_api_app bundle exec rake sqs:worker | env1 sqs
+~/www/ticket_v2/ticket_v2_api | tail -f log/development.log | env1 api log
+~/www/ticket_v2/ticket_v2 | tail -f logs/* | env1 app log
+~/www/ticket_v2 | | env1 free3

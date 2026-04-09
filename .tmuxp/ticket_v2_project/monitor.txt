@@ -1,23 +1,17 @@
 # Row 1: 環境1
 ~/www/ticket_v2 | bin/claude ticket_v2 ticket_v2_api --dangerously-skip-permissions --teammate-mode tmux --continue | env1 claude(continue)
 ~/www/ticket_v2 | bin/claude ticket_v2 ticket_v2_api --dangerously-skip-permissions --teammate-mode tmux | env1 claude(new)
-~/www/ticket_v2/ticket_v2_api | docker compose -f docker/docker-compose.yml up | env1 api server
-~/www/ticket_v2/ticket_v2 | docker compose -f docker-compose.yml up | env1 app server
-~/www/ticket_v2/ticket_v2_api | tail -f log/development.log | env1 api log
-~/www/ticket_v2/ticket_v2 | tail -f logs/* | env1 app log
+~/www/ticket_v2/ticket_v2_api | | env1 ticket_v2_api
+~/www/ticket_v2/ticket_v2 | | env1 ticket_v2
 
 # Row 2: 環境2
 ~/www/ticket_v2_second | bin/claude ticket_v2 ticket_v2_api --dangerously-skip-permissions --teammate-mode tmux --continue | env2 claude(continue)
 ~/www/ticket_v2_second | bin/claude ticket_v2 ticket_v2_api --dangerously-skip-permissions --teammate-mode tmux | env2 claude(new)
-~/www/ticket_v2_second/ticket_v2_api | docker compose -f docker/docker-compose.yml --env-file docker/.env -p ticket_v2_api_2 up | env2 api server
-~/www/ticket_v2_second/ticket_v2 | docker compose -f docker-compose.yml -p ticket_v2_f_2 --env-file .env.development up | env2 app server
-~/www/ticket_v2_second/ticket_v2_api | tail -f log/development.log | env2 api log
-~/www/ticket_v2_second/ticket_v2 | tail -f logs/* | env2 app log
-
-# Row 3: DBクエリ絞り込み + 空シェル
-~/www/ticket_v2/ticket_v2_api | tail -f log/development.log | grep -e INSERT -e UPDATE -e DELET -e BEGIN -e COMMIT | env1 query log
-~/www/ticket_v2_second/ticket_v2_api | tail -f log/development.log | grep -e INSERT -e UPDATE -e DELET -e BEGIN -e COMMIT | env2 query log
-~/www/ticket_v2/ticket_v2_api | | env1 ticket_v2_api
-~/www/ticket_v2/ticket_v2 | | env1 ticket_v2
 ~/www/ticket_v2_second/ticket_v2_api | | env2 ticket_v2_api
 ~/www/ticket_v2_second/ticket_v2 | | env2 ticket_v2
+
+# Row 3: サーバー
+~/www/ticket_v2/ticket_v2_api | docker compose -f docker/docker-compose.yml up | env1 api server
+~/www/ticket_v2/ticket_v2 | docker compose -f docker-compose.yml up | env1 app server
+~/www/ticket_v2_second/ticket_v2_api | docker compose -f docker/docker-compose.yml --env-file docker/.env -p ticket_v2_api_2 up | env2 api server
+~/www/ticket_v2_second/ticket_v2 | docker compose -f docker-compose.yml -p ticket_v2_f_2 --env-file .env.development up | env2 app server

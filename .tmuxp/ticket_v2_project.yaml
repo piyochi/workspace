@@ -8,11 +8,11 @@ windows:
   - ~/bin/claude-monitor --no-window --name vim -f ~/.tmuxp/ticket_v2_project/vim.txt -l left -w 50% -g 2x2
   window_name: vim
 - panes:
-  - ~/bin/claude-monitor --no-window --name monitor -f ~/.tmuxp/ticket_v2_project/monitor.txt -l left -w 65% -g 6x3
+  - ~/bin/claude-monitor --no-window --name monitor -f ~/.tmuxp/ticket_v2_project/monitor.txt -l left -w 65% -g 4x3
   window_name: monitor
 - panes:
-  - ~/bin/claude-monitor --no-window --name db -f ~/.tmuxp/ticket_v2_project/db.txt -l left -w 65% -g 3x2
-  window_name: db
+  - ~/bin/claude-monitor --no-window --name env1 -f ~/.tmuxp/ticket_v2_project/env1.txt -l left -w 65% -g 4x3
+  window_name: env1
 - panes:
-  - ~/bin/claude-monitor --no-window --name free -f ~/.tmuxp/ticket_v2_project/free.txt -l left -w 65% -g 3x2
-  window_name: free
+  - ~/bin/claude-monitor --no-window --name env2 -f ~/.tmuxp/ticket_v2_project/env2.txt -l left -w 65% -g 4x3
+  window_name: env2
