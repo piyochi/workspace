@@ -9,6 +9,9 @@ vim.opt.nu = true
 vim.opt.showmode = true
 vim.opt.expandtab = true
 vim.opt.ts = 2
+-- tags: 開いているファイルの上位ディレクトリを遡って探す(セミコロンが上方向探索の意味)
+-- これが無いと cwd がリポジトリ直下からズレた瞬間にタグジャンプが機能しなくなる
+vim.opt.tags = './tags;,tags;'
 vim.o.encoding = 'utf-8'
 vim.o.fileencoding = 'utf-8'
 --vim.o.fileencodings = {'utf-8', 'iso-2022-jp', 'sjis', 'euc-jp'}
