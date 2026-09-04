@@ -20,8 +20,13 @@ null_ls.setup({
         "--force-exclusion",      -- 除外設定を強制
         "--stdin", "$FILENAME",
       },
-      -- custom_rubocops/*.rb が廃止APIを継承しており、その非推奨警告がstderrに出る。
-      -- null-ls は format="json" のときstderrが空でないと即エラーにするため警告を抑止する
+      -- null-ls は format="json" のソースで stderr が空でないと即エラーにする
+      -- (generator_factory.lua の `error("error in generator output: "..)`)。
+      -- rubocop は非推奨通知を stderr に出すことがあり、それだけで診断が丸ごと死ぬ。
+      --   例: rubocop 1.75 の「plugins: rubocop-rails を使え」通知
+      -- 本物の失敗は check_exit_code (code>=2 で異常) 側で捕捉できるので無視して良い。
+      ignore_stderr = true,
+      -- Ruby自体の warning も抑止する(将来また警告が増えた時の保険)
       env = { RUBYOPT = "-W0" },
     }),
 
