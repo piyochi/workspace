@@ -42,6 +42,10 @@ end
 
 require("telescope").setup({
   defaults = {
+    -- ファイル名を先頭に、パスは後ろに表示する。
+    -- Index.tsx / Edit.tsx / Show.tsx のような同名ファイルが大量にあるため、
+    -- 相対パスそのまま(既定)だと横に長く伸びてファイル名が読み取りづらい
+    path_display = { "filename_first" },
     mappings = {
       i = { -- Insertモードのマッピング
         ["<C-q>"] = send_to_qflist_or_all, -- カスタムアクションをCtrl+qに割り当て

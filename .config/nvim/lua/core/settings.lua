@@ -2,16 +2,26 @@
 -- vim.oは最後に設定された値が優先される
 
 -- オプションの設定
-vim.opt.ai = true
 vim.opt.sw = 2
 vim.opt.list = true
 vim.opt.nu = true
-vim.opt.showmode = true
 vim.opt.expandtab = true
 vim.opt.ts = 2
 -- tags: 開いているファイルの上位ディレクトリを遡って探す(セミコロンが上方向探索の意味)
 -- これが無いと cwd がリポジトリ直下からズレた瞬間にタグジャンプが機能しなくなる
 vim.opt.tags = './tags;,tags;'
+
+-- g]/<C-]> を常に ctags(tagsファイル)に固定する。
+-- nvim 0.11 は LSP のサーバ初期化完了時に tagfunc を v:lua.vim.lsp.tagfunc へ差し替え、
+-- LSPシンボル検索(フルパス表示・kind名がModule/Method等の長い単語)になってしまう。
+-- on_attach で空に戻しても lsp.lua の is_empty_or_default() が「空なら上書き可」と
+-- 判定するため何度でも奪われる。そこで v:null を返す自前関数で枠を占有する
+-- (`:h tagfunc` — v:null を返すと標準のtag検索にフォールバックする)。
+-- 定義ジャンプは gd(LSP) が担当する。
+function _G.ctags_only_tagfunc()
+  return vim.NIL
+end
+vim.opt.tagfunc = 'v:lua._G.ctags_only_tagfunc'
 vim.o.encoding = 'utf-8'
 vim.o.fileencoding = 'utf-8'
 --vim.o.fileencodings = {'utf-8', 'iso-2022-jp', 'sjis', 'euc-jp'}
@@ -31,10 +41,14 @@ vim.o.showtabline = 2
 vim.o.termguicolors = true
 -- カラースキームを設定
 vim.cmd("colorscheme koehler")
--- モード表示をオフにする
+-- モード表示をオフにする(statuslineで代替表示するため)
 vim.o.showmode = false
--- Python3 設定
-vim.g.python3_host_prog = vim.fn.system("(type pyenv &>/dev/null && pyenv which python) || which python3")
+
+-- Python3 プロバイダは使わない(Python依存プラグインが無いため)。
+-- 以前は pyenv を毎起動シェル実行して python3_host_prog に入れていたが、
+-- 起動時間の約7割(330ms)を消費し、かつ vim.fn.system の戻り値に改行が付くため
+-- executable() が 0 になりプロバイダ自体が機能していなかった。
+vim.g.loaded_python3_provider = 0
 
 -- ステータスラインの色設定
 vim.cmd [[

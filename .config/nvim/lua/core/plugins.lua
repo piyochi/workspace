@@ -62,26 +62,12 @@ require("lazy").setup({
       "LumaKernel/ddc-source-file",       -- ファイル補完ソース
     },
     lazy = false, -- 起動時にロード
-    config = function()
-      vim.fn["ddc#custom#patch_global"]({
-        sources = { "around", "file" }, -- 使用するソース
-        sourceOptions = {
-          _ = {
-            matchers = { "matcher_head" },
-            sorters = { "sorter_rank" },
-          },
-        },
-      })
-      -- ddc.vim の有効化
-      vim.cmd([[call ddc#enable()]])
-    end,
+    -- 設定は lua/plugins/ddc.lua に集約（init.lua から require される）。
+    -- ここにも config を書くと二重設定になるため置かない
   },
 
   -- 簡単な文字列揃え
   { "junegunn/vim-easy-align", cmd = { "EasyAlign" }},
-
-  -- Node.js 開発のサポート gfでrequireやimportをジャンプ
-  { "moll/vim-node", lazy = false},
 
   -- タグリストの操作 F8
   { "majutsushi/tagbar", lazy = false },
@@ -188,6 +174,12 @@ require("lazy").setup({
             'markdown', -- ```とかでリアルタイムプレビューして見にくくなるので無効化
           },
         },
+        -- gg=G 等の = による再インデントを treesitter に任せる。
+        -- nvim標準の GetTypescriptIndent() は JSX を理解できず、
+        -- tsx の入れ子(<div>→<span>)が全て同じ深さに潰れて4スペースになる。
+        -- treesitter なら .prettierrc の tabWidth:2 と一致した階層で再現できる。
+        -- ※ 公式に experimental 扱い。崩れる言語が出たら disable = { "言語" } で除外する
+        indent = { enable = true },
         auto_install = false, -- 勝手な再インストールを止める
         sync_install = false,
       })
@@ -201,49 +193,48 @@ require("lazy").setup({
     config = function()
       local lspconfig = require("lspconfig")
 
-      -- 共通 on_attach: tsserver/solargraph のみフォーマットを無効化
+      -- 共通 on_attach: ts_ls/solargraph のみフォーマットを無効化
+      -- (フォーマットは none-ls の prettier / eslint / rubocop に任せる)
+      -- ※ nvim-lspconfig で tsserver は ts_ls に改名済み。旧名のままだと判定が発火せず
+      --   ts_ls がフォーマッタとして名乗り出て prettier と競合する
       local function on_attach_common(client, bufnr)
-        if client.name == "tsserver" or client.name == "solargraph" then
+        if client.name == "ts_ls" or client.name == "solargraph" then
           client.server_capabilities.documentFormattingProvider = false
           client.server_capabilities.documentRangeFormattingProvider = false
         end
 
-        -- g]/<C-]> は ctags に固定する。
-        -- nvim 0.11 は LSP アタッチ時に tagfunc を v:lua.vim.lsp.tagfunc へ差し替えるため、
-        -- そのままだと tags ファイルを見ずに LSP のシンボル検索になり
-        -- フルパス表示・kind名が長い(Module/Constant/Method)候補一覧になる。
-        -- 定義ジャンプは gd(LSP) が担うのでこちらは ctags に戻す。
-        -- ※ lsp._set_defaults() は on_attach より前に走るのでここでのリセットが有効
-        vim.bo[bufnr].tagfunc = nil
+        -- ※ g]/<C-]> を ctags に固定する処理は core/settings.lua の tagfunc 側で行う。
+        -- ここで tagfunc を空に戻してもサーバ初期化完了時に再度奪われる
       end
 
       -- TypeScript 用の LSP サーバー 事前にnpm install -g typescript-language-server
-      lspconfig.ts_ls.setup {
-        on_attach = function(client, bufnr)
-          on_attach_common(client, bufnr)
-          vim.keymap.set("n", "gd", vim.lsp.buf.definition, { buffer = bufnr })
-          vim.keymap.set("n", "gr", vim.lsp.buf.references, { buffer = bufnr })
-          vim.keymap.set("n", "K", vim.lsp.buf.hover, {})
-        end,
-      }
+      -- 未インストール環境では起動失敗の "Press ENTER" が毎回出るので実行可能かで判定する
+      if vim.fn.executable("typescript-language-server") == 1 then
+        lspconfig.ts_ls.setup {
+          on_attach = function(client, bufnr)
+            on_attach_common(client, bufnr)
+            vim.keymap.set("n", "gd", vim.lsp.buf.definition, { buffer = bufnr })
+            vim.keymap.set("n", "gr", vim.lsp.buf.references, { buffer = bufnr })
+            vim.keymap.set("n", "K", vim.lsp.buf.hover, {})
+          end,
+        }
+      end
       -- Ruby 用の LSP サーバー 事前にgem install solargraph
-      lspconfig.solargraph.setup {
-        on_attach = function(client, bufnr)
-          on_attach_common(client, bufnr)
-          vim.keymap.set("n", "gd", vim.lsp.buf.definition, { buffer = bufnr })
-          vim.keymap.set("n", "gr", vim.lsp.buf.references, { buffer = bufnr })
-          vim.keymap.set("n", "K", vim.lsp.buf.hover, {})
-        end,
-      }
+      if vim.fn.executable("solargraph") == 1 then
+        lspconfig.solargraph.setup {
+          on_attach = function(client, bufnr)
+            on_attach_common(client, bufnr)
+            vim.keymap.set("n", "gd", vim.lsp.buf.definition, { buffer = bufnr })
+            vim.keymap.set("n", "gr", vim.lsp.buf.references, { buffer = bufnr })
+            vim.keymap.set("n", "K", vim.lsp.buf.hover, {})
+          end,
+        }
+      end
     end,
   },
 
   -- ctrl + j or k 縦移動 現在位置から縦に次の文字がある場所へ移動する
   { "haya14busa/vim-edgemotion", lazy = false },
-
-  -- TypeScript 開発のサポート
-  -- { "leafgarland/typescript-vim"}, -- 構文ハイライトだがなくても変わらなかったためコメントアウト
-  -- { "peitalin/vim-jsx-typescript" }, -- 構文ハイライトだがなくても変わらなかったためコメントアウト
 
   -- ファイル保存時にeslintとprettierを自動実行
   {
@@ -252,16 +243,10 @@ require("lazy").setup({
     dependencies = { "nvim-lua/plenary.nvim", "nvimtools/none-ls-extras.nvim" },
   },
 
-  -- GitHub Copilotのチャット機能
-  {
-    "CopilotC-Nvim/CopilotChat.nvim",
-    branch = "main",
-    dependencies = {
-      { "github/copilot.vim" }, -- or zbirenbaum/copilot.lua
-      { "nvim-lua/plenary.nvim" }, -- for curl, log wrapper
-    },
-    build = "make tiktoken", -- Only on MacOS or Linux
-  },
+  -- GitHub Copilot のインライン補完
+  -- <Tab>で確定 / <C-]>で却下 / <M-]><M-[>で候補送り / \cpでトグル
+  -- (チャット系のAIプラグインは Claude Code に移行したため削除済み)
+  { "github/copilot.vim", lazy = false },
 
   -- \u で変更履歴を表示
   {
@@ -279,189 +264,6 @@ require("lazy").setup({
     },
   },
 
-  -- AI IDE \at でAI用のプロンプトを表示
-  -- cargo を使えるようにしておく
-  --   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  {
-    "yetone/avante.nvim",
-    event = "VeryLazy",
-    lazy = false,
-    version = false, -- set this if you want to always pull the latest change
-    opts = function()
-      -- Copilot を使う前提（OpenAI等にしたい場合は provider を変更）
-      local mcp = require("mcphub")
-      return {
-        provider = "copilot",
-        providers = {
-          copilot = {
-            model = "claude-sonnet-4",   -- 3.7/3.5 を使うならここを変更
-            -- 他に必要な項目があればここへ
-          },
-          -- openai = { model = "gpt-4o-mini", ... },
-          -- gemini = { model = "gemini-1.5-flash-latest", ... },
-        },
-        -- ★ MCP の“System Prompt”を Avante に注入（有効サーバの定義を下敷きに）
-        system_prompt = function()
-          local hub = mcp.get_hub_instance()
-          return hub and hub:get_active_servers_prompt() or ""
-        end,
-        -- ★ MCP ツールを Avante の Tools に1本差し込む
-        custom_tools = function()
-          local ok, ext = pcall(require, "mcphub.extensions.avante")
-          return ok and { ext.mcp_tool() } or {}
-        end,
-        behaviour = {
-          auto_suggestions = true,
-          auto_set_highlight_group = true,
-          auto_set_keymaps = true,
-          auto_apply_diff_after_generation = true,
-          support_paste_from_clipboard = true,
-        },
-        windows = {
-          position = "right",
-          width = 40,
-          wrap = true,
-          sidebar_header = {
-            align = "center",
-            rounded = false,
-          },
-          input = {
-            prefix = "> ",
-            height = 15,
-          },
-          ask = {
-            floating = true,
-            start_insert = true,
-            border = "single",
-          },
-        },
-      }
-    end,
-    -- opts = {
-    --   provider = 'openai',
-    --   -- provider = 'gemini',
-    --   openai = {
-    --     model = "gpt-4o-mini",
-    --     temperature = 0.7,
-    --     max_tokens = 4096,
-    --   },
-    --   gemini = {
-    --     model = "gemini-1.5-flash-latest",
-    --     temperature = 0.7,
-    --     max_tokens = 4096,
-    --   },
-    --   behaviour = {
-    --     auto_suggestions = true,
-    --     auto_set_highlight_group = true,
-    --     auto_set_keymaps = true,
-    --     auto_apply_diff_after_generation = true,
-    --     support_paste_from_clipboard = true,
-    --   },
-    --   windows = {
-    --     position = "right",
-    --     width = 30,
-    --     sidebar_header = {
-    --       align = "center",
-    --       rounded = false,
-    --     },
-    --     ask = {
-    --       floating = true,
-    --       start_insert = true,
-    --       border = "rounded"
-    --     }
-    --   },
-    -- },
-    -- if you want to build from source then do `make BUILD_FROM_SOURCE=true`
-    build = "make",
-    -- build = "powershell -ExecutionPolicy Bypass -File Build.ps1 -BuildFromSource false" -- for windows
-    dependencies = {
-      "nvim-treesitter/nvim-treesitter",
-      "stevearc/dressing.nvim",
-      "nvim-lua/plenary.nvim",
-      "MunifTanjim/nui.nvim",
-      --- The below dependencies are optional,
-      "nvim-tree/nvim-web-devicons", -- or echasnovski/mini.icons
-      "zbirenbaum/copilot.lua", -- for providers='copilot'
-      {
-        -- support for image pasting
-        "HakonHarnes/img-clip.nvim",
-        event = "VeryLazy",
-        opts = {
-          -- recommended settings
-          default = {
-            embed_image_as_base64 = false,
-            prompt_for_file_name = false,
-            drag_and_drop = {
-              insert_mode = true,
-            },
-            -- required for Windows users
-            use_absolute_path = true,
-          },
-        },
-      },
-      -- AI用プロンプトのカラー調整だがnvim-lspconfigも変わる
-      -- rloginだと色が合わず見難いため使わない
-      -- macだと良い感じなので環境含めてどうするか要検討
-      -- {
-      --   -- Make sure to set this up properly if you have lazy=true
-      --   'MeanderingProgrammer/render-markdown.nvim',
-      --   opts = {
-      --     file_types = { "markdown", "Avante" },
-      --   },
-      --   ft = { "markdown", "Avante" },
-      -- },
-    },
-  },
-  --- MCP
-  {
-    "ravitemer/mcphub.nvim",
-    dependencies = { "nvim-lua/plenary.nvim" },
-    cmd = { "MCPHub" },
-    build = "npm install -g mcp-hub@latest",
-    event = "VeryLazy",
-    config = function()
-      require("mcphub").setup({
-        -- デフォルトで ~/.config/mcphub/servers.json を読む
-        -- 必要なら env 共有などもここで設定可
-        -- global_env = { "GITHUB_MCP_PAT" },
-        -- まずツール承認ダイアログを省く（UI呼び出しを減らす意味でも有効）
-        auto_approve = true,
-
-        -- ★ ここが本丸：フロートの枠を 1セル幅に固定（エラー回避）
-        ui = {
-          window  = { border = "single" },
-          confirm = { border = "single" },
-          input   = { border = "single" },
-          select  = { border = "single" },
-          preview = { border = "single" },
-        },
-
-        extensions = {
-          avante = {
-            enabled = true,
-            make_slash_commands = true, -- prompts を持つサーバ用（GitHubはtools中心なので出なくても正常）
-          },
-        },
-      })
-    end,
-    -- opts = {
-    --   -- ツール実行の都度の確認ダイアログを省きたい場合は true（UI からも a キーで切替可）
-    --   -- auto_approve = true,
-    --   extensions = {
-    --     avante = {
-    --       enabled = true,
-    --       make_slash_commands = true,  -- /mcp:github:... みたいなスラコマを自動生成
-    --     },
-    --     -- 枠をASCIIに固定（確実に1セル）
-    --     ui = {
-    --       -- 好みで "single" でもOKだが、確実性重視で明示
-    --       border = { "+","-","+","|","+","-","+","|" },   -- tl, t, tr, r, br, b, bl, l
-    --       input  = { border = { "+","-","+","|","+","-","+","|" } },
-    --       select = { border = { "+","-","+","|","+","-","+","|" } },
-    --     },
-    --   },
-    -- },
-  },
 }, {
   -- 全プラグインを遅延ロード
   defaults = {

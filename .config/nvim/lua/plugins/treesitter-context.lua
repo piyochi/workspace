@@ -1,21 +1,9 @@
+-- 関数名やクラス名を画面上部に固定表示する
+-- ※ 旧APIの `patterns`(表示対象ノードの指定)は現行版で削除されており黙って無視される。
+--    現在の有効キーは enable / multiwindow / max_lines / min_window_height /
+--    line_numbers / multiline_threshold / trim_scope / zindex / mode
 require'treesitter-context'.setup{
-  enable = true, -- Enable this plugin (Can be enabled/disabled later via commands)
-  max_lines = 0, -- How many lines the window should span. Values <= 0 mean no limit.
-  trim_scope = 'outer', -- Which context lines to discard if `max_lines` is exceeded. Choices: 'inner', 'outer'
-  patterns = { -- Match patterns for TS nodes. These get wrapped to match at word boundaries.
-    -- For all filetypes
-    -- Note that setting an entry here replaces all other patterns for this entry.
-    -- By setting the 'default' entry below, you can control which nodes you want to
-    -- appear in the context window.
-    default = {
-      'class',
-      'function',
-      'method',
-      'for',
-      'while',
-      'if',
-      'switch',
-      'case',
-    },
-  },
+  enable = true,
+  max_lines = 0,        -- 表示行数の上限。0以下で無制限
+  trim_scope = 'outer', -- max_lines超過時にどちら側を捨てるか ('inner' / 'outer')
 }
