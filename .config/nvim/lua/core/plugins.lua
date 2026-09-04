@@ -83,13 +83,6 @@ require("lazy").setup({
   -- Node.js 開発のサポート gfでrequireやimportをジャンプ
   { "moll/vim-node", lazy = false},
 
-  -- JavaScript 開発のサポート
-  { "pangloss/vim-javascript", lazy = false},
-  { "jelera/vim-javascript-syntax", lazy = false},
-
-  -- HTML5 の補完や構文サポート
-  { "othree/html5.vim", lazy = false},
-
   -- タグリストの操作 F8
   { "majutsushi/tagbar", lazy = false },
 
@@ -163,10 +156,6 @@ require("lazy").setup({
   -- gcc でコメントと解除を切り替え
   { "tomtom/tcomment_vim", lazy = false },
 
-  -- 高速検索とファイル操作
-  { "junegunn/fzf", build = "./install --all", lazy = false }, -- FZF コマンドラインツール
-  { "junegunn/fzf.vim", event = { "CmdlineEnter" }}, -- FZF の Vim インターフェース
-
   -- Telescope フレームワーク
   { "nvim-telescope/telescope.nvim" },
 
@@ -218,6 +207,14 @@ require("lazy").setup({
           client.server_capabilities.documentFormattingProvider = false
           client.server_capabilities.documentRangeFormattingProvider = false
         end
+
+        -- g]/<C-]> は ctags に固定する。
+        -- nvim 0.11 は LSP アタッチ時に tagfunc を v:lua.vim.lsp.tagfunc へ差し替えるため、
+        -- そのままだと tags ファイルを見ずに LSP のシンボル検索になり
+        -- フルパス表示・kind名が長い(Module/Constant/Method)候補一覧になる。
+        -- 定義ジャンプは gd(LSP) が担うのでこちらは ctags に戻す。
+        -- ※ lsp._set_defaults() は on_attach より前に走るのでここでのリセットが有効
+        vim.bo[bufnr].tagfunc = nil
       end
 
       -- TypeScript 用の LSP サーバー 事前にnpm install -g typescript-language-server
@@ -254,7 +251,6 @@ require("lazy").setup({
     lazy = false,
     dependencies = { "nvim-lua/plenary.nvim", "nvimtools/none-ls-extras.nvim" },
   },
-  { "prettier/eslint-plugin-prettier", lazy = false },
 
   -- GitHub Copilotのチャット機能
   {
