@@ -1,17 +1,21 @@
+# Claude と Codex を対で起動する（1↔2・3↔4・5↔6・7↔8・9↔10・11↔12）。
+# CODEX_SLOT は相方の Codex の枠番号。Claude は ct-tmux-link の tmux_link.py partner でペインを引く
+# コマンドの先頭が @ の枠は起動せず履歴に積むだけ（ペインで ↑ → Enter で起動）。最初に立ち上がるのは [1][2][5][6]
+
 # Row 1: 環境1
-~/www/ticket_v2 | bin/claude ticket_v2 ticket_v2_api --permission-mode auto --teammate-mode tmux --continue | env1 claude(continue)
-~/www/ticket_v2 | bin/claude ticket_v2 ticket_v2_api --permission-mode auto --teammate-mode tmux | env1 claude(new)
-~/www/ticket_v2/ticket_v2_api | | env1 ticket_v2_api
-~/www/ticket_v2/ticket_v2 | | env1 ticket_v2
+~/www/ticket_v2 | CODEX_SLOT=2 bin/claude ticket_v2 ticket_v2_api --permission-mode auto --continue | env1 claude(continue)
+~/www/ticket_v2 | bin/codex ticket_v2_api ticket_v2 resume --last | env1 codex(continue)
+~/www/ticket_v2 | @CODEX_SLOT=4 bin/claude ticket_v2 ticket_v2_api --permission-mode auto | env1 claude(new)
+~/www/ticket_v2 | @bin/codex ticket_v2_api ticket_v2 | env1 codex(new)
 
 # Row 2: 環境2
-~/www/ticket_v2_second | bin/claude ticket_v2 ticket_v2_api --permission-mode auto --teammate-mode tmux --continue | env2 claude(continue)
-~/www/ticket_v2_second | bin/claude ticket_v2 ticket_v2_api --permission-mode auto --teammate-mode tmux | env2 claude(new)
-~/www/ticket_v2_second/ticket_v2_api | | env2 ticket_v2_api
-~/www/ticket_v2_second/ticket_v2 | | env2 ticket_v2
+~/www/ticket_v2_second | CODEX_SLOT=6 bin/claude ticket_v2 ticket_v2_api --permission-mode auto --continue | env2 claude(continue)
+~/www/ticket_v2_second | bin/codex ticket_v2_api ticket_v2 resume --last | env2 codex(continue)
+~/www/ticket_v2_second | @CODEX_SLOT=8 bin/claude ticket_v2 ticket_v2_api --permission-mode auto | env2 claude(new)
+~/www/ticket_v2_second | @bin/codex ticket_v2_api ticket_v2 | env2 codex(new)
 
-# Row 3: サーバー
-~/www/ticket_v2/ticket_v2_api | docker compose -f docker/docker-compose.yml up | env1 api server
-~/www/ticket_v2/ticket_v2 | docker compose -f docker-compose.yml up | env1 app server
-~/www/ticket_v2_second/ticket_v2_api | docker compose -f docker/docker-compose.yml --env-file docker/.env -p ticket_v2_api_2 up | env2 api server
-~/www/ticket_v2_second/ticket_v2 | docker compose -f docker-compose.yml -p ticket_v2_f_2 --env-file .env.development up | env2 app server
+# Row 3: 環境3・4（設計・調査専用。Codex は read-only）
+~/www/ticket_v2_third | @CODEX_SLOT=10 bin/claude ticket_v2 ticket_v2_api --permission-mode auto --continue | env3 claude(continue)
+~/www/ticket_v2_third | @bin/codex ticket_v2_api ticket_v2 --sandbox read-only resume --last | env3 codex(continue)
+~/www/ticket_v2_fourth | @CODEX_SLOT=12 bin/claude ticket_v2 ticket_v2_api --permission-mode auto --continue | env4 claude(continue)
+~/www/ticket_v2_fourth | @bin/codex ticket_v2_api ticket_v2 --sandbox read-only resume --last | env4 codex(continue)

@@ -849,8 +849,11 @@ for ((i = 0; i < ${#CLI_IDS[@]}; i++)); do
   # ディレクトリ移動
   tmux send-keys -t "$pane_id" "mkdir -p '$dir' && cd '$dir'" Enter
 
-  # コマンドがあれば実行
-  if [[ -n "$cmd" ]]; then
+  # コマンドがあれば実行。先頭が @ のコマンドは実行せず zsh の履歴に積むだけ（↑ で呼び出して起動する）
+  if [[ "$cmd" == @* ]]; then
+    printf -v hist_cmd '%q' "${cmd#@}"
+    tmux send-keys -t "$pane_id" " print -rs -- $hist_cmd; clear" Enter
+  elif [[ -n "$cmd" ]]; then
     tmux send-keys -t "$pane_id" "$cmd" Enter
   fi
 done

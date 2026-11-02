@@ -17,3 +17,6 @@ windows:
   - ~/bin/claude-monitor --no-window --name env2 -f ~/.tmuxp/ticket_v2_project/env2.txt -l left -w 65% -g 4x3
   start_directory: ~/www/ticket_v2_second
   window_name: env2
+- panes:
+  - ~/bin/claude-monitor --no-window --name envs -f ~/.tmuxp/ticket_v2_project/envs.txt -l left -w 50% -g 2x2
+  window_name: envs
