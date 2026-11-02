@@ -11,7 +11,7 @@
 ~/www/ticket_v2_second/ticket_v2 | docker compose -f docker-compose.yml -p ticket_v2_f_2 --env-file .env.development up | env2 app server
 
 # Row 3: ワーカー・ログ
-~/www/ticket_v2_second/ticket_v2_api | docker exec ticket_v2_api_2_app bundle exec rake sqs:worker | env2 sqs
+~/www/ticket_v2_second/ticket_v2_api | docker exec -it ticket_v2_api_2_app bundle exec rake sqs:worker | env2 sqs
 ~/www/ticket_v2_second/ticket_v2_api | tail -f log/development.log | env2 api log
 ~/www/ticket_v2_second/ticket_v2 | tail -f logs/* | env2 app log
 ~/www/ticket_v2_second | | env2 free3
