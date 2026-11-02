@@ -1,0 +1,54 @@
+#!/bin/bash
+# ============================================================================
+#  tmux-server-status — tmux のステータスバーに環境1・2のサーバー状態を出す
+#
+#  表示例: env1 ●api ●app ●sqs │ env2 ○api ◐app ○sqs
+#    ● 起動中（緑） / ◐ 一部だけ起動（黄・app の5コンテナのうち一部） / ○ 停止（灰）
+#    Docker に繋がらないときは「docker ✕」
+#
+#  判定:
+#    api  … コンテナ ticket_v2_api{SUFFIX}_app が動いているか
+#    app  … ticket_v2{SUFFIX}_f / _f_groups / _f_events / _f_panel / _f_user_groups のうち何個動いているか
+#    sqs  … api コンテナ内に rake sqs:worker / shoryuken のプロセスがあるか（docker top で見る）
+#
+#  ~/.tmux.conf の status-right から #(~/bin/tmux-server-status) で呼ぶ
+# ============================================================================
+
+ON='#[fg=colour28]●'
+PART='#[fg=colour136]◐'
+OFF='#[fg=colour245]○'
+LABEL='#[fg=black]'
+
+running=$(docker ps --format '{{.Names}}' 2>/dev/null) || { echo "${LABEL}docker #[fg=colour160]✕#[default]"; exit 0; }
+
+has() { grep -qx "$1" <<<"$running"; }
+
+status_env() {
+  local name="$1" suffix="$2"
+  local api="ticket_v2_api${suffix}_app"
+  local out="${LABEL}${name} "
+
+  # api
+  if has "$api"; then out+="${ON}api "; else out+="${OFF}api "; fi
+
+  # app（フロントは画面ごとに5コンテナ）
+  local total=0 up=0 c
+  for c in "" _groups _events _panel _user_groups; do
+    total=$((total + 1))
+    has "ticket_v2${suffix}_f${c}" && up=$((up + 1))
+  done
+  if [[ $up -eq $total ]]; then out+="${ON}app "
+  elif [[ $up -gt 0 ]]; then out+="${PART}app "
+  else out+="${OFF}app "; fi
+
+  # sqs（api コンテナが動いているときだけ見る）
+  if has "$api" && docker top "$api" -eo pid,args 2>/dev/null | grep -qE 'sqs:worker|shoryuken'; then
+    out+="${ON}sqs"
+  else
+    out+="${OFF}sqs"
+  fi
+
+  printf '%s' "$out"
+}
+
+echo "$(status_env env1 '')${LABEL} │ $(status_env env2 _2)#[default]"
