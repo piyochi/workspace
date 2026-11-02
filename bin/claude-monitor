@@ -727,7 +727,9 @@ chmod +x "$CLICK_SCRIPT"
 tmux set-option -t "$CURRENT_SESSION" mouse on
 tmux unbind-key -T root MouseDown3Pane
 tmux set-option -w -t "$WIN_ID" pane-border-status top
-tmux set-option -w -t "$WIN_ID" pane-border-format " #[bold]#{@cm_title} #[default]"
+# タイトルの色: Claude は @ai_state（~/bin/tmux-ai-state をフックから呼んで付ける）で busy=オレンジ・wait=赤、
+# 印の無いペインは Codex の処理中表示を画面から見る（~/bin/tmux-codex-busy、10 秒ごと）
+tmux set-option -w -t "$WIN_ID" pane-border-format ' #{?#{==:#{@ai_state},busy},#[bg=colour208#,fg=black],#{?#{==:#{@ai_state},wait},#[bg=colour196#,fg=white],#{?#{@ai_state},,#(~/bin/tmux-codex-busy #{pane_id})}}}#[bold] #{@cm_title} #[default]'
 
 # =============================================
 #  レイアウト構築

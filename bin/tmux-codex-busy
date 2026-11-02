@@ -1,0 +1,23 @@
+#!/bin/bash
+# ============================================================================
+#  tmux-codex-busy — 指定ペインの画面から Codex の状態を読み、枠タイトルの色指定を返す
+#
+#    承認待ち「Would you like to run the following command? / make the following edits? /
+#             grant these permissions?」→ 赤
+#    処理中「Working (」→ オレンジ（ct-tmux-link の PROFILES["codex"]["busy"] と同じ）
+#    それ以外 → 何も返さない（色なし）
+#  承認待ちの文言は Codex v0.166.0 に本人へ確認したもの（2026-11-03）。画面の下 15 行だけを見る
+#
+#  使い方: claude-monitor の pane-border-format から #(~/bin/tmux-codex-busy #{pane_id}) で呼ぶ
+#  更新はステータスバーと同じ status-interval（10 秒）ごと
+# ============================================================================
+
+[[ -z "${1:-}" ]] && exit 0
+screen=$(tmux capture-pane -p -t "$1" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 15)
+
+if grep -qE 'Would you like to (run the following command|make the following edits|grant these permissions)\?' <<<"$screen"; then
+  printf '%s' '#[bg=colour196,fg=white]'
+elif grep -q 'Working (' <<<"$screen"; then
+  printf '%s' '#[bg=colour208,fg=black]'
+fi
+exit 0

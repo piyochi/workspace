@@ -1,0 +1,32 @@
+#!/bin/bash
+# ============================================================================
+#  tmux-ai-state — Claude Code のフックから呼び、今のペインに処理状態の印（@ai_state）を付ける
+#
+#  使い方: tmux-ai-state busy|wait|idle|clear
+#    busy  処理中（枠のタイトルがオレンジ）
+#    wait  許可待ち・質問への回答待ち（赤）
+#    idle  入力待ち（色なし）
+#    clear 印を外す（セッション終了時）
+#
+#  枠の色は claude-monitor の pane-border-format が @ai_state を見て決める。
+#  フックを止めないよう、どんな場合も終了コード 0 で抜ける。
+# ============================================================================
+
+[[ -z "${TMUX_PANE:-}" ]] && exit 0
+state="${1:-idle}"
+
+current=$(tmux show-options -pqv -t "$TMUX_PANE" @ai_state 2>/dev/null)
+[[ "$state" == "clear" ]] && state=""
+[[ "$current" == "$state" ]] && exit 0
+
+if [[ -z "$state" ]]; then
+  tmux set-option -p -u -t "$TMUX_PANE" @ai_state 2>/dev/null
+else
+  tmux set-option -p -t "$TMUX_PANE" @ai_state "$state" 2>/dev/null
+fi
+
+# 枠を描き直す（状態が変わったときだけ）
+for c in $(tmux list-clients -F '#{client_name}' 2>/dev/null); do
+  tmux refresh-client -t "$c" 2>/dev/null
+done
+exit 0
