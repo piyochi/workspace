@@ -13,9 +13,11 @@ DEST_MCPHUB="$HOME/workspace/.config/mcphub/"
 DEST_BIN="$HOME/workspace/bin/"
 DEST_TMUXP="$HOME/workspace/.tmuxp/ticket_v2_project/"
 DEST_TMUXP_YAML="$HOME/workspace/.tmuxp/"
+SOURCE_DASHBOARD="$HOME/.local/share/dev-dashboard"
+DEST_DASHBOARD="$HOME/workspace/.local/share/dev-dashboard/"
 
 # 確認プロンプトを表示
-read -p "設定ファイル (nvim, mcphub, bin, tmuxp) を workspace にコピーしますか？ [Y/n]: " CONFIRM
+read -p "設定ファイル (nvim, mcphub, bin, tmuxp, dev-dashboard) を workspace にコピーしますか？ [Y/n]: " CONFIRM
 
 # 入力を大文字に変換して確認
 CONFIRM=${CONFIRM^^} # 小文字を大文字に変換
@@ -61,6 +63,15 @@ fi
 if [ -f "$SOURCE_TMUXP_YAML" ]; then
   echo "Copying $SOURCE_TMUXP_YAML to $DEST_TMUXP_YAML..."
   cp "$SOURCE_TMUXP_YAML" "$DEST_TMUXP_YAML"
+fi
+
+# dev-dashboard をコピー（合言葉入りの config.json・cache・ログは git に入れない）
+if [ -d "$SOURCE_DASHBOARD" ]; then
+  echo "Copying $SOURCE_DASHBOARD to $DEST_DASHBOARD..."
+  mkdir -p "$DEST_DASHBOARD"
+  rsync -av --exclude='.DS_Store' --exclude='config.json' --exclude='cache/' --exclude='backup/' \
+    --exclude='server.log' --exclude='__pycache__/' \
+    "$SOURCE_DASHBOARD/" "$DEST_DASHBOARD"
 fi
 
 if [ $? -eq 0 ]; then

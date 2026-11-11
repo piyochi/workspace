@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Claude Code の statusLine コマンド。
+
+Claude Code から渡される JSON のうち rate_limits（5時間枠・週の使用率）を
+アカウント（設定フォルダ）ごとに cache/claude-<key>.json へ書き出し、
+画面下には短い1行を出す。ダッシュボード（server.py）はこの cache を読む。
+"""
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+CACHE = os.path.join(BASE, "cache")
+
+
+def config_dir():
+    return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+
+
+def account_label(cdir):
+    """設定フォルダに対応する .claude.json の oauthAccount からメールを読む（無ければフォルダ名）。"""
+    default = os.path.expanduser("~/.claude")
+    candidates = [os.path.join(cdir, ".claude.json")]
+    if os.path.normpath(cdir) == default:
+        candidates.insert(0, os.path.expanduser("~/.claude.json"))
+    for path in candidates:
+        try:
+            with open(path) as f:
+                acct = json.load(f).get("oauthAccount") or {}
+            if acct.get("emailAddress"):
+                return acct["emailAddress"]
+        except (OSError, ValueError):
+            continue
+    return os.path.basename(os.path.normpath(cdir))
+
+
+def pct(window):
+    if not isinstance(window, dict):
+        return None
+    for k in ("used_percentage", "used_percent", "utilization"):
+        if isinstance(window.get(k), (int, float)):
+            return float(window[k])
+    return None
+
+
+def main():
+    raw = sys.stdin.read()
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        data = {}
+    os.makedirs(CACHE, exist_ok=True)
+
+    # 受け取った JSON の形（キーと rate_limits）を残す。項目名が変わったときの確認用
+    try:
+        with open(os.path.join(CACHE, "last-input-shape.json"), "w") as f:
+            json.dump({"keys": sorted(data.keys()), "rate_limits": data.get("rate_limits")}, f)
+    except OSError:
+        pass
+
+    cdir = config_dir()
+    key = hashlib.sha1(os.path.normpath(cdir).encode()).hexdigest()[:10]
+    limits = data.get("rate_limits")
+    if limits:
+        out = {
+            "config_dir": cdir,
+            "label": account_label(cdir),
+            "rate_limits": limits,
+            "updated_at": time.time(),
+        }
+        tmp = os.path.join(CACHE, f".claude-{key}.tmp")
+        with open(tmp, "w") as f:
+            json.dump(out, f)
+        os.replace(tmp, os.path.join(CACHE, f"claude-{key}.json"))
+
+    # --then <コマンド>: 画面の1行は既存のステータスラインに任せる（同じ JSON を渡して出力をそのまま出す）
+    if len(sys.argv) >= 3 and sys.argv[1] == "--then":
+        try:
+            res = subprocess.run(sys.argv[2:], input=raw, capture_output=True, text=True, timeout=10)
+            sys.stdout.write(res.stdout)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        return
+
+    parts = []
+    model = (data.get("model") or {}).get("display_name")
+    if model:
+        parts.append(model)
+    if limits:
+        five, week = pct(limits.get("five_hour")), pct(limits.get("seven_day"))
+        if five is not None:
+            parts.append(f"5h {five:.0f}%")
+        if week is not None:
+            parts.append(f"週 {week:.0f}%")
+    print(" | ".join(parts))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:  # ステータスラインの失敗で Claude の画面を壊さない
+        print("")

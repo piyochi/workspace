@@ -1,0 +1,6 @@
+# 合言葉が入るので git に入れない
+config.json
+cache/
+backup/
+server.log
+__pycache__/

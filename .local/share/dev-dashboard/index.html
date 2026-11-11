@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>開発ダッシュボード</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #6b7280; --line: #e3e6eb;
+  --ok: #16a34a; --off: #9ca3af; --warn: #d97706; --bad: #dc2626; --accent: #2563eb; --bar: #e5e7eb;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14161b; --card: #1d2027; --text: #e6e8ec; --muted: #9aa1ad; --line: #2c3039;
+          --ok: #22c55e; --off: #6b7280; --warn: #f59e0b; --bad: #f87171; --accent: #60a5fa; --bar: #2c3039; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+       font: 14px/1.5 -apple-system, "Segoe UI", "Yu Gothic UI", "Hiragino Sans", sans-serif; }
+main { max-width: 560px; margin: 0 auto; padding: 12px 16px 24px; }
+header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+h1 { font-size: 15px; margin: 0; }
+.updated { color: var(--muted); font-size: 12px; }
+.sec { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
+.sec > summary { list-style: none; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+.sec > summary::-webkit-details-marker { display: none; }
+.sec > summary::before { content: "▸"; color: var(--muted); font-size: 11px; transition: transform .15s; }
+.sec[open] > summary::before { transform: rotate(90deg); }
+.sec[open] > summary { margin-bottom: 6px; }
+h2 { font-size: 12px; color: var(--muted); margin: 0; font-weight: 600; letter-spacing: .04em; }
+.ticket { font-weight: 700; color: var(--accent); }
+.env { display: flex; align-items: center; gap: 10px; padding: 6px 0; flex-wrap: wrap; }
+.env + .env { border-top: 1px solid var(--line); }
+.env-name { font-weight: 700; width: 40px; }
+.chips { display: flex; gap: 10px; flex: 1; }
+.chip { display: inline-flex; align-items: center; gap: 4px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--off); }
+.dot.on { background: var(--ok); }
+.actions { display: flex; gap: 6px; }
+select, button { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; }
+button { cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .5; cursor: default; }
+.acct { padding: 6px 0; }
+.acct + .acct { border-top: 1px solid var(--line); }
+.acct-head { display: flex; justify-content: space-between; gap: 8px; }
+.acct-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.win { display: grid; grid-template-columns: 28px 1fr 72px; align-items: center; gap: 8px; margin-top: 4px; }
+.win-label { color: var(--muted); font-size: 12px; }
+.bar { height: 8px; background: var(--bar); border-radius: 4px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--ok); }
+.bar > i.warn { background: var(--warn); } .bar > i.bad { background: var(--bad); }
+.pct { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.reset { grid-column: 2 / 4; color: var(--muted); font-size: 11px; margin-top: -2px; }
+.stale { color: var(--warn); }
+.empty, .msg { color: var(--muted); font-size: 12px; }
+pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; font-size: 11px; max-height: 180px; overflow: auto; white-space: pre-wrap; }
+.err { color: var(--bad); }
+.grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.cell { border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; min-height: 52px; background: var(--bg); }
+.cell-head { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell-state { font-weight: 700; font-size: 12px; }
+.cell-task { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell.busy { border-color: #f97316; } .cell.busy .cell-state { color: #ea580c; }
+.cell.wait { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--bg)); } .cell.wait .cell-state { color: var(--bad); }
+.cell.idle .cell-state { color: var(--ok); }
+.cell.stopped { opacity: .55; } .cell.stopped .cell-state { color: var(--off); }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>開発ダッシュボード</h1><span class="updated" id="updated">読み込み中…</span></header>
+
+  <details class="sec" data-key="claude" open>
+    <summary><h2>Claude</h2></summary>
+    <div id="claude"></div>
+  </details>
+
+  <details class="sec" data-key="codex" open>
+    <summary><h2>Codex</h2></summary>
+    <div id="codex"></div>
+  </details>
+
+  <details class="sec" data-key="tmux" open>
+    <summary><h2>tmux [1]〜[12]</h2></summary>
+    <div id="panes"></div>
+  </details>
+
+  <details class="sec" data-key="servers" open>
+    <summary><h2>開発サーバー</h2></summary>
+    <div id="servers"></div>
+    <div id="job"></div>
+  </details>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+const fmtReset = (t) => {
+  if (!t) return "";
+  const d = new Date(t * 1000), now = new Date();
+  const same = d.toDateString() === now.toDateString();
+  const s = same ? fmtTime(t) : `${d.getMonth() + 1}/${d.getDate()}(${"日月火水木金土"[d.getDay()]}) ${fmtTime(t)}`;
+  const mins = Math.max(0, Math.round((t * 1000 - now) / 60000));
+  const left = mins >= 1440 ? `${Math.floor(mins / 1440)}日${Math.floor(mins % 1440 / 60)}時間` : `${Math.floor(mins / 60)}時間${mins % 60}分`;
+  return `${s} リセット（あと${left}）`;
+};
+let jobPolling = null;
+
+function renderServers(s) {
+  if (s.error) { $("servers").innerHTML = `<div class="err">${esc(s.error)}</div>`; return; }
+  const busy = !!(window.__job && window.__job.running);
+  $("servers").innerHTML = Object.entries(s.envs).map(([env, comps]) => `
+    <div class="env">
+      <span class="env-name">${env}</span>
+      <span class="chips">${["api", "app", "sqs"].map((c) =>
+        `<span class="chip"><span class="dot ${comps[c] ? "on" : ""}"></span>${c}</span>`).join("")}</span>
+      <span class="actions">
+        <select id="sel-${env}"><option value="all">全部</option><option value="api">api</option><option value="app">app</option><option value="sqs">sqs</option></select>
+        <button data-env="${env}" data-action="up" ${busy ? "disabled" : ""}>起動</button>
+        <button data-env="${env}" data-action="down" ${busy ? "disabled" : ""}>停止</button>
+        <button class="primary" data-env="${env}" data-action="restart" ${busy ? "disabled" : ""}>再起動</button>
+      </span>
+    </div>`).join("") + (s.messages.length ? `<div class="msg">${s.messages.map(esc).join("<br>")}</div>` : "");
+  document.querySelectorAll("button[data-env]").forEach((b) => b.onclick = () => run(b.dataset.action, b.dataset.env));
+}
+
+function renderUsage(el, rows, staleMin, now) {
+  if (!rows.length) { el.innerHTML = `<div class="empty">まだデータがありません（使うと出ます）</div>`; return; }
+  el.innerHTML = rows.map((r) => {
+    const stale = r.updated_at && (now - r.updated_at) > staleMin * 60;
+    const wins = Object.entries(r.windows).filter(([, w]) => w);
+    return `<div class="acct">
+      <div class="acct-head"><span class="acct-name">${esc(r.label)}${r.plan ? ` <span class="acct-meta">${esc(r.plan)}</span>` : ""}</span>
+        <span class="acct-meta ${stale ? "stale" : ""}">${r.updated_at ? fmtTime(r.updated_at) + " 時点" + (stale ? "（古い）" : "") : "未取得"}</span></div>
+      ${wins.length ? wins.map(([name, w]) => {
+        const p = Math.min(100, w.percent), cls = p >= 90 ? "bad" : p >= 70 ? "warn" : "";
+        return `<div class="win"><span class="win-label">${esc(name)}</span><span class="bar"><i class="${cls}" style="width:${p}%"></i></span><span class="pct">${p.toFixed(0)}%</span>
+          <span></span><span class="reset">残り ${(100 - p).toFixed(0)}%${w.resets_at ? `・${fmtReset(w.resets_at)}` : ""}</span></div>`;
+      }).join("") : `<div class="empty">使用率の記録がありません</div>`}
+    </div>`;
+  }).join("");
+}
+
+async function refresh() {
+  try {
+    const d = await (await fetch("/api/status")).json();
+    renderServers(d.servers);
+    renderUsage($("claude"), d.claude, d.stale_minutes, d.now);
+    renderUsage($("codex"), d.codex, d.stale_minutes * 48, d.now);
+    $("updated").textContent = `更新 ${fmtTime(d.now)}`;
+  } catch (e) {
+    $("updated").innerHTML = `<span class="err">Mac に接続できません</span>`;
+  }
+}
+
+function renderJob(j) {
+  window.__job = j;
+  if (!j.target) { $("job").innerHTML = ""; return; }
+  const state = j.running ? "実行中…" : j.rc === 0 ? "✅ 完了" : "⚠️ 失敗あり";
+  $("job").innerHTML = `<pre><b>${esc(j.target)}: ${state}</b>\n${esc(j.output)}</pre>`;
+  const pre = $("job").querySelector("pre"); pre.scrollTop = pre.scrollHeight;
+}
+
+async function pollJob() {
+  const j = await (await fetch("/api/job")).json();
+  renderJob(j);
+  if (!j.running) { clearInterval(jobPolling); jobPolling = null; refresh(); }
+}
+
+const ACTION_NAMES = { up: "起動", down: "停止", restart: "再起動" };
+async function run(action, env) {
+  const comp = $(`sel-${env}`).value;
+  const what = comp === "all" ? "api / app / sqs 全部" : comp;
+  if (!confirm(`${env} の ${what} を${ACTION_NAMES[action]}します。よろしいですか？`)) return;
+  const res = await fetch("/api/run", { method: "POST", headers: { "Content-Type": "application/json", "X-Dashboard": "1" }, body: JSON.stringify({ action, env, comp }) });
+  const d = await res.json();
+  if (!res.ok) { alert(d.error || "失敗しました"); return; }
+  document.querySelectorAll("button[data-env]").forEach((b) => b.disabled = true);
+  if (!jobPolling) jobPolling = setInterval(pollJob, 1500);
+  pollJob();
+}
+
+// チケット番号（タイトル優先、無ければ環境のブランチ）を先頭に出し、作業名を後ろに続ける。
+// タイトルに番号があればタイトルからは番号を抜いて重複させない
+function taskHtml(s) {
+  let task = s.task || "";
+  if (s.ticket_from === "title") {
+    task = task.replace(new RegExp(`#?${s.ticket}`), "").replace(/^[\s:：\-|]+|[\s:：\-|]+$/g, "").replace(/\s{2,}/g, " ");
+  }
+  if (!s.ticket) return task ? esc(task) : "&nbsp;";
+  const from = s.ticket_from === "branch" ? ' title="ブランチから"' : "";
+  return `<span class="ticket"${from}>#${s.ticket}</span> ${esc(task)}`;
+}
+
+const PANE_STATES = { busy: "処理中", wait: "確認待ち", idle: "入力待ち", stopped: "停止" };
+async function refreshPanes() {
+  try {
+    const d = await (await fetch("/api/panes")).json();
+    if (!d.running) { $("panes").innerHTML = `<div class="empty">現在 ticket_v2_project は動いていません（tmuxp が起動していません）</div>`; return; }
+    const bySlot = Object.fromEntries(d.slots.map((s) => [s.slot, s]));
+    $("panes").innerHTML = `<div class="grid">${Array.from({ length: 12 }, (_, i) => {
+      const s = bySlot[i + 1];
+      if (!s) return `<div class="cell stopped"><div class="cell-head">[${i + 1}]</div><div class="cell-state">なし</div></div>`;
+      return `<div class="cell ${s.state}" title="${esc(s.task)}">
+        <div class="cell-head">[${s.slot}] ${esc(s.env)} ${esc(s.kind)}</div>
+        <div class="cell-state">${PANE_STATES[s.state] || esc(s.state)}</div>
+        <div class="cell-task">${taskHtml(s)}</div></div>`;
+    }).join("")}</div>`;
+  } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
+}
+
+// 開閉の状態はこのブラウザにだけ覚える（読めなくても全部開いた状態で動く）
+document.querySelectorAll("details.sec").forEach((d) => {
+  try { if (localStorage.getItem(`dd-sec-${d.dataset.key}`) === "closed") d.open = false; } catch (e) {}
+  d.addEventListener("toggle", () => { try { localStorage.setItem(`dd-sec-${d.dataset.key}`, d.open ? "open" : "closed"); } catch (e) {} });
+});
+
+refresh();
+setInterval(refresh, 30000);
+refreshPanes();
+setInterval(refreshPanes, 5000);
+fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.running && !jobPolling) jobPolling = setInterval(pollJob, 1500); });
+</script>
+</body>
+</html>
