@@ -67,6 +67,10 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 .back:hover { text-decoration: underline; }
 .modal-title { flex: 1; font-weight: 700; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .modal-meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.modal-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.modal-actions .label { color: var(--muted); }
+.modal-actions .st { font-weight: 700; }
+.modal-actions button.danger { border-color: var(--bad); color: var(--bad); }
 .modal-body { flex: 1; margin: 0; padding: 10px 12px; overflow: auto; font: 12px/1.45 ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace; white-space: pre-wrap; word-break: break-all; background: var(--bg); border-radius: 0 0 10px 10px; max-height: none; }
 .cell-head { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cell-state { font-weight: 700; font-size: 12px; }
@@ -111,6 +115,7 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
       <span class="modal-meta" id="modal-meta"></span>
       <button id="modal-copy">全部コピー</button>
     </div>
+    <div class="modal-actions" id="modal-actions"></div>
     <pre class="modal-body" id="modal-body"></pre>
   </div>
 </div>
@@ -255,6 +260,7 @@ async function loadPane() {
     const d = await (await fetch(`/api/pane?slot=${modalSlot}`)).json();
     if (d.error) { body.textContent = d.error; return; }
     $("modal-title").textContent = d.title;
+    renderActions(d);
     if (body.textContent !== d.text) body.textContent = d.text;
     $("modal-meta").textContent = `更新 ${new Date().toLocaleTimeString("ja-JP")}`;
     if (atBottom) body.scrollTop = body.scrollHeight;
@@ -263,7 +269,8 @@ async function loadPane() {
 function openPane(slot) {
   // ブラウザの「戻る」でも閉じられるよう、開いたときに履歴を1つ積む
   if (!modalSlot) { try { history.pushState({ pane: slot }, ""); } catch (e) {} }
-  modalSlot = slot;
+  modalSlot = slot; actionsKey = "";
+  $("modal-actions").innerHTML = "";
   $("modal-title").textContent = `[${slot}]`;
   $("modal-body").textContent = "読み込み中…";
   $("modal").classList.add("open");
@@ -277,6 +284,37 @@ function closePane() { if (!modalSlot) return; if (history.state && history.stat
 window.addEventListener("popstate", hidePane);
 $("panes").addEventListener("click", (e) => { const c = e.target.closest(".cell[data-slot]"); if (c) openPane(Number(c.dataset.slot)); });
 // 全部コピー。http（LAN の IP）では navigator.clipboard が使えないことがあるので、textarea 経由の方法も用意する
+// 起動・停止ボタン。起動は止まっている枠だけ、停止は入力待ちの枠だけ押せる
+let actionsKey = "";
+function renderActions(d) {
+  const key = `${d.slot}|${d.state}|${pendingCli}`;
+  if (key === actionsKey) return;  // 状態が変わったときだけ描き直す（押そうとしたボタンが消えないように）
+  actionsKey = key;
+  const stopped = d.state === "stopped", busy = !!pendingCli;
+  const launch = d.modes.map((m) => `<button data-kind="${m.kind}" data-mode="${m.mode}" title="${esc(m.cmd)}" ${!stopped || busy ? "disabled" : ""}>${esc(m.label)}</button>`).join("");
+  const stopTip = d.state === "idle" ? "" : stopped ? "動いていません" : "処理中・確認待ちの間は止めません";
+  const now = d.state === "stopped" ? "" : `${d.kind === "claude" ? "Claude" : "Codex"} `;
+  $("modal-actions").innerHTML = `<span class="st">${now}${PANE_STATES[d.state] || esc(d.state)}</span>
+    <span class="label">起動:</span>${launch}<button class="danger" data-stop="1" title="${stopTip}" ${d.state !== "idle" || busy ? "disabled" : ""}>停止</button>
+    ${busy ? `<span class="label">${esc(pendingCli)}…</span>` : ""}`;
+  $("modal-actions").querySelectorAll("button[data-mode]").forEach((b) => b.onclick = () => cli("launch", b.dataset.kind, b.dataset.mode, b.title));
+  const sb = $("modal-actions").querySelector("button[data-stop]"); if (sb) sb.onclick = () => cli("stop");
+}
+let pendingCli = "";
+async function cli(action, kind, mode, cmd) {
+  const what = action === "stop" ? "停止" : `起動（${cmd}）`;
+  if (!confirm(`[${modalSlot}] を${what}します。よろしいですか？`)) return;
+  pendingCli = action === "stop" ? "停止中" : "起動中"; actionsKey = "";
+  await loadPane();
+  try {
+    const res = await fetch("/api/cli", { method: "POST", headers: { "Content-Type": "application/json", "X-Dashboard": "1" }, body: JSON.stringify({ action, kind, mode, slot: modalSlot }) });
+    const d = await res.json();
+    $("modal-meta").textContent = d.error || d.message || "";
+  } catch (e) { $("modal-meta").textContent = "送れませんでした"; }
+  pendingCli = ""; actionsKey = "";
+  await loadPane(); refreshPanes();
+}
+
 $("modal-copy").onclick = async () => {
   const text = $("modal-body").textContent;
   let ok = false;

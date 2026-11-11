@@ -4,6 +4,8 @@
   GET  /             … index.html
   GET  /api/status   … 環境1・2のサーバー状態 + Claude / Codex の使用率
   POST /api/run      … ~/bin/local-server <up|down|restart> <env> <comp> を裏で実行
+  GET  /api/pane     … [n] の枠の画面の文字と、起動できるモード
+  POST /api/cli      … [n] の枠で Claude / Codex を起動（monitor.txt のコマンド）・停止（入力待ちのときだけ）
   GET  /api/job      … 実行中・直近の操作の出力
 
 守り:
@@ -255,6 +257,36 @@ def claude_ticket(pane_id):
     return max(c, key=c.get) if c else ""
 
 
+def running_kinds():
+    """端末（tty）ごとに、動いている AI CLI（claude / codex）を返す。ps を1回だけ呼ぶ。
+
+    枠のタイトルは tmuxp で決めた「その枠の既定の CLI」なので、別の CLI を起動した枠もある。実際のプロセスで見る。
+    """
+    kinds = {}
+    try:
+        out = subprocess.run(["ps", "-A", "-o", "tty=,comm="], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return kinds
+    for line in out.splitlines():
+        tty, _, comm = line.strip().partition(" ")
+        name = os.path.basename(comm.strip())
+        if name in ("claude", "codex"):
+            kinds.setdefault(tty, set()).add(name)
+    return kinds
+
+
+def pane_status(pane_id, cmd, ai_state, tty, slot_kind, kinds):
+    """(動いている CLI の種類, 状態) を返す。止まっていれば種類は枠の既定。"""
+    # CLI はラッパーの bash から起動されるので、ログインシェル（zsh）に戻っていれば止まっている
+    if cmd == "zsh":
+        return slot_kind, "stopped"
+    found = kinds.get(tty.removeprefix("/dev/"), set())
+    kind = "codex" if "codex" in found and "claude" not in found else ("claude" if "claude" in found else slot_kind)
+    if kind == "claude":
+        return kind, (ai_state if ai_state in ("busy", "wait") else "idle")
+    return kind, codex_state(pane_id)
+
+
 def ai_panes():
     """tmuxp（ticket_v2_project）の monitor タブの [1]〜[12]（Claude / Codex）の稼働状態。
 
@@ -265,7 +297,8 @@ def ai_panes():
         if tmux("has-session", "-t", TMUX_SESSION).returncode != 0:
             return {"running": False, "slots": []}
         out = tmux("list-panes", "-s", "-t", TMUX_SESSION, "-F",
-                   "#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{@ai_state}\t#{@cm_title}\t#{pane_current_path}\t#{pane_title}").stdout
+                   "#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{@ai_state}\t#{@cm_title}\t#{pane_tty}\t#{pane_title}").stdout
+        kinds = running_kinds()
     except (OSError, subprocess.TimeoutExpired):
         return {"running": False, "slots": []}
     slots = {}
@@ -273,19 +306,13 @@ def ai_panes():
         parts = line.split("\t")
         if len(parts) < 7 or parts[0] != "monitor":
             continue
-        _, pane_id, cmd, ai_state, cm_title, _cwd = parts[:6]
+        _, pane_id, cmd, ai_state, cm_title, tty = parts[:6]
         pane_title = "\t".join(parts[6:])
         m = SLOT_TITLE.search(cm_title)
         if not m or "→ left" in cm_title:
             continue
-        n, env, kind = int(m.group(1)), m.group(2), m.group(3)
-        # CLI はラッパーの bash から起動されるので、ログインシェル（zsh）に戻っていれば止まっている
-        if cmd == "zsh":
-            state = "stopped"
-        elif kind == "claude":
-            state = ai_state if ai_state in ("busy", "wait") else "idle"
-        else:
-            state = codex_state(pane_id)
+        n, env, slot_kind = int(m.group(1)), m.group(2), m.group(3)
+        kind, state = pane_status(pane_id, cmd, ai_state, tty, slot_kind, kinds)
         task = re.sub(r"^[^\w\[(（]+", "", pane_title)
         task = re.sub(r"\s*\|\s*ticket_v2\w*$", "", task).strip()  # Codex は末尾にフォルダ名が付く
         # 作業名の無い枠はホスト名やフォルダ名がタイトルに入るので出さない
@@ -299,37 +326,147 @@ def ai_panes():
             ticket = ""
         else:
             ticket = claude_ticket(pane_id) if kind == "claude" else screen_ticket(pane_id)
-        slots[n] = {"slot": n, "env": env, "kind": kind, "state": state, "task": task, "ticket": ticket,
+        slots[n] = {"slot": n, "env": env, "kind": kind, "slot_kind": slot_kind, "state": state, "task": task, "ticket": ticket,
                     "ticket_from": "title" if m else ("session" if ticket else "")}
     return {"running": True, "slots": [slots[k] for k in sorted(slots)]}
 
 
+MONITOR_TXT = os.path.join(HOME, ".tmuxp", "ticket_v2_project", "monitor.txt")
+# 起動のしかた。Claude は --continue、Codex は resume --last で前回の続き
+CLI_MODES = {
+    "claude": {"new": "", "continue": "--continue"},
+    "codex": {"new": "", "resume": "resume --last"},
+}
+CLI_ALL_FLAGS = re.compile(r"\s+(--continue|resume\s+--last)\b")
+cli_lock = threading.Lock()
+
+
 def slot_pane(n):
-    """monitor タブの [n] の枠のペイン ID とタイトル（フォーカス中なら「★ FOCUS [n]」の方）。無ければ None。"""
-    out = tmux("list-panes", "-s", "-t", TMUX_SESSION, "-F", "#{window_name}\t#{pane_id}\t#{@cm_title}").stdout
+    """monitor タブの [n] の枠（フォーカス中なら「★ FOCUS [n]」の方）。無ければ None。"""
+    out = tmux("list-panes", "-s", "-t", TMUX_SESSION, "-F",
+               "#{window_name}\t#{pane_id}\t#{@cm_title}\t#{pane_current_command}\t#{@ai_state}\t#{pane_tty}").stdout
     for line in out.splitlines():
         parts = line.split("\t")
-        if len(parts) < 3 or parts[0] != "monitor" or "→ left" in parts[2]:
+        if len(parts) < 6 or parts[0] != "monitor" or "→ left" in parts[2]:
             continue
         m = SLOT_TITLE.search(parts[2])
         if m and int(m.group(1)) == n:
-            return parts[1], parts[2]
+            kind, state = pane_status(parts[1], parts[3], parts[4], parts[5], m.group(3), running_kinds())
+            return {"id": parts[1], "title": parts[2].replace("★ FOCUS ", ""), "kind": kind,
+                    "slot_kind": m.group(3), "state": state}
     return None
 
 
+def monitor_commands():
+    """monitor.txt の各行（「フォルダ | コマンド | タイトル」）を枠番号順に返す。先頭の @ は外す。"""
+    rows = []
+    try:
+        with open(MONITOR_TXT) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = [x.strip() for x in line.split(" | ")]
+                if len(parts) >= 2:
+                    rows.append({"dir": os.path.expanduser(parts[0]), "cmd": parts[1].lstrip("@")})
+    except OSError:
+        pass
+    return rows
+
+
+def launch_command(n, kind, mode):
+    """[n] の枠で kind（claude / codex）を mode で起動するコマンド。
+
+    フォルダは [n] の行のもの。コマンドは同じフォルダの行のうち bin/<kind> を使う行から取るので、
+    Codex の枠で Claude を（その逆も）起動できる。CODEX_SLOT（相方の Codex の枠番号）は奇数の枠の Claude だけに付ける。
+    """
+    rows = monitor_commands()
+    if not 1 <= n <= len(rows) or mode not in CLI_MODES.get(kind, {}):
+        return None
+    d = rows[n - 1]["dir"]
+    src = next((r["cmd"] for r in rows if r["dir"] == d and f"bin/{kind}" in r["cmd"]), None)
+    if not src:
+        return None
+    base = re.sub(r"^CODEX_SLOT=\d+\s+", "", CLI_ALL_FLAGS.sub("", src))
+    if kind == "claude" and n % 2 == 1:
+        base = f"CODEX_SLOT={n + 1} {base}"
+    extra = CLI_MODES[kind][mode]
+    return d, (f"{base} {extra}" if extra else base)
+
+
 def pane_text(n, lines=100):
-    """[n] の枠の画面を文字で返す（スクロールした分も含め直近 lines 行。見るだけで、送信はしない）。"""
+    """[n] の枠の画面を文字で返す（スクロールした分も含め直近 lines 行）と、起動できるコマンドの一覧。"""
     try:
         if tmux("has-session", "-t", TMUX_SESSION).returncode != 0:
             return {"error": "ticket_v2_project は動いていません"}
-        found = slot_pane(n)
-        if not found:
+        p = slot_pane(n)
+        if not p:
             return {"error": f"[{n}] の枠が見つかりません"}
-        pane_id, title = found
-        text = tmux("capture-pane", "-p", "-J", "-S", f"-{lines}", "-t", pane_id).stdout
+        text = tmux("capture-pane", "-p", "-J", "-S", f"-{lines}", "-t", p["id"]).stdout
     except (OSError, subprocess.TimeoutExpired) as e:
         return {"error": str(e)}
-    return {"slot": n, "title": title.replace("★ FOCUS ", ""), "text": text.rstrip("\n")}
+    labels = {"new": "新規", "continue": "continue", "resume": "resume --last"}
+    # 枠の既定の CLI を先に並べる
+    order = [p["slot_kind"]] + [k for k in CLI_MODES if k != p["slot_kind"]]
+    modes = []
+    for k in order:
+        for m in CLI_MODES[k]:
+            lc = launch_command(n, k, m)
+            if lc:
+                modes.append({"kind": k, "mode": m, "label": f"{'Claude' if k == 'claude' else 'Codex'} {labels[m]}", "cmd": lc[1]})
+    return {"slot": n, "title": p["title"], "kind": p["kind"], "slot_kind": p["slot_kind"], "state": p["state"],
+            "modes": modes, "text": text.rstrip("\n")}
+
+
+def wait_cmd(pane_id, want_shell, timeout):
+    """ペインがシェルに戻る（want_shell=True）/ シェルから CLI に変わる（False）まで待つ。"""
+    end = time.time() + timeout
+    while time.time() < end:
+        cur = tmux("display", "-p", "-t", pane_id, "#{pane_current_command}").stdout.strip()
+        if (cur == "zsh") == want_shell:
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def cli_launch(n, kind, mode):
+    """[n] の枠で kind（claude / codex）を起動する。シェル（zsh）に戻っている枠だけ。"""
+    p = slot_pane(n)
+    if not p:
+        return {"error": f"[{n}] の枠が見つかりません"}, 404
+    if mode not in CLI_MODES.get(kind, {}):
+        return {"error": f"{kind} に {mode} はありません"}, 400
+    if p["state"] != "stopped":
+        return {"error": f"{p['title']} はもう動いています"}, 409
+    lc = launch_command(n, kind, mode)
+    if not lc:
+        return {"error": "monitor.txt に起動コマンドが見つかりません"}, 404
+    d, cmd = lc
+    tmux("send-keys", "-t", p["id"], f"cd '{d}' && {cmd}", "Enter")
+    ok = wait_cmd(p["id"], want_shell=False, timeout=15)
+    return {"ok": ok, "message": f"{cmd} を送りました" + ("" if ok else "（15秒以内に起動を確認できませんでした）")}, 200
+
+
+def cli_stop(n):
+    """[n] の枠の Claude / Codex を終了する。入力待ちのときだけ（処理中・確認待ちは中断になるので止めない）。
+
+    Ctrl+C は「もう1回押すと終了」の表示が出ている短い間に2回目を押さないと終了しない（Claude / Codex とも）。
+    入力欄に文字があると1回目は文字を消すだけなので、「間をあけずに2回」をシェルに戻るまで最大3組送る。
+    """
+    p = slot_pane(n)
+    if not p:
+        return {"error": f"[{n}] の枠が見つかりません"}, 404
+    if p["state"] == "stopped":
+        return {"error": f"{p['title']} は動いていません"}, 409
+    if p["state"] != "idle":
+        return {"error": f"{p['title']} は処理中か確認待ちです。終わってから停止してください"}, 409
+    for _ in range(3):
+        tmux("send-keys", "-t", p["id"], "C-c")
+        time.sleep(0.3)
+        tmux("send-keys", "-t", p["id"], "C-c")
+        if wait_cmd(p["id"], want_shell=True, timeout=3):
+            return {"ok": True, "message": "停止しました"}, 200
+    return {"ok": False, "message": "停止を確認できませんでした。画面を見てください"}, 200
 
 
 def run_action(action, env, comp):
@@ -432,13 +569,33 @@ class Handler(BaseHTTPRequestHandler):
         # 別サイトのページからフォーム送信で叩かれないよう、独自ヘッダーを必須にする
         if self.headers.get("X-Dashboard") != "1":
             return self.send_json({"error": "forbidden"}, 403)
-        if self.path != "/api/run":
-            return self.send_json({"error": "not found"}, 404)
         try:
             n = int(self.headers.get("Content-Length") or 0)
             req = json.loads(self.rfile.read(n) or b"{}")
         except ValueError:
             return self.send_json({"error": "bad request"}, 400)
+        if self.path == "/api/cli":
+            try:
+                slot = int(req.get("slot"))
+            except (TypeError, ValueError):
+                return self.send_json({"error": "slot が不正です"}, 400)
+            if not 1 <= slot <= 12:
+                return self.send_json({"error": "slot は 1〜12 です"}, 400)
+            # 同じ枠に2回送らないよう、起動・停止は1つずつ
+            if not cli_lock.acquire(blocking=False):
+                return self.send_json({"error": "別の起動・停止を実行中です"}, 409)
+            try:
+                if req.get("action") == "launch":
+                    body, code = cli_launch(slot, req.get("kind"), req.get("mode", "new"))
+                elif req.get("action") == "stop":
+                    body, code = cli_stop(slot)
+                else:
+                    body, code = {"error": "action が不正です"}, 400
+            finally:
+                cli_lock.release()
+            return self.send_json(body, code)
+        if self.path != "/api/run":
+            return self.send_json({"error": "not found"}, 404)
         action, env, comp = req.get("action"), req.get("env"), req.get("comp", "all")
         if action not in ACTIONS or env not in ENVS or comp not in COMPS:
             return self.send_json({"error": "action / env / comp が不正です"}, 400)
