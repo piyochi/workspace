@@ -61,6 +61,18 @@ def main():
     except OSError:
         pass
 
+    # どの tmux の枠でどのセッションが動いているかを残す（ダッシュボードがチケット番号を引くのに使う）
+    pane = os.environ.get("TMUX_PANE", "")
+    if pane and data.get("transcript_path"):
+        try:
+            tmp = os.path.join(CACHE, f".pane-{pane.lstrip('%')}.tmp")
+            with open(tmp, "w") as f:
+                json.dump({"pane": pane, "session_id": data.get("session_id"),
+                           "transcript_path": data["transcript_path"], "updated_at": time.time()}, f)
+            os.replace(tmp, os.path.join(CACHE, f"pane-{pane.lstrip('%')}.json"))
+        except OSError:
+            pass
+
     cdir = config_dir()
     key = hashlib.sha1(os.path.normpath(cdir).encode()).hexdigest()[:10]
     limits = data.get("rate_limits")

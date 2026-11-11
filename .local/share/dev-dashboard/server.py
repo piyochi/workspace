@@ -194,30 +194,65 @@ def codex_state(pane_id):
 TICKET = re.compile(r"(?<!\d)(\d{5})(?!\d)")
 
 
-def branch_of(repo):
-    """リポジトリの今のブランチ名（.git/HEAD を読むだけ。取れなければ ""）。"""
-    head = os.path.join(repo, ".git", "HEAD")
-    try:
-        with open(head) as f:
-            ref = f.read().strip()
-    except OSError:
+SCREEN_TICKET = re.compile(r"#(\d{5})(?!\d)")
+PROMPT_TICKET = re.compile(r"(?<![\d.])#?(1\d{4})(?!\d)")
+transcript_cache = {}  # transcript_path -> {"offset", "counts"}（追記分だけ読む）
+
+
+def screen_ticket(pane_id):
+    """Codex 用: 枠の画面（直近 300 行）に出ている「#番号」のうち一番多いもの。無ければ ""。"""
+    text = tmux("capture-pane", "-p", "-J", "-S", "-300", "-t", pane_id).stdout
+    counts = {}
+    for n in SCREEN_TICKET.findall(text):
+        counts[n] = counts.get(n, 0) + 1
+    return max(counts, key=counts.get) if counts else ""
+
+
+def prompt_text(entry):
+    """transcript の1行から、ユーザーが入力した文だけを取り出す（ツールの結果・システムの差し込みは除く）。"""
+    if entry.get("type") != "user" or entry.get("isMeta"):
         return ""
-    return ref.removeprefix("ref: refs/heads/") if ref.startswith("ref: ") else ""
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, list):
+        content = "\n".join(c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
+    if not isinstance(content, str) or content.lstrip().startswith("<"):
+        return ""
+    return content
 
 
-def branch_ticket(cwd, cache):
-    """ペインの作業フォルダ（環境のルート）のブランチからチケット番号を取る。
+def claude_ticket(pane_id):
+    """Claude 用: その枠のセッションでユーザーが入力した文に出てくる番号のうち一番多いもの。
 
-    サブリポジトリ（ticket_v2_api → ticket_v2）を先に見て、無ければルート自身（design/<番号> 等）。
+    枠とセッションの対応は statusline.py が cache/pane-<id>.json に書く。
+    画面やブランチは使わない（画面は話題に出ただけの番号を拾い、ブランチは環境で1つなので新しいセッションにも付く）。
     """
-    if cwd not in cache:
-        cache[cwd] = ""
-        for repo in (os.path.join(cwd, "ticket_v2_api"), os.path.join(cwd, "ticket_v2"), cwd):
-            m = TICKET.search(branch_of(repo))
-            if m:
-                cache[cwd] = m.group(1)
-                break
-    return cache[cwd]
+    try:
+        with open(os.path.join(CACHE, f"pane-{pane_id.lstrip('%')}.json")) as f:
+            path = json.load(f)["transcript_path"]
+        size = os.path.getsize(path)
+    except (OSError, ValueError, KeyError):
+        return ""
+    st = transcript_cache.setdefault(path, {"offset": 0, "counts": {}})
+    if size < st["offset"]:
+        st.update(offset=0, counts={})
+    if size > st["offset"]:
+        with open(path, "rb") as f:
+            f.seek(st["offset"])
+            chunk = f.read()
+        last_nl = chunk.rfind(b"\n")
+        if last_nl >= 0:
+            st["offset"] += last_nl + 1
+            for line in chunk[:last_nl].decode("utf-8", "replace").splitlines():
+                if '"user"' not in line:
+                    continue
+                try:
+                    text = prompt_text(json.loads(line))
+                except ValueError:
+                    continue
+                for n in PROMPT_TICKET.findall(text):
+                    st["counts"][n] = st["counts"].get(n, 0) + 1
+    c = st["counts"]
+    return max(c, key=c.get) if c else ""
 
 
 def ai_panes():
@@ -233,12 +268,12 @@ def ai_panes():
                    "#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{@ai_state}\t#{@cm_title}\t#{pane_current_path}\t#{pane_title}").stdout
     except (OSError, subprocess.TimeoutExpired):
         return {"running": False, "slots": []}
-    slots, branch_cache = {}, {}
+    slots = {}
     for line in out.splitlines():
         parts = line.split("\t")
         if len(parts) < 7 or parts[0] != "monitor":
             continue
-        _, pane_id, cmd, ai_state, cm_title, cwd = parts[:6]
+        _, pane_id, cmd, ai_state, cm_title, _cwd = parts[:6]
         pane_title = "\t".join(parts[6:])
         m = SLOT_TITLE.search(cm_title)
         if not m or "→ left" in cm_title:
@@ -256,12 +291,45 @@ def ai_panes():
         # 作業名の無い枠はホスト名やフォルダ名がタイトルに入るので出さない
         if state == "stopped" or task == "MacBook-Pro.local" or re.fullmatch(r"ticket_v2\w*", task):
             task = ""
-        # チケット番号はタイトルを優先し、無ければ環境のブランチから取る
+        # チケット番号はタイトルを優先し、無ければ Claude は入力した文・Codex は画面の「#番号」から取る
         m = TICKET.search(task)
-        ticket = m.group(1) if m else (branch_ticket(cwd, branch_cache) if state != "stopped" else "")
+        if m:
+            ticket = m.group(1)
+        elif state == "stopped":
+            ticket = ""
+        else:
+            ticket = claude_ticket(pane_id) if kind == "claude" else screen_ticket(pane_id)
         slots[n] = {"slot": n, "env": env, "kind": kind, "state": state, "task": task, "ticket": ticket,
-                    "ticket_from": "title" if m else ("branch" if ticket else "")}
+                    "ticket_from": "title" if m else ("session" if ticket else "")}
     return {"running": True, "slots": [slots[k] for k in sorted(slots)]}
+
+
+def slot_pane(n):
+    """monitor タブの [n] の枠のペイン ID とタイトル（フォーカス中なら「★ FOCUS [n]」の方）。無ければ None。"""
+    out = tmux("list-panes", "-s", "-t", TMUX_SESSION, "-F", "#{window_name}\t#{pane_id}\t#{@cm_title}").stdout
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3 or parts[0] != "monitor" or "→ left" in parts[2]:
+            continue
+        m = SLOT_TITLE.search(parts[2])
+        if m and int(m.group(1)) == n:
+            return parts[1], parts[2]
+    return None
+
+
+def pane_text(n, lines=100):
+    """[n] の枠の画面を文字で返す（スクロールした分も含め直近 lines 行。見るだけで、送信はしない）。"""
+    try:
+        if tmux("has-session", "-t", TMUX_SESSION).returncode != 0:
+            return {"error": "ticket_v2_project は動いていません"}
+        found = slot_pane(n)
+        if not found:
+            return {"error": f"[{n}] の枠が見つかりません"}
+        pane_id, title = found
+        text = tmux("capture-pane", "-p", "-J", "-S", f"-{lines}", "-t", pane_id).stdout
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return {"error": str(e)}
+    return {"slot": n, "title": title.replace("★ FOCUS ", ""), "text": text.rstrip("\n")}
 
 
 def run_action(action, env, comp):
@@ -314,6 +382,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "合言葉が違います。/?key=<合言葉> で開いてください"}, 403)
             return False
         self.path = url.path
+        self.query = parse_qs(url.query)
         self.set_cookie = bool(key) and hmac.compare_digest(given, key)
         return True
 
@@ -341,6 +410,14 @@ class Handler(BaseHTTPRequestHandler):
                 "codex": codex_usage(cfg),
                 "stale_minutes": cfg["stale_minutes"],
             })
+        elif self.path == "/api/pane":
+            try:
+                n = int(self.query.get("slot", ["0"])[0])
+            except ValueError:
+                n = 0
+            if not 1 <= n <= 12:
+                return self.send_json({"error": "slot は 1〜12 です"}, 400)
+            self.send_json(pane_text(n))
         elif self.path == "/api/panes":
             self.send_json(ai_panes())
         elif self.path == "/api/job":

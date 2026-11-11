@@ -57,7 +57,17 @@ button:disabled { opacity: .5; cursor: default; }
 pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; font-size: 11px; max-height: 180px; overflow: auto; white-space: pre-wrap; }
 .err { color: var(--bad); }
 .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-.cell { border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; min-height: 52px; background: var(--bg); }
+.cell { border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; min-height: 52px; background: var(--bg); cursor: pointer; }
+.cell:hover { outline: 2px solid var(--accent); outline-offset: -1px; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; padding: 12px; z-index: 10; }
+.modal.open { display: flex; }
+.modal-box { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 10px; width: min(960px, 100%); height: min(85vh, 900px); display: flex; flex-direction: column; }
+.modal-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.back { color: var(--accent); text-decoration: none; font-size: 13px; white-space: nowrap; }
+.back:hover { text-decoration: underline; }
+.modal-title { flex: 1; font-weight: 700; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal-meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.modal-body { flex: 1; margin: 0; padding: 10px 12px; overflow: auto; font: 12px/1.45 ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace; white-space: pre-wrap; word-break: break-all; background: var(--bg); border-radius: 0 0 10px 10px; max-height: none; }
 .cell-head { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cell-state { font-weight: 700; font-size: 12px; }
 .cell-task { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -92,6 +102,18 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
     <div id="job"></div>
   </details>
 </main>
+
+<div class="modal" id="modal" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <div class="modal-head">
+      <a href="#" class="back" id="modal-back">← 戻る</a>
+      <span class="modal-title" id="modal-title"></span>
+      <span class="modal-meta" id="modal-meta"></span>
+      <button id="modal-copy">全部コピー</button>
+    </div>
+    <pre class="modal-body" id="modal-body"></pre>
+  </div>
+</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -182,7 +204,7 @@ async function run(action, env) {
   pollJob();
 }
 
-// チケット番号（タイトル優先、無ければ環境のブランチ）を先頭に出し、作業名を後ろに続ける。
+// チケット番号（タイトル優先、無ければそのセッションのやり取り）を先頭に出し、作業名を後ろに続ける。
 // タイトルに番号があればタイトルからは番号を抜いて重複させない
 function taskHtml(s) {
   let task = s.task || "";
@@ -190,7 +212,7 @@ function taskHtml(s) {
     task = task.replace(new RegExp(`#?${s.ticket}`), "").replace(/^[\s:：\-|]+|[\s:：\-|]+$/g, "").replace(/\s{2,}/g, " ");
   }
   if (!s.ticket) return task ? esc(task) : "&nbsp;";
-  const from = s.ticket_from === "branch" ? ' title="ブランチから"' : "";
+  const from = s.ticket_from === "session" ? ' title="セッションのやり取りから"' : "";
   return `<span class="ticket"${from}>#${s.ticket}</span> ${esc(task)}`;
 }
 
@@ -203,7 +225,7 @@ async function refreshPanes() {
     $("panes").innerHTML = `<div class="grid">${Array.from({ length: 12 }, (_, i) => {
       const s = bySlot[i + 1];
       if (!s) return `<div class="cell stopped"><div class="cell-head">[${i + 1}]</div><div class="cell-state">なし</div></div>`;
-      return `<div class="cell ${s.state}" title="${esc(s.task)}">
+      return `<div class="cell ${s.state}" data-slot="${s.slot}" title="${esc(s.task)}">
         <div class="cell-head">[${s.slot}] ${esc(s.env)} ${esc(s.kind)}</div>
         <div class="cell-state">${PANE_STATES[s.state] || esc(s.state)}</div>
         <div class="cell-task">${taskHtml(s)}</div></div>`;
@@ -216,6 +238,65 @@ document.querySelectorAll("details.sec").forEach((d) => {
   try { if (localStorage.getItem(`dd-sec-${d.dataset.key}`) === "closed") d.open = false; } catch (e) {}
   d.addEventListener("toggle", () => { try { localStorage.setItem(`dd-sec-${d.dataset.key}`, d.open ? "open" : "closed"); } catch (e) {} });
 });
+
+// 枠の画面を見る（見るだけ。開いている間は 3 秒ごとに更新。下までスクロールしているときだけ最新に追従）
+let modalSlot = null, modalTimer = null;
+async function loadPane() {
+  if (!modalSlot) return;
+  const body = $("modal-body");
+  // 文字を選んでいる間は書き換えない（書き換えると選択が外れてコピーできない）
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed && body.contains(sel.anchorNode)) {
+    $("modal-meta").textContent = "選択中は更新を止めています";
+    return;
+  }
+  const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  try {
+    const d = await (await fetch(`/api/pane?slot=${modalSlot}`)).json();
+    if (d.error) { body.textContent = d.error; return; }
+    $("modal-title").textContent = d.title;
+    if (body.textContent !== d.text) body.textContent = d.text;
+    $("modal-meta").textContent = `更新 ${new Date().toLocaleTimeString("ja-JP")}`;
+    if (atBottom) body.scrollTop = body.scrollHeight;
+  } catch (e) { $("modal-meta").textContent = "取得できませんでした"; }
+}
+function openPane(slot) {
+  // ブラウザの「戻る」でも閉じられるよう、開いたときに履歴を1つ積む
+  if (!modalSlot) { try { history.pushState({ pane: slot }, ""); } catch (e) {} }
+  modalSlot = slot;
+  $("modal-title").textContent = `[${slot}]`;
+  $("modal-body").textContent = "読み込み中…";
+  $("modal").classList.add("open");
+  $("modal-body").scrollTop = 0;
+  loadPane().then(() => { $("modal-body").scrollTop = $("modal-body").scrollHeight; });
+  clearInterval(modalTimer); modalTimer = setInterval(loadPane, 3000);
+}
+function hidePane() { modalSlot = null; clearInterval(modalTimer); $("modal").classList.remove("open"); }
+// 戻るリンク・Esc・外側クリックは、積んだ履歴を戻して閉じる（ブラウザの戻ると同じ動き）
+function closePane() { if (!modalSlot) return; if (history.state && history.state.pane) history.back(); else hidePane(); }
+window.addEventListener("popstate", hidePane);
+$("panes").addEventListener("click", (e) => { const c = e.target.closest(".cell[data-slot]"); if (c) openPane(Number(c.dataset.slot)); });
+// 全部コピー。http（LAN の IP）では navigator.clipboard が使えないことがあるので、textarea 経由の方法も用意する
+$("modal-copy").onclick = async () => {
+  const text = $("modal-body").textContent;
+  let ok = false;
+  try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); ok = true; } } catch (e) {}
+  if (!ok) {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand("copy"); } catch (e) {}
+    ta.remove();
+  }
+  $("modal-meta").textContent = ok ? "コピーしました" : "コピーできませんでした（文字を選んで Ctrl+C）";
+};
+$("modal-back").onclick = (e) => { e.preventDefault(); closePane(); };
+// 外側クリックで閉じるのは、押した所も離した所も外側のときだけ。
+// 文字を選びながら外側で離すと click が外側に届くので、押した所を覚えておいて区別する
+let downOnOverlay = false;
+$("modal").addEventListener("mousedown", (e) => { downOnOverlay = e.target.id === "modal"; });
+$("modal").addEventListener("click", (e) => { if (e.target.id === "modal" && downOnOverlay) closePane(); downOnOverlay = false; });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePane(); });
 
 refresh();
 setInterval(refresh, 30000);
