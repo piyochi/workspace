@@ -37,6 +37,36 @@ def account_label(cdir):
     return os.path.basename(os.path.normpath(cdir))
 
 
+def current_pane():
+    """今の Claude が表示されている tmux の枠（%番号）。分からなければ ""。
+
+    環境変数 TMUX_PANE が無いとき（セッションの実行が daemon の作業用プロセス claude bg-spare に移ると渡らない）は、
+    親プロセスをたどり、tmux の枠と同じ端末（tty）を持つプロセスの枠を使う（~/bin/tmux-ai-state と同じ決め方）。
+    """
+    pane = os.environ.get("TMUX_PANE", "")
+    if pane:
+        return pane
+    try:
+        out = subprocess.run(["tmux", "list-panes", "-a", "-F", "#{pane_tty} #{pane_id}"],
+                             capture_output=True, text=True, timeout=3).stdout
+        panes = dict(line.split(" ", 1) for line in out.splitlines() if " " in line)
+        pid = os.getppid()
+        for _ in range(10):
+            info = subprocess.run(["ps", "-o", "ppid=,tty=", "-p", str(pid)],
+                                  capture_output=True, text=True, timeout=3).stdout.split()
+            if len(info) < 2:
+                break
+            ppid, tty = info[0], info[1]
+            if tty != "??" and f"/dev/{tty}" in panes:
+                return panes[f"/dev/{tty}"]
+            if not ppid.isdigit() or int(ppid) <= 1:
+                break
+            pid = int(ppid)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return ""
+
+
 def pct(window):
     if not isinstance(window, dict):
         return None
@@ -62,7 +92,7 @@ def main():
         pass
 
     # どの tmux の枠でどのセッションが動いているかを残す（ダッシュボードがチケット番号を引くのに使う）
-    pane = os.environ.get("TMUX_PANE", "")
+    pane = current_pane()
     if pane and data.get("transcript_path"):
         try:
             tmp = os.path.join(CACHE, f".pane-{pane.lstrip('%')}.tmp")

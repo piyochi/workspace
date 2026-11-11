@@ -10,19 +10,57 @@
 #
 #  枠の色は claude-monitor の pane-border-format が @ai_state を見て決める。
 #  フックを止めないよう、どんな場合も終了コード 0 で抜ける。
+#
+#  枠の決め方:
+#    1. 環境変数 TMUX_PANE（枠の中で直接動いている Claude のフック）
+#    2. 無ければ親プロセスをたどり、tmux の枠と同じ端末（tty）を持つプロセスの枠
+#       セッションの実行が daemon の作業用プロセス（claude bg-spare）に移ると、フックに TMUX / TMUX_PANE が
+#       渡らない（2026-11-11 実測: bg-spare → bg-pty-host → daemon → 枠の claude の順で、枠の claude だけが枠の tty を持つ）
+#  サブエージェントの道具の実行（入力に agent_id がある）は busy にしない。本体が入力待ち（Stop の後）に
+#  サブエージェントが動くと、処理中に戻って入力待ちに戻らないため（SubagentStop では idle にしない＝本体の状態を変えない）
 # ============================================================================
 
-[[ -z "${TMUX_PANE:-}" ]] && exit 0
 state="${1:-idle}"
+LOG="$HOME/.local/share/dev-dashboard/cache/ai-state.log"
 
-current=$(tmux show-options -pqv -t "$TMUX_PANE" @ai_state 2>/dev/null)
+input=""
+[[ ! -t 0 ]] && input=$(timeout 1 cat 2>/dev/null)
+agent_id=$(printf '%s' "$input" | /usr/bin/jq -r '.agent_id // empty' 2>/dev/null)
+event=$(printf '%s' "$input" | /usr/bin/jq -r '.hook_event_name // empty' 2>/dev/null)
+
+# 今のフックが動いている枠を決める
+pane="${TMUX_PANE:-}"
+how="env"
+if [[ -z "$pane" ]]; then
+  how="tty"
+  ttys=$(tmux list-panes -a -F '#{pane_tty} #{pane_id}' 2>/dev/null)
+  p=$PPID
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    t=$(ps -o tty= -p "$p" 2>/dev/null | tr -d ' ')
+    if [[ -n "$t" && "$t" != "??" ]]; then
+      pane=$(awk -v t="/dev/$t" '$1 == t { print $2; exit }' <<< "$ttys")
+      [[ -n "$pane" ]] && break
+    fi
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+    [[ -z "$p" || "$p" -le 1 ]] && break
+  done
+fi
+
+# 調査用の記録（2026-11-11〜。原因が落ち着いたら消してよい）
+printf '%s\t%s\t%s\tpane=%s(%s)\tagent=%s\n' "$(date '+%H:%M:%S')" "$event" "$state" "${pane:-なし}" "$how" "${agent_id:-}" >> "$LOG" 2>/dev/null
+
+[[ -z "$pane" ]] && exit 0
+# サブエージェントの道具の実行では本体の状態を変えない（確認待ちの wait は本体の操作が要るので変える）
+[[ -n "$agent_id" && "$state" == "busy" ]] && exit 0
+
+current=$(tmux show-options -pqv -t "$pane" @ai_state 2>/dev/null)
 [[ "$state" == "clear" ]] && state=""
 [[ "$current" == "$state" ]] && exit 0
 
 if [[ -z "$state" ]]; then
-  tmux set-option -p -u -t "$TMUX_PANE" @ai_state 2>/dev/null
+  tmux set-option -p -u -t "$pane" @ai_state 2>/dev/null
 else
-  tmux set-option -p -t "$TMUX_PANE" @ai_state "$state" 2>/dev/null
+  tmux set-option -p -t "$pane" @ai_state "$state" 2>/dev/null
 fi
 
 # 枠を描き直す（状態が変わったときだけ）
