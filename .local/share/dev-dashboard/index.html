@@ -242,7 +242,7 @@ async function refreshPanes() {
     $("panes").innerHTML = `<div class="grid">${Array.from({ length: 12 }, (_, i) => {
       const s = bySlot[i + 1];
       if (!s) return `<div class="cell stopped"><div class="cell-head">[${i + 1}]</div><div class="cell-state">なし</div></div>`;
-      return `<div class="cell ${s.state}" data-slot="${s.slot}" title="${esc(s.task)}">
+      return `<div class="cell ${s.state}" data-slot="${s.slot}" title="${esc(cellTip(s))}">
         <div class="cell-head"><span class="cell-name">[${s.slot}] ${esc(s.env)} ${esc(s.kind)}</span>${linkHtml(s)}</div>
         <div class="cell-state">${PANE_STATES[s.state] || esc(s.state)}</div>
         <div class="cell-task">${taskHtml(s)}</div>
@@ -298,6 +298,12 @@ function closePane() { if (!modalSlot) return; if (history.state && history.stat
 window.addEventListener("popstate", hidePane);
 $("panes").addEventListener("click", (e) => { const c = e.target.closest(".cell[data-slot]"); if (c) openPane(Number(c.dataset.slot)); });
 // 全部コピー。http（LAN の IP）では navigator.clipboard が使えないことがあるので、textarea 経由の方法も用意する
+// マウスを乗せたときの説明: 1行目に「[9] env3 claude -> [3][10]」、2行目以降に作業名・スキル
+function cellTip(s) {
+  const head = `[${s.slot}] ${s.env} ${s.kind}${s.link ? ` -> ${s.link.slots.map((n) => `[${n}]`).join("")}` : ""}`;
+  return [head, s.task, s.skill ? `スキル: ${s.skill}` : ""].filter(Boolean).join("\n");
+}
+
 // 連動先の表示。ダッシュボードで付けたものは太字、起動時の CODEX_SLOT のものは細字
 function linkHtml(s) {
   if (!s.link) return "";
