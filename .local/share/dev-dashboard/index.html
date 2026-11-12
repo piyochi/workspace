@@ -72,9 +72,18 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 .modal-actions .st { font-weight: 700; }
 .modal-actions button.danger { border-color: var(--bad); color: var(--bad); }
 .modal-body { flex: 1; margin: 0; padding: 10px 12px; overflow: auto; font: 12px/1.45 ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace; white-space: pre-wrap; word-break: break-all; background: var(--bg); border-radius: 0 0 10px 10px; max-height: none; }
-.cell-head { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 枠名と連動先を必ず1行に。枠名が長ければ枠名の方を … で切り、連動先は常に見せる */
+.cell-head { font-size: 11px; color: var(--muted); display: flex; align-items: baseline; gap: 4px; white-space: nowrap; min-width: 0; }
+.cell-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cell-head .cell-link { flex-shrink: 0; }
 .cell-state { font-weight: 700; font-size: 12px; }
 .cell-task { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell-skill { font-size: 11px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell-link { color: var(--accent); font-weight: 700; }
+.cell-link.env { font-weight: 400; }
+.modal-link { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.modal-link .label { color: var(--muted); }
+.modal-link label { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; cursor: pointer; }
 .cell.busy { border-color: #f97316; } .cell.busy .cell-state { color: #ea580c; }
 .cell.wait { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--bg)); } .cell.wait .cell-state { color: var(--bad); }
 .cell.idle .cell-state { color: var(--ok); }
@@ -116,6 +125,7 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
       <button id="modal-copy">全部コピー</button>
     </div>
     <div class="modal-actions" id="modal-actions"></div>
+    <div class="modal-link" id="modal-link"></div>
     <pre class="modal-body" id="modal-body"></pre>
   </div>
 </div>
@@ -227,13 +237,16 @@ async function refreshPanes() {
     const d = await (await fetch("/api/panes")).json();
     if (!d.running) { $("panes").innerHTML = `<div class="empty">現在 ticket_v2_project は動いていません（tmuxp が起動していません）</div>`; return; }
     const bySlot = Object.fromEntries(d.slots.map((s) => [s.slot, s]));
+    window.__slots = bySlot;
+    if (modalSlot) renderLink();
     $("panes").innerHTML = `<div class="grid">${Array.from({ length: 12 }, (_, i) => {
       const s = bySlot[i + 1];
       if (!s) return `<div class="cell stopped"><div class="cell-head">[${i + 1}]</div><div class="cell-state">なし</div></div>`;
       return `<div class="cell ${s.state}" data-slot="${s.slot}" title="${esc(s.task)}">
-        <div class="cell-head">[${s.slot}] ${esc(s.env)} ${esc(s.kind)}</div>
+        <div class="cell-head"><span class="cell-name">[${s.slot}] ${esc(s.env)} ${esc(s.kind)}</span>${linkHtml(s)}</div>
         <div class="cell-state">${PANE_STATES[s.state] || esc(s.state)}</div>
-        <div class="cell-task">${taskHtml(s)}</div></div>`;
+        <div class="cell-task">${taskHtml(s)}</div>
+        <div class="cell-skill">${s.skill ? `⚙ ${esc(s.skill)}` : "&nbsp;"}</div></div>`;
     }).join("")}</div>`;
   } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
 }
@@ -269,8 +282,9 @@ async function loadPane() {
 function openPane(slot) {
   // ブラウザの「戻る」でも閉じられるよう、開いたときに履歴を1つ積む
   if (!modalSlot) { try { history.pushState({ pane: slot }, ""); } catch (e) {} }
-  modalSlot = slot; actionsKey = "";
+  modalSlot = slot; actionsKey = ""; linkKey = "";
   $("modal-actions").innerHTML = "";
+  renderLink();
   $("modal-title").textContent = `[${slot}]`;
   $("modal-body").textContent = "読み込み中…";
   $("modal").classList.add("open");
@@ -284,6 +298,43 @@ function closePane() { if (!modalSlot) return; if (history.state && history.stat
 window.addEventListener("popstate", hidePane);
 $("panes").addEventListener("click", (e) => { const c = e.target.closest(".cell[data-slot]"); if (c) openPane(Number(c.dataset.slot)); });
 // 全部コピー。http（LAN の IP）では navigator.clipboard が使えないことがあるので、textarea 経由の方法も用意する
+// 連動先の表示。ダッシュボードで付けたものは太字、起動時の CODEX_SLOT のものは細字
+function linkHtml(s) {
+  if (!s.link) return "";
+  const env = s.link.from === "codex_slot";
+  return `<span class="cell-link${env ? " env" : ""}" title="${env ? "起動時の CODEX_SLOT" : "ダッシュボードで設定"}">→${s.link.slots.map((n) => `[${n}]`).join("")}</span>`;
+}
+
+// 連動先を選ぶ欄。印はペインに付き、ct-link スキルが CODEX_SLOT より先に見る
+let linkKey = "";
+function renderLink() {
+  const s = (window.__slots || {})[modalSlot];
+  if (!s) { $("modal-link").innerHTML = ""; linkKey = ""; return; }
+  const cur = s.link ? s.link.slots : [];
+  const key = `${modalSlot}|${cur.join(",")}|${s.link ? s.link.from : ""}|${s.skill}`;
+  if (key === linkKey) return;  // 変わったときだけ描き直す（選びかけの選択が戻らないように）
+  linkKey = key;
+  const from = !s.link ? "なし" : s.link.from === "dashboard" ? "ダッシュボードで設定" : "起動時の CODEX_SLOT";
+  // 連動先は複数選べる。起動時の CODEX_SLOT の連動先は、最初からチェックした状態で出す
+  const boxes = Array.from({ length: 12 }, (_, i) => i + 1).filter((n) => n !== modalSlot).map((n) => {
+    const t = window.__slots[n];
+    return `<label title="${t ? `${esc(t.env)} ${esc(t.kind)}` : ""}"><input type="checkbox" class="link-cb" value="${n}" ${cur.includes(n) ? "checked" : ""}>[${n}]</label>`;
+  }).join("");
+  $("modal-link").innerHTML = `<span class="label">連動先:</span>${boxes}
+    <button id="link-set">設定</button><button id="link-clear">外す</button><span class="label">（今: ${cur.length ? `${cur.map((n) => `[${n}]`).join("")}・` : ""}${from}）</span>
+    ${s.skill ? `<span class="label">スキル:</span><span>⚙ ${esc(s.skill)}</span>` : ""}`;
+  const save = async (targets) => {
+    try {
+      const res = await fetch("/api/link", { method: "POST", headers: { "Content-Type": "application/json", "X-Dashboard": "1" }, body: JSON.stringify({ slot: modalSlot, targets }) });
+      const d = await res.json();
+      $("modal-meta").textContent = d.error || d.message || "";
+    } catch (e) { $("modal-meta").textContent = "送れませんでした"; }
+    linkKey = ""; await refreshPanes();
+  };
+  $("link-set").onclick = () => save([...document.querySelectorAll(".link-cb:checked")].map((c) => Number(c.value)));
+  $("link-clear").onclick = () => save([]);
+}
+
 // 起動・停止ボタン。起動は止まっている枠だけ、停止は入力待ちの枠だけ押せる
 let actionsKey = "";
 function renderActions(d) {

@@ -5,6 +5,7 @@
   GET  /api/status   … 環境1・2のサーバー状態 + Claude / Codex の使用率
   POST /api/run      … ~/bin/local-server <up|down|restart> <env> <comp> を裏で実行
   GET  /api/pane     … [n] の枠の画面の文字と、起動できるモード
+  POST /api/link     … [n] の枠の連動先（@link_slot。「2,4」のように複数可）を付ける・外す
   POST /api/cli      … [n] の枠で Claude / Codex を起動（monitor.txt のコマンド）・停止（入力待ちのときだけ）
   GET  /api/job      … 実行中・直近の操作の出力
 
@@ -222,39 +223,116 @@ def prompt_text(entry):
     return content
 
 
-def claude_ticket(pane_id):
-    """Claude 用: その枠のセッションでユーザーが入力した文に出てくる番号のうち一番多いもの。
+SKILL_CMD = re.compile(r"<command-name>/([\w:.-]+)</command-name>")
+SKILL_MD = re.compile(r"skills/([a-z0-9][a-z0-9-]*)/SKILL\.md")
 
-    枠とセッションの対応は statusline.py が cache/pane-<id>.json に書く。
+
+def known_skills():
+    """スキル名の一覧（ホーム・各環境のプロジェクト）。/exit などの組み込みコマンドをスキルと見なさないために使う。"""
+    names = set()
+    for d in [os.path.join(HOME, ".claude", "skills")] + glob.glob(os.path.join(HOME, "www", "ticket_v2*", ".claude", "skills")):
+        try:
+            names.update(n for n in os.listdir(d) if not n.startswith("."))
+        except OSError:
+            pass
+    return names
+
+
+def read_new_lines(path, st):
+    """前回読んだ所から後ろの、改行で終わっている行だけを返す（ファイルが縮んでいたら最初から）。"""
+    size = os.path.getsize(path)
+    if size < st["offset"]:
+        st.clear()
+        st["offset"] = 0
+    if size <= st.get("offset", 0):
+        return []
+    with open(path, "rb") as f:
+        f.seek(st["offset"])
+        chunk = f.read()
+    last_nl = chunk.rfind(b"\n")
+    if last_nl < 0:
+        return []
+    st["offset"] += last_nl + 1
+    return chunk[:last_nl].decode("utf-8", "replace").splitlines()
+
+
+def claude_session_info(pane_id):
+    """Claude 用: その枠のセッションの (チケット番号, 最後に使った ct- のスキル)。
+
+    チケット番号はユーザーが入力した文に出てくる番号のうち一番多いもの。スキルは Skill ツールの呼び出しか
+    /<スキル名> の入力のうち最後のもの。枠とセッションの対応は statusline.py が cache/pane-<id>.json に書く。
+    /clear すると新しいセッションになるので、どちらも消える。
     画面やブランチは使わない（画面は話題に出ただけの番号を拾い、ブランチは環境で1つなので新しいセッションにも付く）。
     """
     try:
         with open(os.path.join(CACHE, f"pane-{pane_id.lstrip('%')}.json")) as f:
             path = json.load(f)["transcript_path"]
-        size = os.path.getsize(path)
+        st = transcript_cache.setdefault(path, {"offset": 0})
+        lines = read_new_lines(path, st)
     except (OSError, ValueError, KeyError):
+        return "", ""
+    counts = st.setdefault("counts", {})
+    skills = None
+    for line in lines:
+        if '"user"' in line:
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            text = prompt_text(entry)
+            for n in PROMPT_TICKET.findall(text):
+                counts[n] = counts.get(n, 0) + 1
+            if "<command-name>" in line:
+                skills = skills or known_skills()
+                for name in SKILL_CMD.findall(json.dumps(entry.get("message", {}), ensure_ascii=False)):
+                    if name.startswith("ct-") and name in skills:
+                        st["skill"] = name
+        if '"name":"Skill"' in line:
+            m = re.search(r'"name":"Skill","input":\{"skill":"([^"]+)"', line)
+            if m and m.group(1).startswith("ct-"):
+                st["skill"] = m.group(1)
+    return (max(counts, key=counts.get) if counts else ""), st.get("skill", "")
+
+
+codex_rollouts = {}  # codex の pid -> 記録ファイル（lsof は重いので pid ごとに1回）
+
+
+def codex_skill(tty, kinds_pids):
+    """Codex 用: 動いている Codex の記録ファイルから、最後に SKILL.md を読んだスキル名。取れなければ ""。
+
+    Codex にはスキルを使った記録がはっきり残らないので、コマンド実行（exec）で skills/<名前>/SKILL.md を
+    読んだものをスキルを使ったと見なす（推測）。
+    """
+    pid = kinds_pids.get(tty, {}).get("codex")
+    if not pid:
         return ""
-    st = transcript_cache.setdefault(path, {"offset": 0, "counts": {}})
-    if size < st["offset"]:
-        st.update(offset=0, counts={})
-    if size > st["offset"]:
-        with open(path, "rb") as f:
-            f.seek(st["offset"])
-            chunk = f.read()
-        last_nl = chunk.rfind(b"\n")
-        if last_nl >= 0:
-            st["offset"] += last_nl + 1
-            for line in chunk[:last_nl].decode("utf-8", "replace").splitlines():
-                if '"user"' not in line:
-                    continue
-                try:
-                    text = prompt_text(json.loads(line))
-                except ValueError:
-                    continue
-                for n in PROMPT_TICKET.findall(text):
-                    st["counts"][n] = st["counts"].get(n, 0) + 1
-    c = st["counts"]
-    return max(c, key=c.get) if c else ""
+    if pid not in codex_rollouts:
+        try:
+            out = subprocess.run(["lsof", "-p", pid, "-Fn"], capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            out = ""
+        paths = [l[1:] for l in out.splitlines() if l.startswith("n") and "/rollout-" in l and l.endswith(".jsonl")]
+        codex_rollouts[pid] = max(paths, key=os.path.getmtime) if paths else ""
+    path = codex_rollouts[pid]
+    if not path:
+        return ""
+    st = transcript_cache.setdefault(path, {"offset": 0})
+    try:
+        lines = read_new_lines(path, st)
+    except OSError:
+        return st.get("skill", "")
+    for line in lines:
+        if "SKILL.md" not in line or '"response_item"' not in line:
+            continue
+        try:
+            payload = json.loads(line).get("payload", {})
+        except ValueError:
+            continue
+        if payload.get("type") in ("custom_tool_call", "function_call"):
+            m = SKILL_MD.search(json.dumps(payload.get("input") or payload.get("arguments") or "", ensure_ascii=False))
+            if m and m.group(1).startswith("ct-"):
+                st["skill"] = m.group(1)
+    return st.get("skill", "")
 
 
 def running_kinds():
@@ -262,17 +340,38 @@ def running_kinds():
 
     枠のタイトルは tmuxp で決めた「その枠の既定の CLI」なので、別の CLI を起動した枠もある。実際のプロセスで見る。
     """
-    kinds = {}
+    kinds = {}  # tty -> {"claude": pid, "codex": pid}
     try:
-        out = subprocess.run(["ps", "-A", "-o", "tty=,comm="], capture_output=True, text=True, timeout=5).stdout
+        out = subprocess.run(["ps", "-A", "-o", "pid=,tty=,comm="], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.TimeoutExpired):
         return kinds
     for line in out.splitlines():
-        tty, _, comm = line.strip().partition(" ")
-        name = os.path.basename(comm.strip())
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        name = os.path.basename(parts[2].strip())
         if name in ("claude", "codex"):
-            kinds.setdefault(tty, set()).add(name)
+            kinds.setdefault(parts[1], {})[name] = parts[0]
     return kinds
+
+
+def codex_slots(kinds):
+    """Claude のプロセスの環境変数 CODEX_SLOT（起動時に決まる相方の枠番号）。tty -> 番号。"""
+    pids = {v["claude"]: tty for tty, v in kinds.items() if "claude" in v}
+    if not pids:
+        return {}
+    try:
+        out = subprocess.run(["ps", "eww", "-o", "pid=,command=", "-p", ",".join(pids)],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    slots = {}
+    for line in out.splitlines():
+        pid = line.split(None, 1)[0] if line.strip() else ""
+        m = re.search(r"(?:^|\s)CODEX_SLOT=(\d+)(?:\s|$)", line)
+        if pid in pids and m:
+            slots[pids[pid]] = m.group(1)
+    return slots
 
 
 def pane_status(pane_id, cmd, ai_state, tty, slot_kind, kinds):
@@ -280,7 +379,7 @@ def pane_status(pane_id, cmd, ai_state, tty, slot_kind, kinds):
     # CLI はラッパーの bash から起動されるので、ログインシェル（zsh）に戻っていれば止まっている
     if cmd == "zsh":
         return slot_kind, "stopped"
-    found = kinds.get(tty.removeprefix("/dev/"), set())
+    found = kinds.get(tty.removeprefix("/dev/"), {})
     kind = "codex" if "codex" in found and "claude" not in found else ("claude" if "claude" in found else slot_kind)
     if kind == "claude":
         return kind, (ai_state if ai_state in ("busy", "wait") else "idle")
@@ -297,17 +396,18 @@ def ai_panes():
         if tmux("has-session", "-t", TMUX_SESSION).returncode != 0:
             return {"running": False, "slots": []}
         out = tmux("list-panes", "-s", "-t", TMUX_SESSION, "-F",
-                   "#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{@ai_state}\t#{@cm_title}\t#{pane_tty}\t#{pane_title}").stdout
+                   "#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{@ai_state}\t#{@cm_title}\t#{pane_tty}\t#{@link_slot}\t#{pane_title}").stdout
         kinds = running_kinds()
+        env_slots = codex_slots(kinds)
     except (OSError, subprocess.TimeoutExpired):
         return {"running": False, "slots": []}
     slots = {}
     for line in out.splitlines():
         parts = line.split("\t")
-        if len(parts) < 7 or parts[0] != "monitor":
+        if len(parts) < 8 or parts[0] != "monitor":
             continue
-        _, pane_id, cmd, ai_state, cm_title, tty = parts[:6]
-        pane_title = "\t".join(parts[6:])
+        _, pane_id, cmd, ai_state, cm_title, tty, link_slot = parts[:7]
+        pane_title = "\t".join(parts[7:])
         m = SLOT_TITLE.search(cm_title)
         if not m or "→ left" in cm_title:
             continue
@@ -320,13 +420,24 @@ def ai_panes():
             task = ""
         # チケット番号はタイトルを優先し、無ければ Claude は入力した文・Codex は画面の「#番号」から取る
         m = TICKET.search(task)
+        skill = ""
+        if state == "stopped":
+            ticket = ""
+        elif kind == "claude":
+            ticket, skill = claude_session_info(pane_id)
+        else:
+            ticket, skill = screen_ticket(pane_id), codex_skill(tty.removeprefix("/dev/"), kinds)
         if m:
             ticket = m.group(1)
-        elif state == "stopped":
-            ticket = ""
-        else:
-            ticket = claude_ticket(pane_id) if kind == "claude" else screen_ticket(pane_id)
+        # 連動先: ダッシュボードで付けた印（@link_slot）を優先し、無ければ Claude の起動時の CODEX_SLOT
+        link = None
+        marked = parse_link_slots(link_slot)
+        if marked:
+            link = {"slots": marked, "from": "dashboard"}
+        elif state != "stopped" and env_slots.get(tty.removeprefix("/dev/")):
+            link = {"slots": [int(env_slots[tty.removeprefix("/dev/")])], "from": "codex_slot"}
         slots[n] = {"slot": n, "env": env, "kind": kind, "slot_kind": slot_kind, "state": state, "task": task, "ticket": ticket,
+                    "skill": skill, "link": link,
                     "ticket_from": "title" if m else ("session" if ticket else "")}
     return {"running": True, "slots": [slots[k] for k in sorted(slots)]}
 
@@ -416,6 +527,27 @@ def pane_text(n, lines=100):
                 modes.append({"kind": k, "mode": m, "label": f"{'Claude' if k == 'claude' else 'Codex'} {labels[m]}", "cmd": lc[1]})
     return {"slot": n, "title": p["title"], "kind": p["kind"], "slot_kind": p["slot_kind"], "state": p["state"],
             "modes": modes, "text": text.rstrip("\n")}
+
+
+def parse_link_slots(value):
+    """印 @link_slot（「2,4」）を枠番号のリストにする。"""
+    return sorted({int(x) for x in str(value).split(",") if x.strip().isdigit()})
+
+
+def set_link(n, targets):
+    """[n] の枠に連動先の印（tmux のペインオプション @link_slot、「2,4」のように複数可）を付ける。空なら外す。
+
+    印はペインに付くので、フォーカス切り替えで枠の位置が動いても付いて回る。
+    ct-link スキル（~/.claude/skills/ct-link）の link_target.py がこの印を CODEX_SLOT より先に見る。
+    """
+    p = slot_pane(n)
+    if not p:
+        return {"error": f"[{n}] の枠が見つかりません"}, 404
+    if not targets:
+        tmux("set-option", "-p", "-u", "-t", p["id"], "@link_slot")
+        return {"ok": True, "message": f"[{n}] の連動先を外しました（起動時の CODEX_SLOT があればそれに戻ります）"}, 200
+    tmux("set-option", "-p", "-t", p["id"], "@link_slot", ",".join(map(str, targets)))
+    return {"ok": True, "message": f"[{n}] の連動先を {''.join(f'[{t}]' for t in targets)} にしました"}, 200
 
 
 def wait_cmd(pane_id, want_shell, timeout):
@@ -574,6 +706,16 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(n) or b"{}")
         except ValueError:
             return self.send_json({"error": "bad request"}, 400)
+        if self.path == "/api/link":
+            try:
+                slot = int(req.get("slot"))
+                targets = sorted({int(t) for t in (req.get("targets") or [])})
+            except (TypeError, ValueError):
+                return self.send_json({"error": "slot / targets が不正です"}, 400)
+            if not 1 <= slot <= 12 or any(not 1 <= t <= 12 or t == slot for t in targets):
+                return self.send_json({"error": "連動先は自分以外の 1〜12 です"}, 400)
+            body, code = set_link(slot, targets)
+            return self.send_json(body, code)
         if self.path == "/api/cli":
             try:
                 slot = int(req.get("slot"))
