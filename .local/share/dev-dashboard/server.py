@@ -424,10 +424,11 @@ def codex_slots(kinds):
 
 def pane_status(pane_id, cmd, ai_state, tty, slot_kind, kinds):
     """(動いている CLI の種類, 状態) を返す。止まっていれば種類は枠の既定。"""
-    # CLI はラッパーの bash から起動されるので、ログインシェル（zsh）に戻っていれば止まっている
-    if cmd == "zsh":
-        return slot_kind, "stopped"
+    # CLI はラッパーの bash から起動されるので、ログインシェル（zsh）に戻っていれば止まっている。
+    # ただし CLI がコマンドを実行している間も手前は「zsh -c」になるので、その端末に CLI のプロセスがあれば動いている
     found = kinds.get(tty.removeprefix("/dev/"), {})
+    if cmd == "zsh" and not found:
+        return slot_kind, "stopped"
     kind = "codex" if "codex" in found and "claude" not in found else ("claude" if "claude" in found else slot_kind)
     if kind == "claude":
         return kind, (ai_state if ai_state in ("busy", "wait") else "idle")
