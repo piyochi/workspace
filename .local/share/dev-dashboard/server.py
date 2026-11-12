@@ -203,6 +203,7 @@ TICKET = re.compile(r"(?<!\d)(\d{5})(?!\d)")
 
 SCREEN_TICKET = re.compile(r"#(\d{5})(?!\d)")
 PROMPT_TICKET = re.compile(r"(?<![\d.])#?(1\d{4})(?!\d)")
+transcript_lock = threading.RLock()  # 画面の更新と Redmine 欄が同時に読むと、片方が読み進めた分をもう片方が見落とす
 transcript_cache = {}  # transcript_path -> {"offset", "counts"}（追記分だけ読む）
 
 
@@ -271,9 +272,14 @@ def is_question(text):
 
 
 def claude_session_info(pane_id):
+    with transcript_lock:
+        return _claude_session_info(pane_id)
+
+
+def _claude_session_info(pane_id):
     """Claude 用: その枠のセッションの (チケット番号, 最後に使った ct- のスキル)。
 
-    チケット番号はユーザーが入力した文に出てくる番号のうち一番多いもの。スキルは Skill ツールの呼び出しか
+    チケット番号は、作業の番号と分かる入力（work_ticket）のうち一番新しいもの。話に出ただけの番号は拾わない。スキルは Skill ツールの呼び出しか
     /<スキル名> の入力のうち最後のもの。枠とセッションの対応は statusline.py が cache/pane-<id>.json に書く。
     /clear すると新しいセッションになるので、どちらも消える。
     画面やブランチは使わない（画面は話題に出ただけの番号を拾い、ブランチは環境で1つなので新しいセッションにも付く）。
@@ -296,6 +302,9 @@ def claude_session_info(pane_id):
             text = prompt_text(entry)
             for n in PROMPT_TICKET.findall(text):
                 counts[n] = counts.get(n, 0) + 1
+            tk = claude_work_ticket(entry)
+            if tk:
+                st["ticket"] = tk  # 作業の番号が出た入力のうち一番新しいもの（今やっているチケット）
             if "<command-name>" in line:
                 skills = skills or known_skills()
                 for name in SKILL_CMD.findall(json.dumps(entry.get("message", {}), ensure_ascii=False)):
@@ -316,13 +325,18 @@ def claude_session_info(pane_id):
                 text = "\n".join(b.get("text", "") for b in msg.get("content") or [] if isinstance(b, dict) and b.get("type") == "text")
                 if not is_question(text):
                     st["skill_done"] = True
-    return (max(counts, key=counts.get) if counts else ""), st.get("skill", ""), st.get("skill_done", False)
+    return st.get("ticket", ""), st.get("skill", ""), st.get("skill_done", False)
 
 
 codex_rollouts = {}  # codex の pid -> 記録ファイル（lsof は重いので pid ごとに1回）
 
 
 def codex_skill(tty, kinds_pids):
+    with transcript_lock:
+        return _codex_skill(tty, kinds_pids)
+
+
+def _codex_skill(tty, kinds_pids):
     """Codex 用: 動いている Codex の記録ファイルから、最後に SKILL.md を読んだスキル名。取れなければ ""。
 
     Codex にはスキルを使った記録がはっきり残らないので、コマンド実行（exec）で skills/<名前>/SKILL.md を
@@ -452,7 +466,7 @@ def ai_panes():
         # 作業名の無い枠はホスト名やフォルダ名がタイトルに入るので出さない
         if state == "stopped" or task == "MacBook-Pro.local" or re.fullmatch(r"ticket_v2\w*", task):
             task = ""
-        # チケット番号はタイトルを優先し、無ければ Claude は入力した文・Codex は画面の「#番号」から取る
+        # チケット番号は Claude は入力した文・Codex は画面の「#番号」から取り、無ければタイトルから取る
         m = TICKET.search(task)
         skill = ""
         if state == "stopped":
@@ -462,7 +476,8 @@ def ai_panes():
         else:
             ticket = screen_ticket(pane_id)
             skill, skill_done = codex_skill(tty.removeprefix("/dev/"), kinds)
-        if m:
+        session_ticket = ticket
+        if m and not ticket:  # タイトルは最初の入力で付いたまま変わらないので、セッションから取れなかったときだけ使う
             ticket = m.group(1)
         # 連動先: ダッシュボードで付けた印（@link_slot）を優先し、無ければ Claude の起動時の CODEX_SLOT
         link = None
@@ -473,7 +488,7 @@ def ai_panes():
             link = {"slots": [int(env_slots[tty.removeprefix("/dev/")])], "from": "codex_slot"}
         slots[n] = {"slot": n, "env": env, "kind": kind, "slot_kind": slot_kind, "state": state, "task": task, "ticket": ticket,
                     "skill": skill, "skill_done": skill_done, "link": link,
-                    "ticket_from": "title" if m else ("session" if ticket else "")}
+                    "ticket_from": "title" if m and ticket == m.group(1) and not session_ticket else ("session" if ticket else "")}
     return {"running": True, "slots": [slots[k] for k in sorted(slots)]}
 
 
@@ -680,6 +695,43 @@ def env_of(cwd):
 LINE_TICKET = re.compile(r"#(1\d{4})(?!\d)|/issues/(1\d{4})(?!\d)")
 
 
+ONLY_TICKET = re.compile(r"\s*(?:スキル[:：]\s*\S+\s*)?#?(1\d{4})\s*")
+SKILL_ARGS = re.compile(r"\s*[/$]?ct-[\w-]+\s+(.*)", re.S)
+BRANCH_TICKET = re.compile(r"feature/(1\d{4})|(?<![\d/])(1\d{4})_\d")
+
+
+def work_ticket(text, command_args=None):
+    """その入力で「このチケットの作業をする」と分かる番号。話に出ただけの番号は拾わない。
+
+    拾うのは: スキルに渡した番号（/ct-redmine 14766・$ct-branch 14339）、番号だけの入力（14766・スキル：Redmine 14766）、
+    300 文字以内の入力の中のブランチ名（feature/14339_2・14339_2_2）。圧縮後の要約と貼り付け（<pasted_content>）の中は見ない。
+    """
+    if command_args is not None:
+        return main_ticket(command_args)
+    text = re.sub(r"<pasted_content\b.*?</pasted_content[^>]*>", " ", text or "", flags=re.S)
+    if text.lstrip().startswith("This session is being continued from a previous conversation"):
+        return ""
+    m = ONLY_TICKET.fullmatch(text) or None
+    if m:
+        return m.group(1)
+    m = SKILL_ARGS.match(text)
+    if m and main_ticket(m.group(1)):
+        return main_ticket(m.group(1))
+    # ブランチ名は短い指示の中のものだけ（ブランチ一覧の貼り付けなど、長い文に並んだものは作業の指示ではない）
+    m = BRANCH_TICKET.search(text) if len(text) <= 300 else None
+    return (m.group(1) or m.group(2)) if m else ""
+
+
+def claude_work_ticket(entry):
+    """Claude の記録の1行（ユーザーの入力）から work_ticket。スラッシュコマンドは引数だけを見る。"""
+    if entry.get("type") != "user" or entry.get("isMeta") or entry.get("isCompactSummary"):
+        return ""
+    raw = json.dumps((entry.get("message") or {}).get("content"), ensure_ascii=False)
+    if "<command-name>" in raw:
+        return work_ticket("", prompt_text(entry))
+    return work_ticket(prompt_text(entry))
+
+
 def main_ticket(text):
     """ユーザーの入力に出たチケット番号のうち、いちばん多く出たもの（同数なら先に出たもの）。無ければ ""。
 
@@ -747,7 +799,7 @@ def scan_links_once():
                 except ValueError:
                     continue
                 st["cwd"] = d.get("cwd") or st.get("cwd", "")
-                tk = main_ticket(prompt_text(d))
+                tk = claude_work_ticket(d)
                 if tk:
                     st["ticket"] = tk  # このあとに出た URL は、このチケットの作業で出たものとみなす
                 if d.get("type") != "assistant" or "http" not in line:
@@ -763,7 +815,7 @@ def scan_links_once():
                     continue
                 if '"user"' in line:
                     try:
-                        tk = main_ticket(codex_prompt_text(json.loads(line).get("payload") or {}))
+                        tk = work_ticket(codex_prompt_text(json.loads(line).get("payload") or {}))
                     except ValueError:
                         tk = ""
                     if tk:
