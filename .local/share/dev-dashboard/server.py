@@ -264,6 +264,12 @@ def read_new_lines(path, st):
     return chunk[:last_nl].decode("utf-8", "replace").splitlines()
 
 
+def is_question(text):
+    """返答の最後の行が質問（？・? で終わる）か。スキルが答えを待っているのか、終わったのかの見分けに使う。"""
+    lines = [l for l in (text or "").strip().splitlines() if l.strip()]
+    return bool(lines) and lines[-1].strip().rstrip("*_`)）」』 ").endswith(("？", "?"))
+
+
 def claude_session_info(pane_id):
     """Claude 用: その枠のセッションの (チケット番号, 最後に使った ct- のスキル)。
 
@@ -278,7 +284,7 @@ def claude_session_info(pane_id):
         st = transcript_cache.setdefault(path, {"offset": 0})
         lines = read_new_lines(path, st)
     except (OSError, ValueError, KeyError):
-        return "", ""
+        return "", "", False
     counts = st.setdefault("counts", {})
     skills = None
     for line in lines:
@@ -294,12 +300,23 @@ def claude_session_info(pane_id):
                 skills = skills or known_skills()
                 for name in SKILL_CMD.findall(json.dumps(entry.get("message", {}), ensure_ascii=False)):
                     if name.startswith("ct-") and name in skills:
-                        st["skill"] = name
+                        st["skill"], st["skill_done"] = name, False
         if '"name":"Skill"' in line:
             m = re.search(r'"name":"Skill","input":\{"skill":"([^"]+)"', line)
             if m and m.group(1).startswith("ct-"):
-                st["skill"] = m.group(1)
-    return (max(counts, key=counts.get) if counts else ""), st.get("skill", "")
+                st["skill"], st["skill_done"] = m.group(1), False
+        # スキルを使ったあと、返答の区切り（end_turn）が質問で終わっていなければ、スキルは終わったとみなす。
+        # 質問で終わったとき（答え待ち）は、次の区切りで見直す。一度終わったら、次のスキルまで終わったまま
+        if st.get("skill") and not st.get("skill_done") and '"end_turn"' in line and '"assistant"' in line:
+            try:
+                msg = json.loads(line).get("message") or {}
+            except ValueError:
+                continue
+            if msg.get("stop_reason") == "end_turn":
+                text = "\n".join(b.get("text", "") for b in msg.get("content") or [] if isinstance(b, dict) and b.get("type") == "text")
+                if not is_question(text):
+                    st["skill_done"] = True
+    return (max(counts, key=counts.get) if counts else ""), st.get("skill", ""), st.get("skill_done", False)
 
 
 codex_rollouts = {}  # codex の pid -> 記録ファイル（lsof は重いので pid ごとに1回）
@@ -313,7 +330,7 @@ def codex_skill(tty, kinds_pids):
     """
     pid = kinds_pids.get(tty, {}).get("codex")
     if not pid:
-        return ""
+        return "", False
     if pid not in codex_rollouts:
         try:
             out = subprocess.run(["lsof", "-p", pid, "-Fn"], capture_output=True, text=True, timeout=5).stdout
@@ -323,13 +340,22 @@ def codex_skill(tty, kinds_pids):
         codex_rollouts[pid] = max(paths, key=os.path.getmtime) if paths else ""
     path = codex_rollouts[pid]
     if not path:
-        return ""
+        return "", False
     st = transcript_cache.setdefault(path, {"offset": 0})
     try:
         lines = read_new_lines(path, st)
     except OSError:
-        return st.get("skill", "")
+        return st.get("skill", ""), st.get("skill_done", False)
     for line in lines:
+        # 区切り（task_complete）の最後の返答が質問でなければ、スキルは終わったとみなす（Claude と同じ）
+        if '"task_complete"' in line and st.get("skill") and not st.get("skill_done"):
+            try:
+                last = (json.loads(line).get("payload") or {}).get("last_agent_message") or ""
+            except ValueError:
+                continue
+            if not is_question(last):
+                st["skill_done"] = True
+            continue
         if "SKILL.md" not in line or '"response_item"' not in line:
             continue
         try:
@@ -339,8 +365,8 @@ def codex_skill(tty, kinds_pids):
         if payload.get("type") in ("custom_tool_call", "function_call"):
             m = SKILL_MD.search(json.dumps(payload.get("input") or payload.get("arguments") or "", ensure_ascii=False))
             if m and m.group(1).startswith("ct-"):
-                st["skill"] = m.group(1)
-    return st.get("skill", "")
+                st["skill"], st["skill_done"] = m.group(1), False
+    return st.get("skill", ""), st.get("skill_done", False)
 
 
 def running_kinds():
@@ -432,9 +458,10 @@ def ai_panes():
         if state == "stopped":
             ticket = ""
         elif kind == "claude":
-            ticket, skill = claude_session_info(pane_id)
+            ticket, skill, skill_done = claude_session_info(pane_id)
         else:
-            ticket, skill = screen_ticket(pane_id), codex_skill(tty.removeprefix("/dev/"), kinds)
+            ticket = screen_ticket(pane_id)
+            skill, skill_done = codex_skill(tty.removeprefix("/dev/"), kinds)
         if m:
             ticket = m.group(1)
         # 連動先: ダッシュボードで付けた印（@link_slot）を優先し、無ければ Claude の起動時の CODEX_SLOT
@@ -445,7 +472,7 @@ def ai_panes():
         elif state != "stopped" and env_slots.get(tty.removeprefix("/dev/")):
             link = {"slots": [int(env_slots[tty.removeprefix("/dev/")])], "from": "codex_slot"}
         slots[n] = {"slot": n, "env": env, "kind": kind, "slot_kind": slot_kind, "state": state, "task": task, "ticket": ticket,
-                    "skill": skill, "link": link,
+                    "skill": skill, "skill_done": skill_done, "link": link,
                     "ticket_from": "title" if m else ("session" if ticket else "")}
     return {"running": True, "slots": [slots[k] for k in sorted(slots)]}
 
@@ -1055,7 +1082,7 @@ def redmine_view():
     for sl in panes.get("slots", []):
         if sl.get("ticket"):
             sessions.setdefault(sl["ticket"], []).append(
-                {"slot": sl["slot"], "env": sl["env"], "kind": sl["kind"], "state": sl["state"], "skill": sl.get("skill", "")})
+                {"slot": sl["slot"], "env": sl["env"], "kind": sl["kind"], "state": sl["state"], "skill": sl.get("skill", ""), "skill_done": sl.get("skill_done", False)})
     places = ticket_places()
     items = []
     for i in data["issues"]:

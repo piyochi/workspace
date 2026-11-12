@@ -78,6 +78,7 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 .cell-head .cell-link { flex-shrink: 0; }
 .cell-state { font-weight: 700; font-size: 12px; }
 .cell-task { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell-skill.done, .skill-done { color: var(--muted); }
 .cell-skill { font-size: 11px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cell-link { color: var(--accent); font-weight: 700; }
 .cell-link.env { font-weight: 400; }
@@ -313,6 +314,9 @@ function taskHtml(s) {
 }
 
 let prevStates = null;
+// スキル: 使っている最中は ⚙、最後の返答が質問でなく区切りがついたら灰色の ✓（次のスキルまで残す）
+const skillText = (s) => s.skill_done ? `✓ ${esc(s.skill)}` : `⚙ ${esc(s.skill)}`;
+const skillTip = (s) => s.skill_done ? `スキル: ${s.skill}（終わったとみなしています）` : `スキル: ${s.skill}（使用中）`;
 const PANE_STATES = { busy: "処理中", wait: "確認待ち", idle: "入力待ち", stopped: "停止" };
 async function refreshPanes() {
   try {
@@ -331,7 +335,7 @@ async function refreshPanes() {
         <div class="cell-head"><span class="cell-name">[${s.slot}] ${esc(s.env)} ${esc(s.kind)}</span>${linkHtml(s)}</div>
         <div class="cell-state">${PANE_STATES[s.state] || esc(s.state)}</div>
         <div class="cell-task">${taskHtml(s)}</div>
-        <div class="cell-skill">${s.skill ? `⚙ ${esc(s.skill)}` : "&nbsp;"}</div></div>`;
+        <div class="cell-skill${s.skill_done ? " done" : ""}">${s.skill ? skillText(s) : "&nbsp;"}</div></div>`;
     }).join("")}</div>`;
   } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
 }
@@ -386,7 +390,7 @@ $("panes").addEventListener("click", (e) => { const c = e.target.closest(".cell[
 // マウスを乗せたときの説明: 1行目に「[9] env3 claude -> [3][10]」、2行目以降に作業名・スキル
 function cellTip(s) {
   const head = `[${s.slot}] ${s.env} ${s.kind}${s.link ? ` -> ${s.link.slots.map((n) => `[${n}]`).join("")}` : ""}`;
-  return [head, s.task, s.skill ? `スキル: ${s.skill}` : ""].filter(Boolean).join("\n");
+  return [head, s.task, s.skill ? skillTip(s) : ""].filter(Boolean).join("\n");
 }
 
 // 連動先の表示。ダッシュボードで付けたものは太字、起動時の CODEX_SLOT のものは細字
@@ -402,7 +406,7 @@ function renderLink() {
   const s = (window.__slots || {})[modalSlot];
   if (!s) { $("modal-link").innerHTML = ""; linkKey = ""; return; }
   const cur = s.link ? s.link.slots : [];
-  const key = `${modalSlot}|${cur.join(",")}|${s.link ? s.link.from : ""}|${s.skill}`;
+  const key = `${modalSlot}|${cur.join(",")}|${s.link ? s.link.from : ""}|${s.skill}|${s.skill_done}`;
   if (key === linkKey) return;  // 変わったときだけ描き直す（選びかけの選択が戻らないように）
   linkKey = key;
   const from = !s.link ? "なし" : s.link.from === "dashboard" ? "ダッシュボードで設定" : "起動時の CODEX_SLOT";
@@ -413,7 +417,7 @@ function renderLink() {
   }).join("");
   $("modal-link").innerHTML = `<span class="label">連動先:</span>${boxes}
     <button id="link-set">設定</button><button id="link-clear">外す</button><span class="label">（今: ${cur.length ? `${cur.map((n) => `[${n}]`).join("")}・` : ""}${from}）</span>
-    ${s.skill ? `<span class="label">スキル:</span><span>⚙ ${esc(s.skill)}</span>` : ""}`;
+    ${s.skill ? `<span class="label">スキル:</span><span class="${s.skill_done ? "skill-done" : ""}" title="${esc(skillTip(s))}">${skillText(s)}</span>` : ""}`;
   const save = async (targets) => {
     try {
       const res = await fetch("/api/link", { method: "POST", headers: { "Content-Type": "application/json", "X-Dashboard": "1" }, body: JSON.stringify({ slot: modalSlot, targets }) });
@@ -632,7 +636,7 @@ document.addEventListener("click", (e) => {
 document.querySelector('details.sec[data-key="redmine"]')?.addEventListener("toggle", () => fitBr($("redmine")));
 function rmRows(items) {
   return items.length ? items.map((i) => {
-    const sess = i.sessions.map((x) => `<span class="rm-sess ${x.state}">▶ [${x.slot}] ${esc(x.env)} ${esc(x.kind)} ${PANE_STATES[x.state] || ""}${x.skill ? ` ⚙${esc(x.skill)}` : ""}</span>`);
+    const sess = i.sessions.map((x) => `<span class="rm-sess ${x.state}">▶ [${x.slot}] ${esc(x.env)} ${esc(x.kind)} ${PANE_STATES[x.state] || ""}${x.skill ? ` <span class="${x.skill_done ? "skill-done" : ""}">${skillText(x)}</span>` : ""}</span>`);
     // ブランチは環境ごとにまとめる。checkout 中のものは太字
     const byEnv = {};
     // 退避用の backup/ は数だけ出す（checkout 中なら名前も出す）
