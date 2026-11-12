@@ -468,7 +468,7 @@ def ai_panes():
             task = ""
         # チケット番号は Claude は入力した文・Codex は画面の「#番号」から取り、無ければタイトルから取る
         m = TICKET.search(task)
-        skill = ""
+        skill, skill_done = "", False
         if state == "stopped":
             ticket = ""
         elif kind == "claude":
