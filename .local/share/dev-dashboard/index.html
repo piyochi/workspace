@@ -83,6 +83,45 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 .cell-link.env { font-weight: 400; }
 .modal-link { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
 .modal-link .label { color: var(--muted); }
+.link-filter { display: flex; gap: 6px; margin-bottom: 6px; }
+.link-filter input { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; }
+.link-row { padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px; }
+.link-row:first-child { border-top: 0; }
+.link-ticket { font-weight: 700; }
+.link-meta { display: flex; gap: 8px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.link-cat { color: var(--accent); }
+.link-url { color: var(--accent); word-break: break-all; }
+.link-ctx { color: var(--muted); font-size: 12px; word-break: break-all; }
+.link-more { margin-top: 6px; display: flex; align-items: center; gap: 8px; }
+.link-more .label { color: var(--muted); font-size: 11px; }
+.links-modal-filter { padding: 8px 12px; margin: 0; border-bottom: 1px solid var(--line); }
+.links-modal-body { flex: 1; overflow: auto; padding: 4px 12px 12px; }
+.rm-row { padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px; }
+.rm-row:first-child { border-top: 0; }
+.rm-head { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.rm-head a { color: var(--accent); font-weight: 700; text-decoration: none; white-space: nowrap; }
+.rm-tag { font-size: 10px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; white-space: nowrap; color: var(--muted); }
+.rm-tag.hot { border-color: var(--bad); color: var(--bad); }
+.rm-copy { flex: none; font-size: 11px; padding: 0 5px; line-height: 16px; }
+.rm-subj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rm-info { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 2px; font-size: 11px; color: var(--muted); }
+.rm-sess { color: var(--text); }
+.rm-sess.busy { color: #ea580c; font-weight: 700; } .rm-sess.wait { color: var(--bad); font-weight: 700; } .rm-sess.idle { color: var(--ok); }
+.rm-br { flex-basis: 100%; display: flex; align-items: flex-start; gap: 6px; }
+.rm-br-text { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; word-break: break-all; }
+.rm-br.open .rm-br-text { display: block; }
+.rm-br-tg { flex: none; font-size: 10px; padding: 0 6px; line-height: 16px; }
+.bp { font-size: 10px; margin-left: 1px; }
+.bp.warn { color: #d97706; font-weight: 700; }
+.bp.ok { color: #16a34a; }
+.bpr { font-size: 10px; text-decoration: none; border-radius: 3px; padding: 0 3px; border: 1px solid currentColor; }
+.bpr.open { color: #16a34a; } .bpr.draft { color: var(--muted); } .bpr.merged { color: #8b5cf6; } .bpr.closed { color: #dc2626; text-decoration: line-through; }
+.rm-bk { text-decoration: underline dotted; cursor: help; }
+.rm-cur { color: var(--text); font-weight: 700; }
+.rm-full { margin-left: auto; flex-shrink: 0; font-size: 11px; padding: 1px 6px; }
+.rm-wait { color: var(--bad); font-weight: 700; }
+.rm-wait.done { color: var(--muted); font-weight: 400; text-decoration: line-through; }
+.rm-rel a, .rm-wait a { color: inherit; }
 .modal-link label { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; cursor: pointer; }
 .cell.busy { border-color: #f97316; } .cell.busy .cell-state { color: #ea580c; }
 .cell.wait { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--bg)); } .cell.wait .cell-state { color: var(--bad); }
@@ -109,12 +148,54 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
     <div id="panes"></div>
   </details>
 
+  <details class="sec" data-key="redmine" open>
+    <summary><h2>Redmine 担当チケット</h2></summary>
+    <div id="redmine"></div>
+    <div class="link-more"><button id="redmine-more">もっと見る</button><button id="redmine-reload">取り直す</button> <span class="label" id="redmine-meta"></span></div>
+  </details>
+
   <details class="sec" data-key="servers" open>
     <summary><h2>開発サーバー</h2></summary>
     <div id="servers"></div>
     <div id="job"></div>
   </details>
+
+  <details class="sec" data-key="links" open>
+    <summary><h2>リンク</h2></summary>
+    <div id="links"></div>
+    <div class="link-more"><button id="link-more">もっと見る</button><button id="link-reload">取り直す</button> <span class="label" id="link-count"></span></div>
+  </details>
 </main>
+
+<div class="modal" id="rm-modal" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <div class="modal-head">
+      <a href="#" class="back" id="rm-back">← 戻る</a>
+      <span class="modal-title">Redmine 担当チケット</span>
+      <span class="modal-meta" id="rm-modal-meta"></span>
+    </div>
+    <div class="link-filter links-modal-filter">
+      <select id="rm-cat"><option value="">すべて</option></select>
+      <input id="rm-q" type="search" placeholder="番号・件名・ブランチ・枠名で検索（スペース区切りで全部を含むもの）">
+    </div>
+    <div class="links-modal-body" id="rm-all"></div>
+  </div>
+</div>
+
+<div class="modal" id="links-modal" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <div class="modal-head">
+      <a href="#" class="back" id="links-back">← 戻る</a>
+      <span class="modal-title">リンク一覧</span>
+      <span class="modal-meta" id="links-meta"></span>
+    </div>
+    <div class="link-filter links-modal-filter">
+      <select id="link-cat"><option value="">すべて</option></select>
+      <input id="link-q" type="search" placeholder="URL・前後の文・枠名で検索（スペース区切りで全部を含むもの）">
+    </div>
+    <div class="links-modal-body" id="links-all"></div>
+  </div>
+</div>
 
 <div class="modal" id="modal" role="dialog" aria-modal="true">
   <div class="modal-box">
@@ -231,12 +312,16 @@ function taskHtml(s) {
   return `<span class="ticket"${from}>#${s.ticket}</span> ${esc(task)}`;
 }
 
+let prevStates = null;
 const PANE_STATES = { busy: "処理中", wait: "確認待ち", idle: "入力待ち", stopped: "停止" };
 async function refreshPanes() {
   try {
     const d = await (await fetch("/api/panes")).json();
     if (!d.running) { $("panes").innerHTML = `<div class="empty">現在 ticket_v2_project は動いていません（tmuxp が起動していません）</div>`; return; }
     const bySlot = Object.fromEntries(d.slots.map((s) => [s.slot, s]));
+    // どれかの枠が「処理中」から抜けたら（返答が終わった）、リンクをその場で集め直す
+    if (prevStates && d.slots.some((s) => prevStates[s.slot] === "busy" && s.state !== "busy")) loadLinks(true);
+    prevStates = Object.fromEntries(d.slots.map((s) => [s.slot, s.state]));
     window.__slots = bySlot;
     if (modalSlot) renderLink();
     $("panes").innerHTML = `<div class="grid">${Array.from({ length: 12 }, (_, i) => {
@@ -372,8 +457,7 @@ async function cli(action, kind, mode, cmd) {
   await loadPane(); refreshPanes();
 }
 
-$("modal-copy").onclick = async () => {
-  const text = $("modal-body").textContent;
+async function copyText(text) {
   let ok = false;
   try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); ok = true; } } catch (e) {}
   if (!ok) {
@@ -383,8 +467,19 @@ $("modal-copy").onclick = async () => {
     try { ok = document.execCommand("copy"); } catch (e) {}
     ta.remove();
   }
+  return ok;
+}
+$("modal-copy").onclick = async () => {
+  const ok = await copyText($("modal-body").textContent);
   $("modal-meta").textContent = ok ? "コピーしました" : "コピーできませんでした（文字を選んで Ctrl+C）";
 };
+// Redmine の行: タイトル右のアイコンで「#番号: タイトル」をコピー
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("button.rm-copy"); if (!b) return;
+  const ok = await copyText(b.dataset.copy);
+  b.textContent = ok ? "✓" : "✗"; b.title = ok ? "コピーしました" : "コピーできませんでした";
+  setTimeout(() => { b.textContent = "⧉"; b.title = "「#番号: タイトル」をコピー"; }, 1500);
+});
 $("modal-back").onclick = (e) => { e.preventDefault(); closePane(); };
 // 外側クリックで閉じるのは、押した所も離した所も外側のときだけ。
 // 文字を選びながら外側で離すと click が外側に届くので、押した所を覚えておいて区別する
@@ -393,8 +488,251 @@ $("modal").addEventListener("mousedown", (e) => { downOnOverlay = e.target.id ==
 $("modal").addEventListener("click", (e) => { if (e.target.id === "modal" && downOnOverlay) closePane(); downOnOverlay = false; });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePane(); });
 
+// URL が書かれていた行を出し、その中の URL 部分をリンクにする（行が無ければ URL だけ）
+function linkedContext(v) {
+  const a = `<a class="link-url" href="${esc(v.url)}" target="_blank" rel="noopener noreferrer">${esc(v.url)}</a>`;
+  const ctx = v.context || "";
+  const i = ctx.indexOf(v.url);
+  if (i < 0) return a;
+  return `${esc(ctx.slice(0, i))}${a}${esc(ctx.slice(i + v.url.length))}`;
+}
+
+// リンク一覧: AI が出した文章の URL（新しい順）。トップは最新 10 件だけ。
+// 「もっと見る」で詳細画面を開き、種類のセレクト・フリーワードで絞り込んで全部をスクロールで見る
+function linkRows(items, days) {
+  return items.length ? items.map((v) => {
+    const t = new Date(v.ts * 1000);
+    const when = `${t.getMonth() + 1}/${t.getDate()} ${t.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}`;
+    return `<div class="link-row">
+      <div class="link-meta"><span>${when}</span><span>${esc(v.src)}</span><span class="link-cat">${esc(v.cat)}</span></div>
+      <div class="link-ctx" title="${esc(v.context || v.url)}">${v.ticket ? `${v.ticket_url ? `<a class="link-ticket" href="${esc(v.ticket_url)}" target="_blank" rel="noopener noreferrer">#${esc(v.ticket)}</a>` : `<span class="link-ticket">#${esc(v.ticket)}</span>`}: ` : ""}${linkedContext(v)}</div>
+    </div>`;
+  }).join("") : `<div class="empty">該当するリンクはありません（直近${days}日）</div>`;
+}
+async function fetchLinks(params) {
+  return (await fetch(`/api/links?${new URLSearchParams(params)}`)).json();
+}
+async function loadLinks(rescan) {
+  try {
+    const d = await fetchLinks(rescan ? { limit: 10, rescan: 1 } : { limit: 10 });
+    $("links").innerHTML = linkRows(d.items, d.days);
+    $("link-count").textContent = `${d.total} 件（直近${d.days}日）`;
+    $("link-more").style.display = d.total > 10 ? "" : "none";
+  } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
+  if (linksOpen) loadAllLinks();
+}
+let linksOpen = false, linkTimer = null;
+async function loadAllLinks() {
+  const cat = $("link-cat").value, q = $("link-q").value.trim();
+  try {
+    const d = await fetchLinks({ limit: 5000, cat, q });
+    // 種類の選択肢は今あるものだけ（件数付き）。選んでいるものは残す
+    const opts = [`<option value="">すべて</option>`].concat(d.cats.map(([c, n]) => `<option value="${esc(c)}" ${c === cat ? "selected" : ""}>${esc(c)}（${n}）</option>`));
+    if (cat && !d.cats.some(([c]) => c === cat)) opts.push(`<option value="${esc(cat)}" selected>${esc(cat)}（0）</option>`);
+    $("link-cat").innerHTML = opts.join("");
+    const body = $("links-all"), top = body.scrollTop;
+    body.innerHTML = linkRows(d.items, d.days);
+    body.scrollTop = top;  // 30 秒ごとの更新で読んでいる位置が戻らないように
+    $("links-meta").textContent = `${d.total} 件（直近${d.days}日）`;
+  } catch (e) { $("links-meta").textContent = "取得できませんでした"; }
+}
+function openLinks() {
+  try { history.pushState({ links: 1 }, ""); } catch (e) {}
+  linksOpen = true;
+  $("links-modal").classList.add("open");
+  $("links-all").scrollTop = 0;
+  loadAllLinks();
+}
+function hideLinks() { linksOpen = false; $("links-modal").classList.remove("open"); }
+function closeLinks() { if (!linksOpen) return; if (history.state && history.state.links) history.back(); else hideLinks(); }
+window.addEventListener("popstate", hideLinks);
+$("link-more").onclick = openLinks;
+$("link-reload").onclick = async (e) => { const b = e.target; b.disabled = true; await loadLinks(true); b.disabled = false; };
+$("links-back").onclick = (e) => { e.preventDefault(); closeLinks(); };
+$("link-cat").onchange = () => { $("links-all").scrollTop = 0; loadAllLinks(); };
+$("link-q").oninput = () => { clearTimeout(linkTimer); linkTimer = setTimeout(() => { $("links-all").scrollTop = 0; loadAllLinks(); }, 300); };
+let downOnLinksOverlay = false;
+$("links-modal").addEventListener("mousedown", (e) => { downOnLinksOverlay = e.target.id === "links-modal"; });
+$("links-modal").addEventListener("click", (e) => { if (e.target.id === "links-modal" && downOnLinksOverlay) closeLinks(); downOnLinksOverlay = false; });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && linksOpen) closeLinks(); });
+
+// Redmine 担当チケット: どの枠（セッション）で扱っているか・どの環境にブランチ / issue docs があるか・待ちの関係を添える。
+// トップは 10 件だけ。「もっと見る」で詳細画面を開き、セレクトとフリーワードで絞り込んで全部をスクロールで見る
+let rmData = null, rmOpen = false, rmTimer = null;
+function rmRelHtml(i) {
+  const base = i.url.replace(/\/issues\/\d+$/, "");
+  return i.relations.map((r) => {
+    const a = `<a href="${esc(base)}/issues/${r.id}" target="_blank" rel="noopener noreferrer" title="${esc(r.subject || "")}">#${r.id}</a>`;
+    const st = r.status ? `（${esc(r.status)}）` : "";
+    if (r.kind === "wait") {
+      // コメント・本文から拾ったものは「リリース後」などの書き方をそのまま出し、元の文はマウスを乗せると出す
+      const what = r.phrase ? esc(r.phrase.replace(/\s+/g, "")) : "待ち";
+      const tip = `${r.closed ? "待ち相手は終わっています。" : ""}${esc(r.via)}${r.note ? `: ${esc(r.note)}` : "で待ち"}`;
+      return `<span class="rm-wait ${r.closed ? "done" : ""}" title="${tip}">⏳ ${a} ${what}${st}</span>`;
+    }
+    if (r.kind === "blocking") return `<span class="rm-rel">${a} が待っている${st}</span>`;
+    return `<span class="rm-rel">関連 ${a}${st}</span>`;
+  });
+}
+const rmFull = {};  // チケット番号 -> 全期間の検索結果
+function mdDate(t) { const d = new Date(t * 1000); return `${d.getMonth() + 1}/${d.getDate()}`; }
+function ymdDate(t) { const d = new Date(t * 1000); return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`; }
+function fullHtml(r) {
+  if (r.error) return `<span class="err">${esc(r.error)}</span>`;
+  const parts = r.sessions.map((x) => `${esc(x.where)} ${ymdDate(x.last)}`)
+    .concat(r.commits.map((c) => `git ${esc(c.where)} ${c.count}件・${ymdDate(c.last)}`));
+  return `<span>全期間: ${parts.length ? parts.join("・") : "見つかりませんでした"}</span>`;
+}
+async function rmFullSearch(id) {
+  rmFull[id] = { loading: true }; rmRerender();
+  try { rmFull[id] = await (await fetch(`/api/history?ticket=${id}`)).json(); }
+  catch (e) { rmFull[id] = { error: "調べられませんでした" }; }
+  rmRerender();
+}
+function rmRerender() {
+  if (!rmData) return;
+  $("redmine").innerHTML = rmRows(rmData.issues.slice(0, 10)); fitBr($("redmine"));
+  if (rmOpen) renderRmAll();
+}
+document.addEventListener("click", (e) => { const b = e.target.closest("button.rm-full"); if (b) rmFullSearch(Number(b.dataset.ticket)); });
+
+// push の状態（最後に fetch した時点の origin と比べる）
+function pushHtml(p) {
+  if (!p) return "";
+  if (!p.remote) return ` <span class="bp warn" title="origin にこのブランチがありません">未push</span>`;
+  const parts = [];
+  if (p.ahead && p.behind) return ` <span class="bp warn" title="手元と origin が食い違っています（rebase・force push の前の古い手元など）。手元にだけ ${p.ahead} 件・origin にだけ ${p.behind} 件">食い違い</span>`;
+  if (p.ahead) parts.push(`<span class="bp warn" title="push していないコミットが ${p.ahead} 件">↑${p.ahead}</span>`);
+  if (p.behind) parts.push(`<span class="bp" title="origin に手元に無いコミットが ${p.behind} 件（pull していない）">↓${p.behind}</span>`);
+  if (!parts.length && p.ahead === 0) parts.push(`<span class="bp ok" title="push 済み（origin と同じ）">✓</span>`);
+  return " " + parts.join("");
+}
+const PR_STATE = { open: "レビュー中", merged: "マージ済み", closed: "閉じた" };
+function prHtml(pr) {
+  if (!pr) return "";
+  const st = pr.draft && pr.state === "open" ? "draft" : pr.state;
+  return ` <a class="bpr ${st}" href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer" title="PR #${pr.number}（${st === "draft" ? "下書き" : PR_STATE[pr.state] || esc(pr.state)}）">PR#${pr.number}</a>`;
+}
+const rmBrOpen = new Set();
+// ブランチの行が1行に収まらないものだけ ▸ を出す（閉じた欄・隠れた画面では測れないので、開いたときに測り直す）
+function fitBr(root) {
+  root.querySelectorAll(".rm-br").forEach((el) => {
+    const t = el.querySelector(".rm-br-text"), b = el.querySelector(".rm-br-tg");
+    const open = el.classList.contains("open");
+    b.hidden = !(open || t.scrollHeight > t.clientHeight + 1);
+    b.textContent = open ? "▴ たたむ" : "▸ 全部";
+  });
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button.rm-br-tg"); if (!b) return;
+  const el = b.closest(".rm-br"), k = el.dataset.k;
+  if (rmBrOpen.has(k)) rmBrOpen.delete(k); else rmBrOpen.add(k);
+  el.classList.toggle("open"); fitBr(el.parentNode);
+});
+document.querySelector('details.sec[data-key="redmine"]')?.addEventListener("toggle", () => fitBr($("redmine")));
+function rmRows(items) {
+  return items.length ? items.map((i) => {
+    const sess = i.sessions.map((x) => `<span class="rm-sess ${x.state}">▶ [${x.slot}] ${esc(x.env)} ${esc(x.kind)} ${PANE_STATES[x.state] || ""}${x.skill ? ` ⚙${esc(x.skill)}` : ""}</span>`);
+    // ブランチは環境ごとにまとめる。checkout 中のものは太字
+    const byEnv = {};
+    // 退避用の backup/ は数だけ出す（checkout 中なら名前も出す）
+    const backups = {};
+    i.branches.forEach((b) => {
+      if (b.branch.startsWith("backup/") && !b.current) {
+        (backups[b.env] = backups[b.env] || []).push(`${b.branch}${b.repo === "ticket_v2" ? "(front)" : "(api)"}`);
+        byEnv[b.env] = byEnv[b.env] || [];
+        return;
+      }
+      (byEnv[b.env] = byEnv[b.env] || []).push(`${b.current ? `<span class="rm-cur" title="checkout 中">${esc(b.branch)}</span>` : esc(b.branch)}${b.repo === "ticket_v2" ? "(front)" : "(api)"}${pushHtml(b.push)}${prHtml(b.pr)}`);
+    });
+    Object.entries(backups).forEach(([env, list]) => byEnv[env].push(`<span class="rm-bk" title="${esc(list.join("\n"))}">退避 ${list.length}件</span>`));
+    // 長いと1行で切って「…」。▸ で全部出す（開いた状態は取り直しても覚えておく）
+    const br = Object.entries(byEnv).map(([env, list]) => {
+      const k = `${i.id}|${env}`, open = rmBrOpen.has(k);
+      return `<span class="rm-br${open ? " open" : ""}" data-k="${esc(k)}"><span class="rm-br-text">${esc(env)}: ${list.join(", ")}</span><button class="rm-br-tg" hidden></button></span>`;
+    });
+    const hist = i.history.length ? [`<span title="直近${rmData ? rmData.history_days : 30}日に、ユーザーが入力した文にこの番号が出たセッション">履歴: ${i.history.map((h) => `${esc(h.env)} ${mdDate(h.last)}`).join("・")}</span>`] : [];
+    const full = rmFull[i.id];
+    const fullInfo = full ? [full.loading ? `<span>全期間を調べています…</span>` : fullHtml(full)] : [];
+    const info = [...rmRelHtml(i).filter((h) => h.includes("rm-wait")), ...sess, ...br, ...hist, ...fullInfo, ...rmRelHtml(i).filter((h) => !h.includes("rm-wait"))];
+    return `<div class="rm-row">
+      <div class="rm-head"><span class="rm-tag ${i.priority === "急いで" || i.priority === "今すぐ" ? "hot" : ""}">${esc(i.priority)}</span>
+        <span class="rm-tag">${esc(i.status)}</span>
+        <span class="rm-subj" title="#${i.id}: ${esc(i.subject)}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${i.id}</a>: ${esc(i.subject)}</span>
+        <button class="rm-copy" data-copy="${esc(`#${i.id}: ${i.subject}`)}" title="「#番号: タイトル」をコピー">⧉</button>
+        ${!i.history.length && !full ? `<button class="rm-full" data-ticket="${i.id}" title="直近${rmData ? rmData.history_days : 30}日に見つからなかったので、残っている Claude・Codex の記録全部と各環境の git のコミットから探す">全期間で調べる</button>` : ""}</div>
+      ${info.length ? `<div class="rm-info">${info.join("")}</div>` : ""}
+    </div>`;
+  }).join("") : `<div class="empty">該当するチケットはありません</div>`;
+}
+// 絞り込みの選択肢: 状況（セッションあり・待ちあり・ブランチあり）とステータス
+const RM_FILTERS = {
+  "s:sess": ["セッションあり", (i) => i.sessions.length > 0],
+  "s:wait": ["待ちあり（未完了）", (i) => i.relations.some((r) => r.kind === "wait" && !r.closed)],
+  "s:branch": ["ブランチあり", (i) => i.branches.length > 0],
+};
+function rmFilterFn(v) {
+  if (!v) return () => true;
+  if (RM_FILTERS[v]) return RM_FILTERS[v][1];
+  return (i) => i.status === v.slice(3);
+}
+function rmText(i) {
+  return [`#${i.id}`, i.subject, i.status, i.priority, ...i.branches.map((b) => `${b.env} ${b.branch}`),
+    ...i.sessions.map((x) => `[${x.slot}] ${x.env} ${x.kind} ${x.skill}`), ...i.relations.map((r) => `#${r.id}`), ...i.history.map((h) => h.env)].join(" ").toLowerCase();
+}
+function renderRmAll() {
+  if (!rmData) return;
+  const cat = $("rm-cat").value, words = $("rm-q").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const statuses = [...new Set(rmData.issues.map((i) => i.status))];
+  const count = (fn) => rmData.issues.filter(fn).length;
+  $("rm-cat").innerHTML = [`<option value="">すべて（${rmData.issues.length}）</option>`]
+    .concat(Object.entries(RM_FILTERS).map(([k, [label, fn]]) => `<option value="${k}" ${k === cat ? "selected" : ""}>${label}（${count(fn)}）</option>`))
+    .concat(statuses.map((st) => `<option value="st:${esc(st)}" ${cat === `st:${st}` ? "selected" : ""}>ステータス: ${esc(st)}（${count((i) => i.status === st)}）</option>`)).join("");
+  const fn = rmFilterFn(cat);
+  const items = rmData.issues.filter((i) => fn(i) && words.every((w) => rmText(i).includes(w)));
+  const body = $("rm-all"), top = body.scrollTop;
+  body.innerHTML = rmRows(items); fitBr(body);
+  body.scrollTop = top;
+  $("rm-modal-meta").textContent = `${items.length} / ${rmData.issues.length} 件`;
+}
+async function loadRedmine(force) {
+  try {
+    const d = await (await fetch(`/api/redmine${force ? "?refresh=1" : ""}`)).json();
+    if (d.error) { $("redmine").innerHTML = `<div class="err">${esc(d.error)}</div>`; return; }
+    rmData = d;
+    $("redmine").innerHTML = rmRows(d.issues.slice(0, 10)); fitBr($("redmine"));
+    $("redmine-more").style.display = d.issues.length > 10 ? "" : "none";
+    const t = new Date(d.fetched_at * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+    $("redmine-meta").textContent = `${d.issues.length} 件・Redmine は ${t} 時点（5分ごとに取り直し）`;
+    if (rmOpen) renderRmAll();
+  } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
+}
+function openRm() {
+  try { history.pushState({ rm: 1 }, ""); } catch (e) {}
+  rmOpen = true;
+  $("rm-modal").classList.add("open");
+  $("rm-all").scrollTop = 0;
+  renderRmAll();
+}
+function hideRm() { rmOpen = false; $("rm-modal").classList.remove("open"); }
+function closeRm() { if (!rmOpen) return; if (history.state && history.state.rm) history.back(); else hideRm(); }
+window.addEventListener("popstate", hideRm);
+$("redmine-more").onclick = openRm;
+$("redmine-reload").onclick = () => loadRedmine(true);
+$("rm-back").onclick = (e) => { e.preventDefault(); closeRm(); };
+$("rm-cat").onchange = () => { $("rm-all").scrollTop = 0; renderRmAll(); };
+$("rm-q").oninput = () => { clearTimeout(rmTimer); rmTimer = setTimeout(() => { $("rm-all").scrollTop = 0; renderRmAll(); }, 200); };
+let downOnRmOverlay = false;
+$("rm-modal").addEventListener("mousedown", (e) => { downOnRmOverlay = e.target.id === "rm-modal"; });
+$("rm-modal").addEventListener("click", (e) => { if (e.target.id === "rm-modal" && downOnRmOverlay) closeRm(); downOnRmOverlay = false; });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && rmOpen) closeRm(); });
+
 refresh();
 setInterval(refresh, 30000);
+loadRedmine();
+setInterval(loadRedmine, 60000);
+loadLinks();
+setInterval(loadLinks, 30000);
 refreshPanes();
 setInterval(refreshPanes, 5000);
 fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.running && !jobPolling) jobPolling = setInterval(pollJob, 1500); });

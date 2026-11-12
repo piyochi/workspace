@@ -5,6 +5,9 @@
   GET  /api/status   … 環境1・2のサーバー状態 + Claude / Codex の使用率
   POST /api/run      … ~/bin/local-server <up|down|restart> <env> <comp> を裏で実行
   GET  /api/pane     … [n] の枠の画面の文字と、起動できるモード
+  GET  /api/links    … AI（Claude / Codex）が出した文章の URL（直近7日・新しい順。cat=種類・q=フリーワード）
+  GET  /api/redmine  … 自分担当の未完了チケット（5分キャッシュ、refresh=1 で取り直し）と、各チケットの枠・ブランチ・issue docs
+  GET  /api/history  … 1 チケットを全期間で探す（Claude・Codex の記録全部と各環境の git のコミット）
   POST /api/link     … [n] の枠の連動先（@link_slot。「2,4」のように複数可）を付ける・外す
   POST /api/cli      … [n] の枠で Claude / Codex を起動（monitor.txt のコマンド）・停止（入力待ちのときだけ）
   GET  /api/job      … 実行中・直近の操作の出力
@@ -22,6 +25,7 @@ import sys
 from urllib.parse import parse_qs, urlsplit
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -218,8 +222,12 @@ def prompt_text(entry):
     content = (entry.get("message") or {}).get("content")
     if isinstance(content, list):
         content = "\n".join(c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
-    if not isinstance(content, str) or content.lstrip().startswith("<"):
+    if not isinstance(content, str):
         return ""
+    if content.lstrip().startswith("<"):
+        # /ct-redmine 14747 のようなスラッシュコマンドは <command-args> に入力が入る。それ以外の差し込みは除く
+        m = re.search(r"<command-args>(.*?)</command-args>", content, re.S)
+        return m.group(1) if m and "<command-name>" in content else ""
     return content
 
 
@@ -601,6 +609,601 @@ def cli_stop(n):
     return {"ok": False, "message": "停止を確認できませんでした。画面を見てください"}, 200
 
 
+LINK_URL = re.compile(r"https?://[^\s<>()\[\]{}\"'`|*、。，）」』]+")  # * は Markdown の太字なので URL に含めない
+LINK_DAYS = 7
+ENV_DIRS = {"ticket_v2": "env1", "ticket_v2_second": "env2", "ticket_v2_third": "env3", "ticket_v2_fourth": "env4"}
+links_lock = threading.Lock()
+links = {}          # url -> {url, ts, cat, src, path, context}
+links_scan_lock = threading.Lock()  # 集める処理を同時に2つ走らせない（読み進めた位置が狂う）
+links_files = {}    # 記録ファイル -> {"offset", "cwd"}（追記分だけ読む）
+
+
+def link_category(url):
+    """URL の種類（セレクトの選択肢）。"""
+    host = urlsplit(url).hostname or ""
+    if host == "github.com" or host.endswith(".github.com") or host.endswith("githubusercontent.com"):
+        return "GitHub"
+    if host == "claude.ai" and "/artifact" in url:
+        return "アーティファクト"
+    if host.endswith("claude.ai") or host.endswith("claude.com") or host.endswith("anthropic.com"):
+        return "Claude"
+    if "redmine" in host:
+        return "Redmine"
+    if host in ("localhost", "127.0.0.1") or "corichlocal" in host or host.startswith("192.168."):
+        return "ローカル"
+    if host.endswith("corich.tw") or host.endswith("corich.mobi"):
+        return "staging"
+    if host.endswith("corich.asia"):
+        return "testing"
+    if host.endswith("corich.me") or host.endswith("corich.co") or host.endswith("corich.jp"):
+        return "本番"
+    if host.endswith("google.com"):
+        return "Google"
+    return "その他"
+
+
+def env_of(cwd):
+    """作業フォルダから環境名（env1〜env4）。わからなければフォルダ名。"""
+    for part in reversed(os.path.normpath(cwd or "").split(os.sep)):
+        if part in ENV_DIRS:
+            return ENV_DIRS[part]
+    return os.path.basename(cwd or "") or "?"
+
+
+LINE_TICKET = re.compile(r"#(1\d{4})(?!\d)|/issues/(1\d{4})(?!\d)")
+
+
+def main_ticket(text):
+    """ユーザーの入力に出たチケット番号のうち、いちばん多く出たもの（同数なら先に出たもの）。無ければ ""。
+
+    圧縮後の要約や貼り付けには番号がいくつも出るので、最後の番号ではなく主な番号を取る。
+    """
+    nums = PROMPT_TICKET.findall(text or "")
+    return max(nums, key=lambda n: (nums.count(n), -nums.index(n))) if nums else ""
+
+
+def add_links(text, ts, src, path, ticket=""):
+    """ticket: そのセッションでユーザーが最後に入力したチケット番号。URL の行に #番号・Redmine の URL があればそちらを優先する。"""
+    for raw in LINK_URL.findall(text or ""):
+        url = raw.rstrip(".,;:!?*_~>")
+        host = urlsplit(url).hostname or ""
+        # 「https://x」「https://…」のような書きかけや、説明用の伏せ字（…・xxxx）は拾わない
+        if not host or ("." not in host and host != "localhost") or "…" in url or re.search(r"x{4,}", url, re.I):
+            continue
+        # その URL が書かれていた行。URL は切らずに残し、前後を最大 60 文字ずつにする（画面で URL 部分をリンクにする）
+        line = next((l for l in text.splitlines() if raw in l), "")
+        i = line.find(raw)
+        # raw の末尾から外した文字（Markdown の太字の ** など）は、後ろの文と一緒に記号を消す
+        before, after = line[:i], raw[len(url):] + line[i + len(raw):]
+        clean = lambda t: re.sub(r"\s+", " ", re.sub(r"[*`#>|]+", " ", t))
+        before, after = clean(before).lstrip(), clean(after).rstrip()
+        before = ("…" + before[-60:]) if len(before) > 60 else before
+        after = (after[:60] + "…") if len(after) > 60 else after
+        ctx = before + url + after
+        m = LINE_TICKET.search(line)
+        tk = (m.group(1) or m.group(2)) if m else ticket
+        cur = links.get(url)
+        if cur is None or ts < cur["ts"]:
+            links[url] = {"url": url, "ts": ts, "cat": link_category(url), "src": src, "path": path, "context": ctx, "ticket": tk or ""}
+
+
+def iso_ts(value):
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def scan_links_once():
+    """Claude・Codex の記録（直近 LINK_DAYS 日に更新されたもの）から、AI が出した文章の URL を集める。
+
+    ユーザーの入力・道具の結果は見ない。同じ URL は初めて出た時刻で1件にまとめる。
+    """
+    limit = time.time() - LINK_DAYS * 86400
+    files = [(f, "claude") for f in glob.glob(os.path.join(HOME, ".claude", "projects", "*", "*.jsonl"))]
+    files += [(f, "codex") for f in glob.glob(os.path.join(HOME, ".codex", "sessions", "*", "*", "*", "*.jsonl"))]
+    for path, kind in files:
+        try:
+            if os.path.getmtime(path) < limit:
+                continue
+            st = links_files.setdefault(path, {"offset": 0, "cwd": ""})
+            lines = read_new_lines(path, st)
+        except OSError:
+            continue
+        for line in lines:
+            if kind == "claude":
+                if '"type":"assistant"' not in line and '"cwd"' not in line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                st["cwd"] = d.get("cwd") or st.get("cwd", "")
+                tk = main_ticket(prompt_text(d))
+                if tk:
+                    st["ticket"] = tk  # このあとに出た URL は、このチケットの作業で出たものとみなす
+                if d.get("type") != "assistant" or "http" not in line:
+                    continue
+                text = "\n".join(b.get("text", "") for b in (d.get("message") or {}).get("content") or []
+                                 if isinstance(b, dict) and b.get("type") == "text")
+            else:
+                if '"session_meta"' in line:
+                    try:
+                        st["cwd"] = json.loads(line).get("payload", {}).get("cwd", "")
+                    except ValueError:
+                        pass
+                    continue
+                if '"user"' in line:
+                    try:
+                        tk = main_ticket(codex_prompt_text(json.loads(line).get("payload") or {}))
+                    except ValueError:
+                        tk = ""
+                    if tk:
+                        st["ticket"] = tk
+                    continue
+                if '"assistant"' not in line or "http" not in line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                pl = d.get("payload") or {}
+                if pl.get("type") != "message" or pl.get("role") != "assistant":
+                    continue
+                text = "\n".join(c.get("text", "") for c in pl.get("content") or [] if isinstance(c, dict))
+            with links_lock:
+                add_links(text, iso_ts(d.get("timestamp")) or os.path.getmtime(path),
+                          f"{env_of(st.get('cwd'))} {kind}", path, st.get("ticket", ""))
+    with links_lock:
+        for url in [u for u, v in links.items() if v["ts"] < limit]:
+            del links[url]
+
+
+def scan_links_locked():
+    with links_scan_lock:
+        scan_links_once()
+
+
+def links_loop():
+    """30秒ごとに集める（枠の返答が終わったとき・「取り直す」は /api/links?rescan=1 でその場で集める）。"""
+    while True:
+        try:
+            scan_links_locked()
+        except Exception as e:  # 集め損ねても次の回でやり直す
+            print(f"{time.strftime('%F %T')} リンクの収集に失敗: {e}", file=sys.stderr, flush=True)
+        time.sleep(30)
+
+
+def slot_by_path():
+    """記録ファイル -> 今それを動かしている枠のタイトル（[n] env kind）。"""
+    out = {}
+    try:
+        panes = tmux("list-panes", "-s", "-t", TMUX_SESSION, "-F", "#{window_name}\t#{pane_id}\t#{pane_tty}\t#{@cm_title}").stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return out
+    kinds = running_kinds()
+    for line in panes.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 4 or parts[0] != "monitor" or "→ left" in parts[3]:
+            continue
+        m = SLOT_TITLE.search(parts[3])
+        if not m:
+            continue
+        label = f"[{m.group(1)}] {m.group(2)}"
+        try:
+            with open(os.path.join(CACHE, f"pane-{parts[1].lstrip('%')}.json")) as f:
+                out[json.load(f)["transcript_path"]] = f"{label} claude"
+        except (OSError, ValueError, KeyError):
+            pass
+        pid = kinds.get(parts[2].removeprefix("/dev/"), {}).get("codex")
+        if pid and codex_rollouts.get(pid):
+            out[codex_rollouts[pid]] = f"{label} codex"
+    return out
+
+
+def links_query(cat, q, offset, limit):
+    with links_lock:
+        items = sorted(links.values(), key=lambda v: v["ts"], reverse=True)
+    cats = {}
+    for v in items:
+        cats[v["cat"]] = cats.get(v["cat"], 0) + 1
+    if cat:
+        items = [v for v in items if v["cat"] == cat]
+    if q:
+        words = q.lower().split()
+        items = [v for v in items if all(w in f"{v['url']} {v['context']} {v['src']} #{v.get('ticket', '')}".lower() for w in words)]
+    slots = slot_by_path()
+    host = redmine_creds()[0]
+    page = [{"url": v["url"], "ts": v["ts"], "cat": v["cat"], "context": v["context"], "ticket": v.get("ticket", ""),
+             "ticket_url": f"{host}/issues/{v['ticket']}" if host and v.get("ticket") else "",
+             "src": slots.get(v["path"], v["src"])} for v in items[offset:offset + limit]]
+    return {"total": len(items), "items": page, "cats": sorted(cats.items(), key=lambda kv: -kv[1]), "days": LINK_DAYS}
+
+
+# 「#14339 リリース後」「#14339 待ち」「#14339 のマージ後」など、他のチケットを待っている書き方
+# 「後」「以降」は動作の言葉が付いたときだけ（表の見出しの「#14399 前 / 後」などを拾わないため）
+# 「#13868 リリースまで開発はしない」「#14339 と作業が被るため、…マージされるまで待つ」のように、番号のあとの同じ文で「待つ」ものも拾う
+WAIT_TEXT = re.compile(r"#(\d{4,6})\s*(?:の|が)?\s*((?:対応|修正|リリース|マージ|完了|反映|デプロイ|解決)\s*(?:待ち|後|以降|まで)|待ち)"
+                       r"|#(\d{4,6})([^#。\n]{0,40}?(?:待つ|待ち(?!ません)))")
+WAIT_WORD = re.compile(r"リリース|マージ|対応|完了|反映|デプロイ|解決")
+journals_cache = {}  # チケット番号 -> {"updated_on", "notes"}（更新されたチケットだけ取り直す）
+
+
+def journal_notes(get_one, issue_id, updated_on):
+    """チケットのコメント（journals の notes）。更新日時が変わっていなければ前回の結果を使う。"""
+    c = journals_cache.get(issue_id)
+    if c and c["updated_on"] == updated_on:
+        return c["notes"]
+    try:
+        notes = [j.get("notes") or "" for j in get_one(issue_id).get("journals") or [] if j.get("notes")]
+    except Exception:
+        return c["notes"] if c else []
+    journals_cache[issue_id] = {"updated_on": updated_on, "notes": notes}
+    return notes
+
+
+REDMINE_PROJECT_ID = 133  # tools/claude-corich/bin/redmine.sh の list と同じ（CoRichチケット！）
+REDMINE_OPEN = ("新規登録", "進行中", "フィードバック", "ﾌｨｰﾄﾞﾊﾞｯｸ")
+redmine_cache = {"at": 0, "data": None}
+REPO_NAMES = ("ticket_v2_api", "ticket_v2")
+
+
+def redmine_creds():
+    """Redmine の接続先と API キー。launchd には ~/.zshrc の環境変数が渡らないので、export の行を読む（別ファイルに写さない）。"""
+    vals = {k: os.environ.get(k, "") for k in ("REDMINE_HOST", "REDMINE_API_KEY")}
+    if not all(vals.values()):
+        try:
+            with open(os.path.join(HOME, ".zshrc")) as f:
+                for line in f:
+                    m = re.match(r"\s*export\s+(REDMINE_HOST|REDMINE_API_KEY)=(.*)$", line)
+                    if m and not vals[m.group(1)]:
+                        vals[m.group(1)] = m.group(2).strip().strip("'\"")
+        except OSError:
+            pass
+    return vals["REDMINE_HOST"].rstrip("/"), vals["REDMINE_API_KEY"]
+
+
+def redmine_issues():
+    """自分担当の未完了チケット（redmine.sh list と同じ条件）。5 分だけ覚えておく。"""
+    if redmine_cache["data"] is not None and time.time() - redmine_cache["at"] < 300:
+        return redmine_cache["data"]
+    host, key = redmine_creds()
+    if not host or not key:
+        return {"error": "REDMINE_HOST / REDMINE_API_KEY が見つかりません（~/.zshrc の export を読んでいます）"}
+    import urllib.request
+    def get_json(path):
+        req = urllib.request.Request(f"{host}{path}", headers={"X-Redmine-API-Key": key})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.load(r)
+
+    def get(path):
+        return get_json(path).get("issues", [])
+
+    def get_one(issue_id):
+        return get_json(f"/issues/{issue_id}.json?include=journals").get("issue", {})
+    try:
+        issues = get(f"/issues.json?assigned_to_id=me&project_id={REDMINE_PROJECT_ID}&status_id=open"
+                     "&sort=priority:desc,updated_on:desc&limit=100&include=relations")
+    except Exception as e:
+        return {"error": f"Redmine から取れませんでした: {e}"}
+    issues = [i for i in issues if (i.get("status") or {}).get("name") in REDMINE_OPEN]
+    # 待ち・関連: Redmine の関連（ブロック・先行）と、件名・説明の「#番号 待ち」。相手のチケットの状態も取る
+    rels = {}
+    for i in issues:
+        me, out = i["id"], []
+        for r in i.get("relations") or []:
+            other = r["issue_id"] if r["issue_to_id"] == me else r["issue_to_id"]
+            t = r["relation_type"]
+            if t == "blocks" and r["issue_to_id"] == me:
+                out.append({"id": other, "kind": "wait", "via": "ブロック"})
+            elif t == "precedes" and r["issue_to_id"] == me:
+                out.append({"id": other, "kind": "wait", "via": "先行"})
+            elif t in ("blocked", "follows") and r["issue_id"] == me:
+                out.append({"id": other, "kind": "wait", "via": "ブロック" if t == "blocked" else "先行"})
+            elif t in ("blocks", "precedes"):
+                out.append({"id": other, "kind": "blocking", "via": "ブロック" if t == "blocks" else "先行"})
+            else:
+                out.append({"id": other, "kind": "relates", "via": "関連"})
+        texts = [("本文", f"{i.get('subject', '')}\n{i.get('description') or ''}")]
+        texts += [("コメント", j) for j in journal_notes(get_one, i["id"], i.get("updated_on", ""))]
+        for via, text in texts:
+            for m in WAIT_TEXT.finditer(text):
+                n = int(m.group(1) or m.group(3))
+                if m.group(4):  # 文の中の「待つ」: 何を待つかの言葉があれば「マージ待ち」のようにする
+                    w = WAIT_WORD.search(m.group(4))
+                    phrase = f"{w.group(0)}待ち" if w else "待ち"
+                else:
+                    phrase = m.group(2)
+                if n == me or any(x["id"] == n and x["kind"] == "wait" for x in out):
+                    continue
+                line = next((l for l in text.splitlines() if m.group(0) in l), m.group(0))
+                out.append({"id": n, "kind": "wait", "via": via, "phrase": phrase, "note": re.sub(r"\s+", " ", line).strip()[:160]})
+        rels[me] = [x for x in out if x["kind"] != "relates"]
+    others = sorted({x["id"] for v in rels.values() for x in v})
+    info = {}
+    for k in range(0, len(others), 50):
+        try:
+            for o in get(f"/issues.json?issue_id={','.join(map(str, others[k:k + 50]))}&status_id=*&limit=100"):
+                st = o.get("status") or {}
+                info[o["id"]] = {"status": st.get("name", ""), "closed": bool(st.get("is_closed")) or bool(o.get("closed_on")),
+                                 "subject": o.get("subject", "")}
+        except Exception:
+            pass  # 相手の状態が取れなくても、番号だけは出す
+    data = {"host": host, "fetched_at": time.time(), "issues": [
+        {"id": i["id"], "subject": i.get("subject", ""), "status": (i.get("status") or {}).get("name", ""),
+         "priority": (i.get("priority") or {}).get("name", ""), "updated_on": i.get("updated_on", ""),
+         "relations": [{**x, **info.get(x["id"], {})} for x in rels[i["id"]]]}
+        for i in issues]}
+    redmine_cache.update(at=time.time(), data=data)
+    return data
+
+
+def ticket_places():
+    """チケット番号 -> 各環境のブランチ・issue docs。
+
+    ブランチは ticket_v2_api / ticket_v2 のローカルブランチ名に番号を含むもの（checkout 中かも付ける）。
+    issue docs は各環境の docs/issues/active/<番号>_*。
+    """
+    places = {}
+    for d, env in ENV_DIRS.items():
+        root = os.path.join(HOME, "www", d)
+        if not os.path.isdir(root):
+            continue
+        for repo in REPO_NAMES:
+            path = os.path.join(root, repo)
+            try:
+                out = subprocess.run(["git", "-C", path, "for-each-ref", "--format=%(refname) %(objectname)",
+                                      "refs/heads", "refs/remotes/origin"], capture_output=True, text=True, timeout=5).stdout
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            heads, remotes = {}, {}
+            for line in out.splitlines():
+                ref, _, sha = line.partition(" ")
+                if ref.startswith("refs/heads/"):
+                    heads[ref[len("refs/heads/"):]] = sha
+                elif ref.startswith("refs/remotes/origin/"):
+                    remotes[ref[len("refs/remotes/origin/"):]] = sha
+            current = branch_of(path)
+            for b, sha in heads.items():
+                for n in set(TICKET.findall(b)):
+                    entry = {"env": env, "repo": repo, "branch": b, "current": b == current}
+                    if not b.startswith("backup/"):  # 退避用は push しない前提なので調べない
+                        entry["push"] = push_state(path, sha, remotes.get(b))
+                    places.setdefault(n, {"branches": [], "docs": []})["branches"].append(entry)
+        for doc in glob.glob(os.path.join(root, "docs", "issues", "active", "[0-9]*_*")):
+            m = re.match(r"(\d{5})_", os.path.basename(doc))
+            if m:
+                places.setdefault(m.group(1), {"branches": [], "docs": []})["docs"].append(env)
+    return places
+
+
+push_cache = {}  # (リポジトリ, 手元の sha, origin の sha) -> {"ahead", "behind"}
+
+
+def push_state(path, local, remote):
+    """手元のブランチと origin の同名ブランチの差（最後に fetch した時点）。origin に無ければ {"remote": False}。"""
+    if not remote:
+        return {"remote": False}
+    if local == remote:
+        return {"remote": True, "ahead": 0, "behind": 0}
+    key = (path, local, remote)
+    if key not in push_cache:
+        try:
+            out = subprocess.run(["git", "-C", path, "rev-list", "--left-right", "--count", f"{local}...{remote}"],
+                                 capture_output=True, text=True, timeout=5).stdout.split()
+            push_cache[key] = {"ahead": int(out[0]), "behind": int(out[1])}
+        except (OSError, subprocess.TimeoutExpired, ValueError, IndexError):
+            return {"remote": True}
+    return {"remote": True, **push_cache[key]}
+
+
+GH_OWNER = "CoRichInc"
+pr_lock = threading.Lock()
+pr_cache = {"at": 0, "prs": {}}  # (リポジトリ, ブランチ) -> {"number", "state", "draft", "url"}
+
+
+def refresh_prs():
+    """自分が作った PR（全状態・新しい順に各 300 件）をブランチ名で引けるようにする。gh の認証を使う。"""
+    gh = shutil.which("gh") or "/opt/homebrew/bin/gh"
+    prs = {}
+    for repo in REPO_NAMES:
+        try:
+            out = subprocess.run([gh, "pr", "list", "--repo", f"{GH_OWNER}/{repo}", "--author", "@me", "--state", "all",
+                                  "--limit", "300", "--json", "number,headRefName,state,isDraft,url"],
+                                 capture_output=True, text=True, timeout=30)
+            rows = json.loads(out.stdout) if out.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            rows = None
+        if rows is None:  # 取れなかったリポジトリは前回の結果を残す
+            with pr_lock:
+                prs.update({k: v for k, v in pr_cache["prs"].items() if k[0] == repo})
+            continue
+        for r in reversed(rows):  # 同じブランチの PR が複数あれば新しいほうで上書きする
+            prs[(repo, r["headRefName"])] = {"number": r["number"], "state": r["state"].lower(),
+                                             "draft": r.get("isDraft", False), "url": r["url"]}
+    with pr_lock:
+        pr_cache.update(at=time.time(), prs=prs)
+
+
+def pr_loop():
+    while True:
+        try:
+            refresh_prs()
+        except Exception as e:
+            print(f"{time.strftime('%F %T')} PR の取得に失敗: {e}", file=sys.stderr, flush=True)
+        time.sleep(300)
+
+
+def branch_of(repo):
+    """リポジトリの今のブランチ名（.git/HEAD を読むだけ。取れなければ \"\"）。"""
+    try:
+        with open(os.path.join(repo, ".git", "HEAD")) as f:
+            ref = f.read().strip()
+    except OSError:
+        return ""
+    return ref.removeprefix("ref: refs/heads/") if ref.startswith("ref: ") else ""
+
+
+def redmine_view():
+    """担当チケットに、どの枠（セッション）・どの環境のブランチ・issue docs があるかを付ける。"""
+    data = redmine_issues()
+    if "error" in data:
+        return data
+    panes = ai_panes()
+    sessions = {}
+    for sl in panes.get("slots", []):
+        if sl.get("ticket"):
+            sessions.setdefault(sl["ticket"], []).append(
+                {"slot": sl["slot"], "env": sl["env"], "kind": sl["kind"], "state": sl["state"], "skill": sl.get("skill", "")})
+    places = ticket_places()
+    items = []
+    for i in data["issues"]:
+        n = str(i["id"])
+        p = places.get(n, {"branches": [], "docs": []})
+        with hist_lock:
+            h = sorted(hist.get(n, {}).items(), key=lambda kv: -kv[1])
+        with pr_lock:
+            branches = [{**b, "pr": pr_cache["prs"].get((b["repo"], b["branch"]))} for b in p["branches"]]
+        items.append({**i, "url": f"{data['host']}/issues/{n}", "sessions": sessions.get(n, []),
+                      "branches": branches, "docs": sorted(set(p["docs"])),
+                      "history": [{"env": e, "last": t} for e, t in h]})
+    return {"fetched_at": data["fetched_at"], "issues": items, "history_days": HIST_DAYS, "pr_at": pr_cache["at"]}
+
+
+HIST_DAYS = 30
+hist_lock = threading.Lock()
+hist = {}        # チケット番号 -> {env: 最後に扱った時刻}（直近 HIST_DAYS 日、ユーザーが入力した文だけ）
+hist_files = {}  # 記録ファイル -> {"offset", "cwd"}
+hist_full = {}   # チケット番号 -> {"at", "result"}（全期間の検索結果。10 分覚える）
+
+
+def codex_prompt_text(payload):
+    """Codex の記録の1行から、ユーザーが入力した文だけを取り出す（AGENTS.md・環境情報の差し込みは除く）。"""
+    if payload.get("type") != "message" or payload.get("role") != "user":
+        return ""
+    text = "\n".join(c.get("text", "") for c in payload.get("content") or [] if isinstance(c, dict))
+    t = text.lstrip()
+    if not t or t.startswith("<") or t.startswith("# AGENTS.md") or len(t) > 20000:
+        return ""
+    return text
+
+
+def history_entries(path, kind, st, lines):
+    """記録の行から (チケット番号, 環境, 時刻) を出す。env1〜env4 の作業フォルダのセッションだけ。"""
+    for line in lines:
+        if kind == "claude":
+            if '"user"' not in line and '"cwd"' not in line:
+                continue
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            st["cwd"] = d.get("cwd") or st.get("cwd", "")
+            text = prompt_text(d)
+        else:
+            if '"session_meta"' in line:
+                try:
+                    st["cwd"] = json.loads(line).get("payload", {}).get("cwd", "")
+                except ValueError:
+                    pass
+                continue
+            if '"user"' not in line:
+                continue
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            text = codex_prompt_text(d.get("payload") or {})
+        if not text:
+            continue
+        env = env_of(st.get("cwd"))
+        if env not in ENV_DIRS.values():
+            continue  # ct-sweep の一時フォルダなど、環境の外のセッションは数えない
+        ts = iso_ts(d.get("timestamp")) or os.path.getmtime(path)
+        for n in set(PROMPT_TICKET.findall(text)):
+            yield n, env, ts, kind
+
+
+def history_files(days=None):
+    files = [(f, "claude") for f in glob.glob(os.path.join(HOME, ".claude", "projects", "*", "*.jsonl"))]
+    files += [(f, "codex") for f in glob.glob(os.path.join(HOME, ".codex", "sessions", "*", "*", "*", "*.jsonl"))]
+    if days:
+        limit = time.time() - days * 86400
+        files = [(f, k) for f, k in files if os.path.getmtime(f) >= limit]
+    return files
+
+
+def scan_history_once():
+    for path, kind in history_files(HIST_DAYS):
+        st = hist_files.setdefault(path, {"offset": 0, "cwd": ""})
+        try:
+            lines = read_new_lines(path, st)
+        except OSError:
+            continue
+        found = list(history_entries(path, kind, st, lines))
+        with hist_lock:
+            for n, env, ts, _ in found:
+                cur = hist.setdefault(n, {})
+                cur[env] = max(cur.get(env, 0), ts)
+    limit = time.time() - HIST_DAYS * 86400
+    with hist_lock:
+        for n in list(hist):
+            hist[n] = {e: t for e, t in hist[n].items() if t >= limit}
+            if not hist[n]:
+                del hist[n]
+
+
+def history_loop():
+    while True:
+        try:
+            scan_history_once()
+        except Exception as e:  # 集め損ねても次の回でやり直す
+            print(f"{time.strftime('%F %T')} 履歴の収集に失敗: {e}", file=sys.stderr, flush=True)
+        time.sleep(60)
+
+
+def history_full(n):
+    """1 チケットを全期間で探す: 残っている Claude・Codex の記録全部と、各環境の git のコミット（refs #番号）。"""
+    cached = hist_full.get(n)
+    if cached and time.time() - cached["at"] < 600:
+        return cached["result"]
+    sessions = {}
+    needle = n.encode()
+    for path, kind in history_files():
+        try:
+            with open(path, "rb") as f:
+                if needle not in f.read():
+                    continue
+            st = {"offset": 0, "cwd": ""}
+            lines = read_new_lines(path, st)
+        except OSError:
+            continue
+        for tn, env, ts, k in history_entries(path, kind, st, lines):
+            if tn == n:
+                key = f"{env} {k}"
+                sessions[key] = max(sessions.get(key, 0), ts)
+    commits = {}
+    for d, env in ENV_DIRS.items():
+        root = os.path.join(HOME, "www", d)
+        for repo in ("", *REPO_NAMES):
+            path = os.path.join(root, repo) if repo else root
+            if not os.path.isdir(os.path.join(path, ".git")):
+                continue
+            try:
+                out = subprocess.run(["git", "-C", path, "log", "--all", "-E", f"--grep=#{n}([^0-9]|$)", "--format=%ct"],
+                                     capture_output=True, text=True, timeout=20).stdout.split()
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            if out:
+                key = f"{env} {repo or 'workspace'}"
+                commits[key] = {"last": max(map(int, out)), "count": len(out)}
+    result = {"ticket": n, "sessions": [{"where": k, "last": v} for k, v in sorted(sessions.items(), key=lambda kv: -kv[1])],
+              "commits": [{"where": k, **v} for k, v in sorted(commits.items(), key=lambda kv: -kv[1]["last"])]}
+    hist_full[n] = {"at": time.time(), "result": result}
+    return result
+
+
 def run_action(action, env, comp):
     try:
         proc = subprocess.Popen([LOCAL_SERVER, action, env, comp], stdout=subprocess.PIPE,
@@ -687,6 +1290,28 @@ class Handler(BaseHTTPRequestHandler):
             if not 1 <= n <= 12:
                 return self.send_json({"error": "slot は 1〜12 です"}, 400)
             self.send_json(pane_text(n))
+        elif self.path == "/api/links":
+            try:
+                offset = max(0, int(self.query.get("offset", ["0"])[0]))
+                limit = min(5000, max(1, int(self.query.get("limit", ["10"])[0])))
+            except ValueError:
+                offset, limit = 0, 10
+            if self.query.get("rescan", [""])[0] == "1":  # 枠の返答が終わった・「取り直す」: その場で集め直してから返す
+                try:
+                    scan_links_locked()
+                except Exception as e:
+                    print(f"{time.strftime('%F %T')} リンクの収集に失敗: {e}", file=sys.stderr, flush=True)
+            self.send_json(links_query(self.query.get("cat", [""])[0], self.query.get("q", [""])[0].strip(), offset, limit))
+        elif self.path == "/api/redmine":
+            if self.query.get("refresh", [""])[0] == "1":
+                redmine_cache["at"] = 0
+                refresh_prs()
+            self.send_json(redmine_view())
+        elif self.path == "/api/history":
+            n = self.query.get("ticket", [""])[0]
+            if not re.fullmatch(r"\d{4,6}", n):
+                return self.send_json({"error": "ticket が不正です"}, 400)
+            self.send_json(history_full(n))
         elif self.path == "/api/panes":
             self.send_json(ai_panes())
         elif self.path == "/api/job":
@@ -753,6 +1378,9 @@ def main():
     cfg = load_config()
     if not cfg["key"]:
         sys.exit("config.json に key（合言葉）を設定してください")
+    threading.Thread(target=links_loop, daemon=True).start()
+    threading.Thread(target=history_loop, daemon=True).start()
+    threading.Thread(target=pr_loop, daemon=True).start()
     httpd = ThreadingHTTPServer((cfg["bind"], cfg["port"]), Handler)
     print(f"dev-dashboard: {cfg['bind']}:{cfg['port']} 許可: {', '.join(cfg['allow_ips'])}", flush=True)
     httpd.serve_forever()
