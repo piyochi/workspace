@@ -80,7 +80,7 @@ button:disabled { opacity: .5; cursor: default; }
 .acct-head { display: flex; justify-content: space-between; gap: 8px; }
 .acct-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acct-meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.win { display: grid; grid-template-columns: 28px 1fr 72px; align-items: center; gap: 8px; margin-top: 4px; }
+.win { display: grid; grid-template-columns: 36px 1fr 72px; align-items: center; gap: 8px; margin-top: 4px; }
 .win-label { color: var(--muted); font-size: 12px; }
 .bar { height: 8px; background: var(--bar); border-radius: 4px; overflow: hidden; }
 .bar > i { display: block; height: 100%; background: var(--ok); }
@@ -134,16 +134,74 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 .links-modal-body { flex: 1; overflow: auto; padding: 4px 12px 12px; }
 .rm-row { padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px; }
 .rm-row:first-child { border-top: 0; }
+/* tmux の枠で作業中のチケットは背景を薄く色づける（欄の左右の余白まで塗る） */
+.rm-row.active { background: color-mix(in srgb, var(--accent) 9%, var(--card)); margin: 0 -12px; padding: 5px 12px; }
+/* 日報の入力画面 */
+.np-bar { align-items: center; }
+.np-bar button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.np-bar a { color: var(--accent); font-size: 12px; margin-left: auto; white-space: nowrap; text-decoration: none; }
+.np-group { margin: 10px 0 2px; font-size: 11px; font-weight: 600; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.np-group button, .np-group input { font-size: 11px; font-weight: 400; padding: 1px 6px; }
+.np-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 56px 56px 74px minmax(140px, 30%); gap: 4px 6px; align-items: start; padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px; }
+.np-row.head { border-top: 0; color: var(--muted); font-size: 11px; padding-bottom: 0; }
+.np-row.off .np-name, .np-row.off input[type=text], .np-row.off textarea { opacity: .45; }
+.np-row.changed { background: color-mix(in srgb, var(--warn) 10%, var(--card)); }
+.np-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-name input { width: 100%; }
+.np-name a { color: var(--accent); font-weight: 700; text-decoration: none; }
+.np-name a:hover { text-decoration: underline; }
+.np-sub { color: var(--muted); font-size: 10px; }
+.np-row input[type=text], .np-row textarea { width: 100%; min-width: 0; padding: 2px 4px; font-size: 12px; font-variant-numeric: tabular-nums; }
+/* 備考は普段は右側。入力するとき（フォーカス中）だけ、行の下に横幅いっぱいで広げる */
+.np-row textarea { font-family: inherit; line-height: 1.5; padding: 3px 6px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; resize: none; overflow: hidden; display: block; }
+.np-row textarea:focus { grid-column: 2 / -1; border-color: var(--accent); }
+.np-row textarea:placeholder-shown:not(:focus) { border-style: dashed; opacity: .7; }
+.np-name, .np-check { line-height: 24px; }
+.np-row.off textarea { display: none; }  /* 選んでいない候補は備考を出さない（一覧を詰める） */
+.np-row input.bad { border-color: var(--bad); }
+button.np-draft { font-size: 10px; padding: 0 4px; line-height: 18px; white-space: nowrap; color: var(--accent); }
+.np-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12px; }
+.np-foot #np-total { font-variant-numeric: tabular-nums; font-weight: 600; }
+.np-msg { flex: 1; min-width: 120px; color: var(--muted); }
+.np-msg.ok { color: var(--ok); } .np-msg.err { color: var(--bad); }
+.np-note { color: var(--muted); font-size: 11px; margin: 4px 0; }
+@media (max-width: 640px) {
+  .np-row { grid-template-columns: 18px 56px 56px 74px minmax(0, 1fr); }
+  .np-row textarea { grid-column: 2 / -1; }
+  .np-row .np-name { grid-column: 2 / -1; }
+  .np-row.head { display: none; }
+  .np-row .np-check { grid-row: 1 / 3; }
+}
+.rm-sep { margin: 6px -12px 0; padding: 3px 12px; font-size: 11px; font-weight: 600; color: var(--muted); background: var(--bg); border-top: 1px solid var(--line); }
+.rm-sep + .rm-row { border-top: 0; }
+/* 今日（朝 4:00 以降）作業したが、いまは枠に無いチケットは薄い緑 */
+.rm-row.today { background: color-mix(in srgb, var(--ok) 8%, var(--card)); margin: 0 -12px; padding: 5px 12px; }
 .rm-head { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
 .rm-head a { color: var(--accent); font-weight: 700; text-decoration: none; white-space: nowrap; }
 .rm-tag { font-size: 10px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; white-space: nowrap; color: var(--muted); }
-.rm-tag.hot { border-color: var(--bad); color: var(--bad); }
+/* 優先度ごとの色: 今すぐ＝赤の塗り、急いで＝赤、高め＝オレンジ、通常＝緑、低め＝灰（薄く） */
+.rm-tag.p-now { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 700; }
+.rm-tag.p-urgent { border-color: var(--bad); color: var(--bad); font-weight: 700; }
+.rm-tag.p-high { border-color: var(--warn); color: var(--warn); }
+.rm-tag.p-normal { border-color: var(--ok); color: var(--ok); }
+.rm-tag.p-low { opacity: .7; }
+/* ステータスは押すと変更できる */
+button.rm-st { font-size: 10px; line-height: inherit; padding: 0 4px; border-radius: 4px; color: var(--muted); background: none; white-space: nowrap; }
+button.rm-st::after { content: " ▾"; }
+button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
+.rm-st-edit { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; font-size: 10px; }
+.rm-st-edit select { font-size: 11px; padding: 0 2px; }
+.rm-st-edit button { font-size: 10px; padding: 0 4px; line-height: 16px; }
 .rm-copy { flex: none; font-size: 11px; padding: 0 5px; line-height: 16px; }
 .rm-subj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .rm-info { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 2px; font-size: 11px; color: var(--muted); }
 /* 今日（朝 4:00 以降）の作業。「今日作業した」で絞り込んだときは入力した文・コミットも出す */
 .rm-today { color: var(--accent); font-weight: 600; }
 .rm-tag.extra { border-color: var(--warn); color: var(--warn); }
+.rm-log-wrap > summary { list-style: none; cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 11px; color: var(--muted); }
+.rm-log-wrap > summary::-webkit-details-marker { display: none; }
+.rm-log-wrap > summary::before { content: "▸"; font-size: 10px; transition: transform .15s; }
+.rm-log-wrap[open] > summary::before { transform: rotate(90deg); }
 .rm-log { margin: 3px 0 0 8px; padding-left: 8px; border-left: 2px solid var(--line); font-size: 11px; color: var(--muted); }
 .rm-log div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rm-log b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -206,6 +264,12 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
     <div id="job"></div>
   </details>
 
+  <details class="sec" data-key="nippo" open>
+    <summary><h2>日報</h2></summary>
+    <div class="link-more"><button id="np-open-today" class="primary">今日の日報</button><button id="np-open-next">次回の日報</button>
+      <span class="label">HRMOS勤怠に登録します（メール送信は HRMOS の画面で）</span></div>
+  </details>
+
   <details class="sec" data-key="redmine" open>
     <summary><h2>Redmine 担当チケット</h2></summary>
     <div id="redmine"></div>
@@ -231,6 +295,28 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
       <input id="rm-q" type="search" placeholder="番号・件名・ブランチ・枠名で検索（スペース区切りで全部を含むもの）">
     </div>
     <div class="links-modal-body" id="rm-all"></div>
+  </div>
+</div>
+
+<div class="modal" id="np-modal" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <div class="modal-head">
+      <a href="#" class="back" id="np-back">← 戻る</a>
+      <span class="modal-title" id="np-title">日報</span>
+      <span class="modal-meta" id="np-meta"></span>
+    </div>
+    <div class="link-filter links-modal-filter np-bar">
+      <button id="np-tab-today">今日</button><button id="np-tab-next">次回</button>
+      <input type="date" id="np-date" title="日報の日付（次回は次の平日が入ります。変えられます）">
+      <a id="np-hrmos" href="#" target="_blank" rel="noopener noreferrer">HRMOS で開く ↗</a>
+    </div>
+    <div class="links-modal-body" id="np-body"></div>
+    <div class="np-foot">
+      <span id="np-total"></span>
+      <span class="np-msg" id="np-msg"></span>
+      <button id="np-reload">取り直す</button>
+      <button id="np-save" class="primary">HRMOS に登録する</button>
+    </div>
   </div>
 </div>
 
@@ -596,16 +682,77 @@ async function copyText(text) {
   }
   return ok;
 }
+// リンク付きでコピー: 貼り付け先がリンクに対応していれば（Slack・Google ドキュメント・メールなど）リンクになり、
+// そうでなければ文字だけが入る。http の画面でも動くよう、コピーの出来事に2つの形（文字・HTML）を載せる
+async function copyLink(text, url) {
+  if (!url) return copyText(text);
+  const on = (e) => {
+    e.clipboardData.setData("text/plain", text);
+    e.clipboardData.setData("text/html", `<a href="${esc(url)}">${esc(text)}</a>`);
+    e.preventDefault();
+  };
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  let ok = false;
+  document.addEventListener("copy", on, true);
+  try { ok = document.execCommand("copy"); } catch (e) {}
+  document.removeEventListener("copy", on, true);
+  ta.remove();
+  return ok || copyText(text);
+}
 $("modal-copy").onclick = async () => {
   const ok = await copyText($("modal-body").textContent);
   $("modal-meta").textContent = ok ? "コピーしました" : "コピーできませんでした（文字を選んで Ctrl+C）";
 };
+// Redmine の行: 優先度の色と、ステータスの変更
+const RM_PRI = { "今すぐ": "p-now", "急いで": "p-urgent", "高め": "p-high", "通常": "p-normal", "低め": "p-low" };
+let rmSt = null;  // ステータスを変更中のチケット: {id, loading, statuses, current, saving, error}
+function rmStatusHtml(i) {
+  if (!rmSt || rmSt.id !== i.id) {
+    return i.status ? `<button class="rm-st" data-id="${i.id}" title="押すとステータスを変更できます">${esc(i.status)}</button>` : "";
+  }
+  const x = `<button class="rm-st-x" title="やめる">×</button>`;
+  if (rmSt.loading) return `<span class="rm-st-edit">選べるステータスを取得中…</span>`;
+  if (rmSt.saving) return `<span class="rm-st-edit">変更中…</span>`;
+  if (rmSt.error) return `<span class="rm-st-edit"><span class="err">${esc(rmSt.error)}</span>${x}</span>`;
+  return `<span class="rm-st-edit"><select class="rm-st-sel" data-id="${i.id}">${rmSt.statuses.map((s) =>
+    `<option value="${s.id}" ${s.id === rmSt.current ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>${x}</span>`;
+}
+document.addEventListener("click", async (e) => {
+  if (e.target.closest("button.rm-st-x")) { rmSt = null; rmRerender(); return; }
+  const b = e.target.closest("button.rm-st"); if (!b) return;
+  const id = Number(b.dataset.id);
+  rmSt = { id, loading: true }; rmRerender();
+  let d;
+  try { d = await (await fetch(`/api/redmine/statuses?ticket=${id}`)).json(); }
+  catch (err) { d = { error: "Mac に接続できません" }; }
+  if (!rmSt || rmSt.id !== id) return;  // 取得中にやめた・別のチケットを押した
+  rmSt = d.error ? { id, error: d.error } : { id, statuses: d.statuses, current: d.current };
+  rmRerender();
+});
+document.addEventListener("change", async (e) => {
+  const sel = e.target.closest("select.rm-st-sel"); if (!sel) return;
+  const id = Number(sel.dataset.id), statusId = Number(sel.value);
+  if (rmSt && statusId === rmSt.current) return;
+  rmSt = { id, saving: true }; rmRerender();
+  let d;
+  try {
+    d = await (await fetch("/api/redmine/status", { method: "POST", headers: { "Content-Type": "application/json", "X-Dashboard": "1" },
+      body: JSON.stringify({ ticket: id, status_id: statusId }) })).json();
+  } catch (err) { d = { error: "Mac に接続できません" }; }
+  if (d.error) { rmSt = { id, error: d.error }; rmRerender(); return; }
+  // すぐ見た目に反映してから、Redmine を取り直す（完了などにすると一覧から消える）
+  [...rmData.issues, ...(rmData.today_extra || [])].filter((i) => i.id === id).forEach((i) => { i.status = d.status; });
+  rmSt = null; rmRerender();
+  loadRedmine(true);
+});
 // Redmine の行: タイトル右のアイコンで「#番号: タイトル」をコピー
 document.addEventListener("click", async (e) => {
   const b = e.target.closest("button.rm-copy"); if (!b) return;
-  const ok = await copyText(b.dataset.copy);
+  const ok = await copyLink(b.dataset.copy, b.dataset.url);
   b.textContent = ok ? "✓" : "✗"; b.title = ok ? "コピーしました" : "コピーできませんでした";
-  setTimeout(() => { b.textContent = "⧉"; b.title = "「#番号: タイトル」をコピー"; }, 1500);
+  setTimeout(() => { b.textContent = "⧉"; b.title = "「#番号: タイトル」をリンク付きでコピー"; }, 1500);
 });
 $("modal-back").onclick = (e) => { e.preventDefault(); closePane(); };
 // 外側クリックで閉じるのは、押した所も離した所も外側のときだけ。
@@ -766,15 +913,29 @@ function todayHtml(t) {
   return `<span class="rm-today" title="朝 4:00 以降にこのチケットで作業したセッションの時間帯と、refs #番号 の自分のコミット">今日: ${span.join("・")}</span>`;
 }
 // 「今日作業した」で絞り込んだときだけ: 入力した文（新しい順）とコミット
-function todayLogHtml(t) {
+// 普段は閉じておき、「▸ 履歴 N件」を押すと開く（開いたチケットは取り直しても覚えておく）
+const rmLogOpen = new Set();
+function todayLogHtml(t, id) {
   const rows = [...t.prompts.map((p) => ({ ts: p.ts, html: `<b>${hm(p.ts)}</b> ${esc(p.env)} ${esc(p.text)}`, title: p.text })),
     ...t.commits.map((c) => ({ ts: c.ts, html: `<b>${hm(c.ts)}</b> コミット ${esc(c.where)}: ${esc(c.subject)}`, title: c.subject }))]
     .sort((a, b) => b.ts - a.ts);
-  return rows.length ? `<div class="rm-log">${rows.map((r) => `<div title="${esc(r.title)}">${r.html}</div>`).join("")}</div>` : "";
+  if (!rows.length) return "";
+  const count = [t.prompts.length ? `入力${t.prompts.length}` : "", t.commits.length ? `コミット${t.commits.length}` : ""].filter(Boolean).join("・");
+  return `<details class="rm-log-wrap" data-id="${id}" ${rmLogOpen.has(String(id)) ? "open" : ""}><summary>履歴（${count}）</summary>
+    <div class="rm-log">${rows.map((r) => `<div title="${esc(r.title)}">${r.html}</div>`).join("")}</div></details>`;
 }
+// toggle は親に伝わらないので、捕まえる側（capture）で受ける
+document.addEventListener("toggle", (e) => {
+  const d = e.target;
+  if (!(d instanceof HTMLElement) || !d.classList.contains("rm-log-wrap")) return;
+  if (d.open) rmLogOpen.add(d.dataset.id); else rmLogOpen.delete(d.dataset.id);
+}, true);
 function rmRows(items, opts = {}) {
-  return items.length ? items.map((i) => {
+  return items.length ? items.map((i, idx) => {
     const td = todayOf(i);
+    // 担当外・完了済み（直近に作業したもの）の先頭に区切りを入れる
+    const sep = i.recent && !(idx && items[idx - 1].recent)
+      ? `<div class="rm-sep">担当外・完了済み（直近${rmData ? rmData.history_days : 30}日に作業したもの・新しい順）</div>` : "";
     const sess = i.sessions.map((x) => `<span class="rm-sess ${x.state}">▶ [${x.slot}] ${esc(x.env)} ${esc(x.kind)} ${PANE_STATES[x.state] || ""}${x.skill ? ` <span class="${x.skill_done ? "skill-done" : ""}">${skillText(x)}</span>` : ""}</span>`);
     // ブランチは環境ごとにまとめる。checkout 中のものは太字
     const byEnv = {};
@@ -798,15 +959,15 @@ function rmRows(items, opts = {}) {
     const full = rmFull[i.id];
     const fullInfo = full ? [full.loading ? `<span>全期間を調べています…</span>` : fullHtml(full)] : [];
     const info = [...(td ? [todayHtml(td)] : []), ...rmRelHtml(i).filter((h) => h.includes("rm-wait")), ...sess, ...br, ...hist, ...fullInfo, ...rmRelHtml(i).filter((h) => !h.includes("rm-wait"))];
-    return `<div class="rm-row">
-      <div class="rm-head">${i.priority ? `<span class="rm-tag ${i.priority === "急いで" || i.priority === "今すぐ" ? "hot" : ""}">${esc(i.priority)}</span>` : ""}
+    return `${sep}<div class="rm-row${i.sessions.length ? " active" : td ? " today" : ""}">
+      <div class="rm-head">${i.priority ? `<span class="rm-tag ${RM_PRI[i.priority] || ""}">${esc(i.priority)}</span>` : ""}
         ${i.extra ? `<span class="rm-tag extra" title="今日作業したが、自分担当の未完了チケットではないもの">${i.closed ? "完了" : `担当外${i.assignee ? `: ${esc(i.assignee)}` : ""}`}</span>` : ""}
-        ${i.status ? `<span class="rm-tag">${esc(i.status)}</span>` : ""}
+        ${rmStatusHtml(i)}
         <span class="rm-subj" title="#${i.id}: ${esc(i.subject)}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${i.id}</a>: ${esc(i.subject)}</span>
-        <button class="rm-copy" data-copy="${esc(`#${i.id}: ${i.subject}`)}" title="「#番号: タイトル」をコピー">⧉</button>
+        <button class="rm-copy" data-copy="${esc(`#${i.id}: ${i.subject}`)}" data-url="${esc(i.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button>
         ${!i.history.length && !full ? `<button class="rm-full" data-ticket="${i.id}" title="直近${rmData ? rmData.history_days : 30}日に見つからなかったので、残っている Claude・Codex の記録全部と各環境の git のコミットから探す">全期間で調べる</button>` : ""}</div>
       ${info.length ? `<div class="rm-info">${info.join("")}</div>` : ""}
-      ${opts.todayLog && td ? todayLogHtml(td) : ""}
+      ${opts.todayLog && td ? todayLogHtml(td, i.id) : ""}
     </div>`;
   }).join("") : `<div class="empty">該当するチケットはありません</div>`;
 }
@@ -815,6 +976,8 @@ const RM_FILTERS = {
   "s:sess": ["セッションあり", (i) => i.sessions.length > 0],
   "s:wait": ["待ちあり（未完了）", (i) => i.relations.some((r) => r.kind === "wait" && !r.closed)],
   "s:branch": ["ブランチあり", (i) => i.branches.length > 0],
+  "s:mine": ["自分の担当（未完了）", (i) => !i.extra],
+  "s:recent": ["担当外・完了済み（直近に作業）", (i) => !!i.recent],
 };
 function rmFilterFn(v) {
   if (!v) return () => true;
@@ -831,7 +994,8 @@ function renderRmAll() {
   const statuses = [...new Set(rmData.issues.map((i) => i.status))];
   const count = (fn) => rmData.issues.filter(fn).length;
   // 「今日作業した」は担当外・完了済み（today_extra）も含め、最後に作業した時刻の新しい順
-  const todayItems = [...rmData.issues, ...(rmData.today_extra || [])].filter(todayOf)
+  const listed = new Set(rmData.issues.map((i) => i.id));  // 担当外も一覧に入っているので、today_extra との重複を除く
+  const todayItems = [...rmData.issues, ...(rmData.today_extra || []).filter((i) => !listed.has(i.id))].filter(todayOf)
     .sort((a, b) => todayOf(b).last - todayOf(a).last);
   $("rm-cat").innerHTML = [`<option value="">すべて（${rmData.issues.length}）</option>`,
     `<option value="s:today" ${cat === "s:today" ? "selected" : ""} title="朝 4:00 以降に作業したもの">今日作業した（${todayItems.length}）</option>`]
@@ -845,6 +1009,226 @@ function renderRmAll() {
   body.scrollTop = top;
   $("rm-modal-meta").textContent = isToday ? `${items.length} 件（${hm(rmData.today.start)} 以降）` : `${items.length} / ${rmData.issues.length} 件`;
 }
+
+// ---- 日報（HRMOS勤怠）: 今日の日報に不足分を足す・時間を入れる／次回（次の平日）の日報を今日の行と Redmine から作る ----
+const np = { open: false, mode: "today", date: "", data: null, rows: [], msg: "", msgCls: "", busy: false, q: "", target: "" };
+const npMin = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "").trim()); return m && Number(m[2]) < 60 ? Number(m[1]) * 60 + Number(m[2]) : null; };
+const npFmt = (min) => `${Math.floor(min / 60)}:${String(Math.round(min) % 60).padStart(2, "0")}`;
+const npRound5 = (min) => Math.round(min / 5) * 5;
+const npTicket = (name) => (/#(\d{4,6})/.exec(name || "") || [])[1] || "";
+function npNextWeekday(iso) {
+  const d = new Date(`${iso}T12:00:00`);
+  do { d.setDate(d.getDate() + 1); } while (d.getDay() === 0 || d.getDay() === 6);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+const npIssues = () => rmData ? [...rmData.issues, ...(rmData.today_extra || [])] : [];
+const npSubject = (n) => { const i = npIssues().find((x) => String(x.id) === String(n)); return i ? `#${n}: ${i.subject}` : `#${n}`; };
+
+// 業務名の「#番号」を Redmine のチケット画面へのリンクにする（接続先は Redmine 欄のチケットの URL から取る）
+function npIssueUrl(name) {
+  const any = npIssues().find((i) => i.url), m = /#(\d{4,6})/.exec(name);
+  return any && m ? `${any.url.replace(/\/issues\/\d+$/, "")}/issues/${m[1]}` : "";
+}
+function npNameHtml(name) {
+  const url = npIssueUrl(name), m = /#(\d{4,6})/.exec(name);
+  const copy = `<button class="rm-copy" data-copy="${esc(name)}" data-url="${esc(url)}" title="業務名を${url ? "リンク付きで" : ""}コピー">⧉</button> `;
+  if (!url) return copy + esc(name);
+  return `${copy}${esc(name.slice(0, m.index))}<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Redmine で #${m[1]} を開く">#${m[1]}</a>${esc(name.slice(m.index + m[0].length))}`;
+}
+// HRMOS の行と候補から、画面の行（np.rows）を作る
+function npBuild(data, src) {
+  const ts = (data.timesheet || {}).tickets || {};
+  const rows = data.rows.map((r) => ({ kind: "cur", id: r.id, name: r.service_name, sub: [r.project, r.category].filter(Boolean).join("・"),
+    plan: r.plan.replace(/^0(\d:)/, "$1"), result: r.result.replace(/^0(\d:)/, "$1"), notes: r.notes,
+    orig: { plan: npMin(r.plan), result: npMin(r.result), notes: r.notes }, draft: ts[npTicket(r.service_name)] || 0 }));
+  const have = new Set(data.rows.map((r) => npTicket(r.service_name)).filter(Boolean));
+  const haveName = new Set(data.rows.map((r) => r.service_name.trim()));
+  const add = (o) => rows.push({ kind: "add", checked: false, plan: "0:00", result: "0:00", notes: "", draft: 0, sub: "", ...o });
+  if (np.mode === "today") {
+    // 今日作業したのに日報に無いチケット（作業時間の多い順）
+    const worked = new Set([...Object.keys(ts), ...Object.keys((rmData && rmData.today && rmData.today.tickets) || {})]);
+    [...worked].filter((n) => !have.has(n)).sort((a, b) => (ts[b] || 0) - (ts[a] || 0)).forEach((n) => {
+      have.add(n);
+      add({ group: "miss", checked: true, name: npSubject(n), draft: ts[n] || 0, result: npFmt(npRound5(ts[n] || 0)) });
+    });
+  } else if (src) {
+    // 今日の日報の行のうち、次回の日報にまだ無いもの（時間は 0:00 に戻し、備考は引き継ぐ）
+    src.rows.filter((r) => !haveName.has(r.service_name.trim())).forEach((r) => {
+      haveName.add(r.service_name.trim()); if (npTicket(r.service_name)) have.add(npTicket(r.service_name));
+      add({ group: "copy", checked: true, name: r.service_name, notes: r.notes, sub: [r.project, r.category].filter(Boolean).join("・"),
+        ids: { business_partner_id: r.business_partner_id, project_id: r.project_id, service_large_category_id: r.service_large_category_id,
+          service_medium_category_id: r.service_medium_category_id, service_category_id: r.service_category_id } });
+    });
+  }
+  // Redmine の一覧から選んで足す（まだ無いチケットだけ）
+  (rmData ? rmData.issues : []).filter((i) => !have.has(String(i.id))).forEach((i) => {
+    add({ group: "rm", name: `#${i.id}: ${i.subject}`, sub: [i.priority, i.status, i.extra ? (i.closed ? "完了" : "担当外") : ""].filter(Boolean).join("・") });
+  });
+  return rows;
+}
+function npRowHtml(r, i) {
+  const cur = r.kind === "cur", off = !cur && !r.checked;
+  const changed = cur && (npMin(r.plan) !== r.orig.plan || npMin(r.result) !== r.orig.result || r.notes !== r.orig.notes);
+  const dis = off ? "disabled" : "";
+  const bad = (v) => npMin(v) == null ? "bad" : "";
+  const future = npFuture();  // HRMOS は未来の日付に実績を入れられない
+  return `<div class="np-row${off ? " off" : ""}${changed ? " changed" : ""}" data-i="${i}">
+    <span class="np-check">${cur ? "" : `<input type="checkbox" data-f="checked" ${r.checked ? "checked" : ""}>`}</span>
+    <span class="np-name" title="${esc(r.name)}">${r.free ? `<input type="text" data-f="name" value="${esc(r.name)}" placeholder="業務名（例: MTG）">` : npNameHtml(r.name)}${r.sub ? ` <span class="np-sub">${esc(r.sub)}</span>` : ""}</span>
+    <input type="text" class="${bad(r.plan)}" data-f="plan" value="${esc(r.plan)}" inputmode="numeric" placeholder="0:00" title="予定" ${dis}>
+    <input type="text" class="${bad(r.result)}" data-f="result" value="${esc(future ? "" : r.result)}" inputmode="numeric" placeholder="${future ? "–" : "0:00"}" title="${future ? "未来の日付には実績を入れられません（HRMOS の決まり）" : "実績"}" ${future ? "disabled" : dis}>
+    <span>${r.draft ? `<button class="np-draft" data-draft="${npRound5(r.draft)}" title="Claude・Codex の記録から出した作業時間（${npFmt(r.draft)}）を実績に入れる" ${dis}>⏱ ${npFmt(npRound5(r.draft))}</button>` : ""}</span>
+    <textarea data-f="notes" rows="1" placeholder="備考（改行できます）" title="備考" ${dis}>${esc(r.notes)}</textarea>
+  </div>`;
+}
+function npRender() {
+  $("np-tab-today").classList.toggle("on", np.mode === "today");
+  $("np-tab-next").classList.toggle("on", np.mode === "next");
+  $("np-date").value = np.date;
+  $("np-date").disabled = np.mode === "today";
+  $("np-title").textContent = np.mode === "today" ? "今日の日報" : "次回の日報";
+  $("np-meta").textContent = np.date;
+  $("np-save").disabled = np.busy || !np.data;
+  $("np-msg").textContent = np.msg; $("np-msg").className = `np-msg ${np.msgCls}`;
+  const body = $("np-body");
+  if (np.busy && !np.data) { body.innerHTML = `<div class="empty">HRMOS から読み込んでいます…</div>`; $("np-total").textContent = ""; return; }
+  if (!np.data) { body.innerHTML = `<div class="err">${esc(np.msg || "読み込めませんでした")}</div>`; $("np-total").textContent = ""; return; }
+  $("np-hrmos").href = np.data.url;
+  const idx = np.rows.map((r, i) => [r, i]);
+  const rowsOf = (fn) => idx.filter(([r]) => fn(r)).map(([r, i]) => npRowHtml(r, i)).join("");
+  const head = `<div class="np-row head"><span></span><span>業務</span><span>予定</span><span>実績</span><span>下書き</span><span>備考</span></div>`;
+  const ts = np.data.timesheet;
+  const words = np.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const rm = idx.filter(([r]) => r.group === "rm");
+  const rmShown = rm.filter(([r]) => r.checked || words.every((w) => r.name.toLowerCase().includes(w)));
+  body.innerHTML = [
+    ts ? `<div class="np-note">⏱ 下書き = 今日（朝4:00以降）Claude・Codex を動かしていた時間をチケットごとに分けたもの（並行は等分・5分単位に丸め）。計 ${npFmt(ts.total)}、うちチケット以外 ${npFmt(ts.other)}。ブラウザ確認や打ち合わせの時間は入りません。</div>` : "",
+    `<div class="np-group">登録済みの行（${np.data.rows.length}）${ts ? `<button id="np-apply">下書きを実績に入れる</button><input type="text" id="np-target" size="5" value="${esc(np.target)}" placeholder="8:00" title="実績の合計をこの時間に合わせて、下書きの割合で配る（空なら下書きのまま）"><span>に合わせて配る${np.data.work_total ? `（HRMOS の総労働時間 ${esc(np.data.work_total)}）` : "（総労働時間は退勤の打刻後に入ります）"}</span>` : ""}</div>`,
+    np.data.rows.length ? head + rowsOf((r) => r.kind === "cur") : `<div class="empty">まだ行がありません</div>`,
+    np.mode === "today"
+      ? `<div class="np-group">今日作業したのに日報に無いもの（${idx.filter(([r]) => r.group === "miss").length}）</div>${rowsOf((r) => r.group === "miss") || `<div class="empty">不足はありません</div>`}`
+      : `<div class="np-group">今日の日報からコピーする行（${idx.filter(([r]) => r.group === "copy").length}）・時間は 0:00、備考は引き継ぎ</div>${rowsOf((r) => r.group === "copy") || `<div class="empty">コピーする行はありません</div>`}`,
+    `<div class="np-group">Redmine から足す（${rm.length}）<input type="search" id="np-q" value="${esc(np.q)}" placeholder="番号・件名で絞る"><button id="np-free">＋ 自由入力の行</button></div>`,
+    rowsOf((r) => r.group === "free"),
+    rmShown.map(([r, i]) => npRowHtml(r, i)).join("") || `<div class="empty">該当するチケットはありません</div>`,
+  ].join("");
+  npTotals();
+}
+const npFuture = () => !!(np.data && np.date > np.data.today);
+function npFit(t) { t.style.height = "auto"; t.style.height = `${t.scrollHeight + 2}px`; }
+function npTotals() {
+  document.querySelectorAll("#np-body textarea").forEach(npFit);
+  const on = np.rows.filter((r) => r.kind === "cur" || r.checked);
+  const sum = (f) => on.reduce((a, r) => a + (npMin(r[f]) || 0), 0);
+  const adds = np.rows.filter((r) => r.kind === "add" && r.checked).length;
+  $("np-total").textContent = `予定 ${npFmt(sum("plan"))}${npFuture() ? "" : `・実績 ${npFmt(sum("result"))}`}${adds ? `・+${adds}` : ""}`;
+}
+async function npLoad() {
+  np.busy = true; np.data = null; np.msg = ""; np.msgCls = ""; npRender();
+  try {
+    if (!rmData) await loadRedmine();
+    const get = async (d) => (await fetch(`/api/nippo?date=${d}`)).json();
+    const [data, src] = await Promise.all([get(np.mode === "today" ? "today" : np.date), np.mode === "next" ? get("today") : null]);
+    if (data.error) throw new Error(data.error);
+    if (src && src.error) throw new Error(src.error);
+    if (np.mode === "today") np.date = data.date;
+    np.data = data; np.rows = npBuild(data, src && src.date !== data.date ? src : null);
+    // 退勤後なら HRMOS の総労働時間を、5分単位に丸めて「合わせて配る」に入れておく（8:32 → 8:30）
+    np.target = npMin(data.work_total) == null ? "" : npFmt(npRound5(npMin(data.work_total)));
+  } catch (e) { np.msg = e.message || "Mac に接続できません"; np.msgCls = "err"; }
+  np.busy = false; npRender();
+}
+async function npOpen(mode) {
+  np.mode = mode; np.q = "";
+  if (mode === "next") {
+    let today = np.data && np.data.today;
+    if (!today) { try { today = (await (await fetch("/api/nippo?date=today")).json()).today; } catch (e) {} }
+    np.date = npNextWeekday(today || new Date().toISOString().slice(0, 10));
+  }
+  if (!np.open) { try { history.pushState({ np: 1 }, ""); } catch (e) {} np.open = true; $("np-modal").classList.add("open"); }
+  npLoad();
+}
+function npHide() { np.open = false; $("np-modal").classList.remove("open"); }
+function npClose() { if (!np.open) return; if (history.state && history.state.np) history.back(); else npHide(); }
+window.addEventListener("popstate", npHide);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && np.open) npClose(); });
+$("np-open-today").onclick = () => npOpen("today");
+$("np-open-next").onclick = () => npOpen("next");
+$("np-tab-today").onclick = () => npOpen("today");
+$("np-tab-next").onclick = () => npOpen("next");
+$("np-back").onclick = (e) => { e.preventDefault(); npClose(); };
+$("np-reload").onclick = () => npLoad();
+$("np-date").onchange = (e) => { if (np.mode === "next" && e.target.value) { np.date = e.target.value; npLoad(); } };
+$("np-body").addEventListener("input", (e) => {
+  const t = e.target;
+  if (t.id === "np-q") {  // 絞り込みは打つたびに描き直し、カーソルを戻す
+    np.q = t.value; const pos = t.selectionStart; npRender();
+    const q = $("np-q"); q.focus(); try { q.setSelectionRange(pos, pos); } catch (err) {}
+    return;
+  }
+  if (t.id === "np-target") { np.target = t.value; return; }
+  const row = t.closest(".np-row"); if (!row || !t.dataset.f || t.type === "checkbox") return;
+  const r = np.rows[Number(row.dataset.i)];
+  r[t.dataset.f] = t.value;
+  if (t.dataset.f === "plan" || t.dataset.f === "result") t.classList.toggle("bad", npMin(t.value) == null);
+  if (t.tagName === "TEXTAREA") npFit(t);
+  if (r.kind === "cur") row.classList.toggle("changed", npMin(r.plan) !== r.orig.plan || npMin(r.result) !== r.orig.result || r.notes !== r.orig.notes);
+  npTotals();
+});
+$("np-body").addEventListener("change", (e) => {
+  const t = e.target; if (t.type !== "checkbox") return;
+  np.rows[Number(t.closest(".np-row").dataset.i)].checked = t.checked; npRender();
+});
+$("np-body").addEventListener("click", (e) => {
+  const d = e.target.closest("button.np-draft");
+  if (d) { np.rows[Number(d.closest(".np-row").dataset.i)].result = npFmt(Number(d.dataset.draft)); npRender(); return; }
+  if (e.target.id === "np-free") { np.rows.push({ kind: "add", group: "free", free: true, checked: true, name: "", plan: "0:00", result: "0:00", notes: "", draft: 0, sub: "" }); npRender(); return; }
+  if (e.target.id === "np-apply") {
+    // 下書きのある行（登録済み + チェックした候補）の実績を入れる。合計の指定があれば、他の行の実績を引いた残りを下書きの割合で配る（5分単位・端数は大きい順）
+    const rows = np.rows.filter((r) => r.draft && (r.kind === "cur" || r.checked));
+    const target = npMin($("np-target").value);
+    if ($("np-target").value.trim() && target == null) { np.msg = "合計の時間が不正です（例 8:00）"; np.msgCls = "err"; npRender(); return; }
+    if (target == null) rows.forEach((r) => { r.result = npFmt(npRound5(r.draft)); });
+    else {
+      const others = np.rows.filter((r) => !r.draft && (r.kind === "cur" || r.checked)).reduce((a, r) => a + (npMin(r.result) || 0), 0);
+      const units = Math.max(0, Math.round((target - others) / 5)), total = rows.reduce((a, r) => a + r.draft, 0);
+      const exact = rows.map((r) => r.draft / total * units), base = exact.map(Math.floor);
+      let rest = units - base.reduce((a, b) => a + b, 0);
+      exact.map((x, i) => [x - base[i], i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => { if (rest > 0) { base[i]++; rest--; } });
+      rows.forEach((r, i) => { r.result = npFmt(base[i] * 5); });
+    }
+    np.msg = `下書きを ${rows.length} 行の実績に入れました（まだ登録していません）`; np.msgCls = ""; npRender();
+  }
+});
+$("np-save").onclick = async () => {
+  const on = np.rows.filter((r) => r.kind === "cur" || r.checked);
+  if (on.some((r) => npMin(r.plan) == null || npMin(r.result) == null)) { np.msg = "時間の形が不正な行があります（例 1:30）"; np.msgCls = "err"; npRender(); return; }
+  if (on.some((r) => r.kind === "add" && !r.name.trim())) { np.msg = "業務名が空の行があります"; np.msgCls = "err"; npRender(); return; }
+  const body = { date: np.date,
+    updates: np.rows.filter((r) => r.kind === "cur").map((r) => ({ id: r.id, plan: r.plan.trim(), result: r.result.trim(), notes: r.notes })),
+    adds: np.rows.filter((r) => r.kind === "add" && r.checked).map((r) => ({ service_name: r.name.trim(), plan: r.plan.trim(), result: r.result.trim(), notes: r.notes, ...(r.ids || {}) })) };
+  const post = async (b) => (await fetch("/api/nippo", { method: "POST", headers: { "Content-Type": "application/json", "X-Dashboard": "1" }, body: JSON.stringify(b) })).json();
+  np.busy = true; np.msg = "送る内容を確かめています…"; np.msgCls = ""; npRender();
+  try {
+    // 先に「送らずに内容だけ」を作らせ、確認してから登録する
+    const dry = await post({ ...body, dry: true });
+    if (dry.error) throw new Error(dry.error);
+    if (!dry.changed) { np.msg = "変更はありません"; np.busy = false; npRender(); return; }
+    if (!confirm(`${np.date} の日報を HRMOS に登録します（${dry.changed} 行）。\n\n${dry.summary.join("\n")}`)) { np.msg = "登録をやめました"; np.busy = false; npRender(); return; }
+    const res = await post(body);
+    if (res.error) throw new Error(res.error);
+    await npLoad();
+    np.msg = `登録しました（${res.changed} 行）。メールは HRMOS の画面で送ってください`; np.msgCls = "ok";
+  } catch (e) { np.msg = e.message || "Mac に接続できません"; np.msgCls = "err"; }
+  np.busy = false; npRender();
+};
+["focusin", "focusout"].forEach((ev) => $("np-body").addEventListener(ev, (e) => {
+  if (e.target.tagName === "TEXTAREA") requestAnimationFrame(() => npFit(e.target));
+}));
+let downOnNpOverlay = false;
+$("np-modal").addEventListener("mousedown", (e) => { downOnNpOverlay = e.target.id === "np-modal"; });
+$("np-modal").addEventListener("click", (e) => { if (e.target.id === "np-modal" && downOnNpOverlay) npClose(); downOnNpOverlay = false; });
+
 async function loadRedmine(force) {
   try {
     const d = await (await fetch(`/api/redmine${force ? "?refresh=1" : ""}`)).json();
@@ -854,7 +1238,8 @@ async function loadRedmine(force) {
     // 10 件以下でも、今日作業したもの（担当外・完了済みを含む）があれば詳細画面を開けるようにする
     $("redmine-more").style.display = d.issues.length > 10 || Object.keys((d.today || {}).tickets || {}).length ? "" : "none";
     const t = new Date(d.fetched_at * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
-    $("redmine-meta").textContent = `${d.issues.length} 件・Redmine は ${t} 時点（5分ごとに取り直し）`;
+    const mineN = d.mine_count ?? d.issues.length, recentN = d.issues.length - mineN;
+    $("redmine-meta").textContent = `${mineN} 件${recentN > 0 ? `＋担当外・完了 ${recentN} 件` : ""}・Redmine は ${t} 時点（5分ごとに取り直し）`;
     if (rmOpen) renderRmAll();
   } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
 }

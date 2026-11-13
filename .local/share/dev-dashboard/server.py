@@ -166,6 +166,50 @@ def window(w):
     return {"percent": float(p), "resets_at": r}
 
 
+USAGE_API = "https://api.anthropic.com/api/oauth/usage"
+USAGE_TTL = 300  # モデル別の枠は 5 分に 1 回だけ取りに行く（失敗も同じ間は取り直さない）
+scoped_lock = threading.Lock()
+scoped_cache = {}  # 設定フォルダ -> {"at": 取得時刻, "windows": {"Fable": {percent, resets_at}}}
+
+
+def claude_scoped_windows(cdir):
+    """モデル別の週の枠（Fable など）。statusline には来ないので、/usage 画面と同じ API から取る。
+
+    トークンは設定フォルダの .credentials.json を読むだけ（更新は Claude Code に任せる。期限切れの間は前回の値を出す）。
+    公開されていない API なので、形が変わったら何も出さない。
+    """
+    with scoped_lock:
+        c = scoped_cache.get(cdir)
+        if c and time.time() - c["at"] < USAGE_TTL:
+            return c["windows"]
+        prev = c["windows"] if c else {}
+        scoped_cache[cdir] = {"at": time.time(), "windows": prev}  # 取得中・失敗のあいだは前回の値
+    import urllib.request
+    try:
+        with open(os.path.join(cdir, ".credentials.json")) as f:
+            token = (json.load(f).get("claudeAiOauth") or {}).get("accessToken")
+        if not token:
+            return prev
+        req = urllib.request.Request(USAGE_API, headers={
+            "Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20", "User-Agent": "dev-dashboard"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            limits = json.load(r).get("limits") or []
+        wins = {}
+        for lim in limits:
+            if not isinstance(lim, dict) or lim.get("kind") != "weekly_scoped":
+                continue
+            scope = lim.get("scope") or {}
+            name = (scope.get("model") or {}).get("display_name") or scope.get("surface")
+            w = window({"used_percent": lim.get("percent"), "resets_at": lim.get("resets_at")})
+            if isinstance(name, str) and name and w:
+                wins[name] = w
+    except (OSError, ValueError, AttributeError):
+        return prev
+    with scoped_lock:
+        scoped_cache[cdir] = {"at": time.time(), "windows": wins}
+    return wins
+
+
 def claude_usage():
     rows = []
     for path in sorted(glob.glob(os.path.join(CACHE, "claude-*.json"))):
@@ -181,6 +225,7 @@ def claude_usage():
             "windows": {
                 "5h": window(rl.get("five_hour")),
                 "週": window(rl.get("seven_day")),
+                **(claude_scoped_windows(d["config_dir"]) if d.get("config_dir") else {}),
             },
         })
     return rows
@@ -1117,6 +1162,45 @@ def redmine_creds():
     return vals["REDMINE_HOST"].rstrip("/"), vals["REDMINE_API_KEY"]
 
 
+def redmine_call(path, method="GET", body=None):
+    """Redmine の REST API を1回呼ぶ。応答の JSON（本文が空なら {}）を返す。"""
+    import urllib.request
+    host, key = redmine_creds()
+    if not host or not key:
+        raise OSError("REDMINE_HOST / REDMINE_API_KEY が見つかりません")
+    req = urllib.request.Request(f"{host}{path}", method=method, headers={"X-Redmine-API-Key": key, "Content-Type": "application/json"},
+                                 data=None if body is None else json.dumps(body).encode())
+    with urllib.request.urlopen(req, timeout=15) as r:
+        raw = r.read()
+    return json.loads(raw) if raw.strip() else {}
+
+
+def redmine_statuses(issue_id):
+    """そのチケットで選べるステータス（ワークフローで許されているもの）。取れない版の Redmine では全ステータス。"""
+    try:
+        issue = redmine_call(f"/issues/{issue_id}.json?include=allowed_statuses").get("issue", {})
+        allowed = issue.get("allowed_statuses")
+        if allowed is None:
+            allowed = redmine_call("/issue_statuses.json").get("issue_statuses", [])
+        cur = issue.get("status") or {}
+        return {"current": cur.get("id"), "statuses": [{"id": s["id"], "name": s["name"]} for s in allowed]}, 200
+    except Exception as e:
+        return {"error": f"ステータスの一覧を取れませんでした: {e}"}, 502
+
+
+def redmine_set_status(issue_id, status_id):
+    """ステータスを変える。Redmine は許されていない変更を黙って無視するので、変えたあとに読み直して確かめる。"""
+    try:
+        redmine_call(f"/issues/{issue_id}.json", "PUT", {"issue": {"status_id": status_id}})
+        now = (redmine_call(f"/issues/{issue_id}.json").get("issue", {}).get("status") or {})
+    except Exception as e:
+        return {"error": f"ステータスを変えられませんでした: {e}"}, 502
+    redmine_cache["at"] = 0  # 次の一覧で取り直す
+    if now.get("id") != status_id:
+        return {"error": f"Redmine が変更を受け付けませんでした（今は「{now.get('name', '?')}」のまま）"}, 409
+    return {"ok": True, "status": now.get("name", "")}, 200
+
+
 def redmine_issues():
     """自分担当の未完了チケット（redmine.sh list と同じ条件）。5 分だけ覚えておく。"""
     if redmine_cache["data"] is not None and time.time() - redmine_cache["at"] < 300:
@@ -1324,16 +1408,37 @@ def redmine_view():
 
     items = [item(i) for i in data["issues"]]
     tv = today_view()
+
+    # 並び: ① tmux の枠で作業しているもの → ② 今日（朝 4:00 以降）作業したもの（最後に作業した時刻の新しい順）
+    #       → ③ それ以外。①③ の中の並び（優先度の高い順 → 更新の新しい順）は変えない（sort は安定）
+    def order(x):
+        if x["sessions"]:
+            return (0, 0)
+        t = tv["tickets"].get(str(x["id"]))
+        return (1, -t["last"]) if t else (2, 0)
+    items.sort(key=order)
     mine = {str(i["id"]) for i in data["issues"]}
     host, key = redmine_creds()
     extra = [{**item(i), "extra": True} for i in today_extra_issues(set(tv["tickets"]) - mine, host, key)]
-    return {"fetched_at": data["fetched_at"], "issues": items, "history_days": HIST_DAYS, "pr_at": pr_cache["at"],
+    # ④ 担当一覧に無い（担当外・完了済み）が、直近 HIST_DAYS 日に作業したチケット。一覧のいちばん下に、最後に作業した時刻の新しい順で置く
+    #    話に出ただけの番号まで含めると数百件になるので、セッションの作業番号だったものだけ（hist_work）
+    with hist_lock:
+        recent_last = dict(hist_work)
+    for n, t in tv["tickets"].items():
+        recent_last[n] = max(recent_last.get(n, 0), t["last"])
+    recent_ids = set(recent_last) - mine
+    recent = [{**item(i), "extra": True, "recent": True} for i in today_extra_issues(recent_ids, host, key, recent_cache)
+              if i["status"]]  # Redmine に無い番号（チケットではない数字）は出さない
+    recent.sort(key=lambda x: -recent_last.get(str(x["id"]), 0))
+    items += recent
+    return {"fetched_at": data["fetched_at"], "issues": items, "mine_count": len(mine), "history_days": HIST_DAYS, "pr_at": pr_cache["at"],
             "today": tv, "today_extra": extra}
 
 
 HIST_DAYS = 30
 hist_lock = threading.Lock()
 hist = {}        # チケット番号 -> {env: 最後に扱った時刻}（直近 HIST_DAYS 日、ユーザーが入力した文だけ）
+hist_work = {}   # チケット番号 -> 最後に「作業の番号」だった時刻（直近 HIST_DAYS 日。話に出ただけの番号は入れない）
 hist_files = {}  # 記録ファイル -> {"offset", "cwd"}
 hist_full = {}   # チケット番号 -> {"at", "result"}（全期間の検索結果。10 分覚える）
 
@@ -1349,8 +1454,11 @@ def codex_prompt_text(payload):
     return text
 
 
-def history_entries(path, kind, st, lines):
-    """記録の行から (チケット番号, 環境, 時刻) を出す。env1〜env4 の作業フォルダのセッションだけ。"""
+def history_entries(path, kind, st, lines, work=None):
+    """記録の行から (チケット番号, 環境, 時刻) を出す。env1〜env4 の作業フォルダのセッションだけ。
+
+    work（辞書）を渡すと、その入力の作業番号（session_ticket。話に出ただけの番号は含まない）-> 最後の時刻 も書き込む。
+    """
     for line in lines:
         if kind == "claude":
             if '"user"' not in line and '"cwd"' not in line:
@@ -1381,6 +1489,10 @@ def history_entries(path, kind, st, lines):
         if env not in ENV_DIRS.values():
             continue  # ct-sweep の一時フォルダなど、環境の外のセッションは数えない
         ts = iso_ts(d.get("timestamp")) or os.path.getmtime(path)
+        if work is not None:
+            wt = session_ticket(text, claude_work_ticket(d) if kind == "claude" else work_ticket(text))
+            if wt:
+                work[wt] = max(work.get(wt, 0), ts)
         for n in set(PROMPT_TICKET.findall(text)):
             yield n, env, ts, kind
 
@@ -1401,13 +1513,18 @@ def scan_history_once():
             lines = read_new_lines(path, st)
         except OSError:
             continue
-        found = list(history_entries(path, kind, st, lines))
+        work = {}
+        found = list(history_entries(path, kind, st, lines, work))
         with hist_lock:
             for n, env, ts, _ in found:
                 cur = hist.setdefault(n, {})
                 cur[env] = max(cur.get(env, 0), ts)
+            for n, ts in work.items():
+                hist_work[n] = max(hist_work.get(n, 0), ts)
     limit = time.time() - HIST_DAYS * 86400
     with hist_lock:
+        for n in [n for n, ts in hist_work.items() if ts < limit]:
+            del hist_work[n]
         for n in list(hist):
             hist[n] = {e: t for e, t in hist[n].items() if t >= limit}
             if not hist[n]:
@@ -1472,8 +1589,10 @@ TODAY_PROMPTS = 8          # 1 チケット・1 環境あたり残す入力の�
 TODAY_SNIPPET = 90         # 入力の冒頭として残す文字数
 TS_FIELD = re.compile(r'"timestamp"\s*:\s*"([^"]+)"')
 today_lock = threading.Lock()
-today = {"start": 0, "files": {}, "work": {}, "commits": {}, "commits_at": 0}
+today = {"start": 0, "files": {}, "work": {}, "commits": {}, "commits_at": 0, "mins": {}}
+TS_GAP_MIN = 5  # 記録の間隔がこの分数以内なら、その間も作業していたとみなす（ct-timesheet と同じ）
 extra_cache = {"at": 0, "ids": (), "issues": []}  # 今日作業した担当外・完了済みのチケット（5 分覚える）
+recent_cache = {"at": 0, "ids": (), "issues": []}  # 直近 HIST_DAYS 日に扱った担当外・完了済みのチケット（5 分覚える）
 
 
 def day_start(now=None):
@@ -1510,8 +1629,8 @@ def scan_today_once():
     start = day_start()
     with today_lock:
         if today["start"] != start:  # 日が変わったら最初から
-            today.update(start=start, files={}, work={}, commits={}, commits_at=0)
-        files, work = today["files"], today["work"]
+            today.update(start=start, files={}, work={}, commits={}, commits_at=0, mins={})
+        files, work, mins = today["files"], today["work"], today["mins"]
     for path, kind in history_files():
         try:
             if os.path.getmtime(path) < start:
@@ -1524,6 +1643,7 @@ def scan_today_once():
         except OSError:
             continue
         found = []  # (ticket, env, ts, prompt)
+        ticks = []  # (分, ticket。作業番号が無ければ "")。日報の時間の下書き用
         for line in lines:
             m = TS_FIELD.search(line)
             ts = iso_ts(m.group(1)) if m else 0.0
@@ -1554,10 +1674,15 @@ def scan_today_once():
             if prompt:
                 st["cur"] = session_ticket(prompt, wt) or st["cur"]
             env = env_of(st["cwd"])
+            if ts >= start and env in ENV_DIRS.values():
+                ticks.append((int(ts // 60), st["cur"]))
             if ts >= start and st["cur"] and env in ENV_DIRS.values():
                 found.append((st["cur"], env, ts, snippet(prompt) if prompt else None))
-        if found:
+        if found or ticks:
             with today_lock:
+                m = mins.setdefault(path, {})
+                for minute, tk in ticks:
+                    m[minute] = tk or m.get(minute, "")
                 for tk, env, ts, p in found:
                     _today_touch(work, tk, env, ts, p)
     if time.time() - today["commits_at"] >= 300:
@@ -1618,8 +1743,12 @@ def today_view():
     return {"start": start, "tickets": out}
 
 
-def today_extra_issues(ids, host, key):
-    """今日作業したが担当一覧に無いチケット（担当外・完了済み）を Redmine から引く。5 分覚える。"""
+def today_extra_issues(ids, host, key, cache=None):
+    """担当一覧に無いチケット（担当外・完了済み）を番号で Redmine から引く。5 分覚える。
+
+    cache を渡さなければ「今日作業した」用（extra_cache）。直近の履歴用は recent_cache を渡す。
+    """
+    extra_cache = cache if cache is not None else globals()["extra_cache"]
     ids = tuple(sorted(ids))
     if not ids:
         return []
@@ -1660,6 +1789,301 @@ def run_action(action, env, comp):
             job["output"] += f"⚠️  起動できませんでした: {e}\n"
     with job_lock:
         job.update(running=False, rc=rc, finished=time.time())
+
+
+# --- 日報（HRMOS勤怠 p.ieyasu.co）-----------------------------------------------------------
+# 公開 API ではなく、画面と同じフォームを送る。HRMOS 側の画面が変わると動かなくなる。
+# 更新は、いまある行を全部（変えていない行はいまの値のまま）と、足す行を送る。送らなかった行は HRMOS 側で時間が 0:00 になる。行の削除・メール送信はしない。
+HRMOS_BASE = "https://p.ieyasu.co"
+HRMOS_TOKEN = re.compile(r'name="authenticity_token"\s+value="([^"]+)"')
+HRMOS_ROW = re.compile(r"daily_report\[reports_attributes\]\[(\d+)\]\[(\w+)\]")
+HRMOS_ID_FIELDS = ("business_partner_id", "project_id", "service_large_category_id", "service_medium_category_id", "service_category_id")
+HRMOS_TIME = re.compile(r"(\d{1,2}):(\d{2})")
+hrmos_lock = threading.Lock()   # HRMOS とのやり取りは1つずつ（ログインし直しが重ならないように）
+hrmos_opener = None             # ログイン中の cookie を持つ
+hrmos_ids = {}                  # (年, 月) -> {日: 日報 ID}
+
+
+def timesheet_today():
+    """今日（朝 4:00 以降）のチケット別の作業時間（分）。ct-timesheet スキルと同じ決め方:
+
+    記録の間隔が TS_GAP_MIN 分以内ならその間も作業中とみなし、1分ごとに、同じ分に動いていたセッションの数で等分する
+    （並行作業で水増ししない）。Claude・Codex を触っていない時間（ブラウザ確認・打ち合わせ）は入らない。
+    """
+    with today_lock:
+        mins = [dict(m) for m in today.get("mins", {}).values()]
+    per_min = {}
+    for m in mins:
+        keys = sorted(m)
+        for i, k in enumerate(keys):
+            per_min.setdefault(k, []).append(m[k])
+            if i + 1 < len(keys) and keys[i + 1] - k <= TS_GAP_MIN:
+                for x in range(k + 1, keys[i + 1]):
+                    per_min.setdefault(x, []).append(m[k])
+    out = {}
+    for tks in per_min.values():
+        for tk in tks:
+            out[tk] = out.get(tk, 0) + 1 / len(tks)
+    return {"tickets": {k: round(v) for k, v in out.items() if k and round(v)}, "other": round(out.get("", 0)), "total": len(per_min)}
+
+
+def hrmos_cfg():
+    c = load_config().get("hrmos") or {}
+    if not (c.get("company") and c.get("login_id") and c.get("password")):
+        raise OSError("config.json に hrmos（company・login_id・password）がありません")
+    return c
+
+
+def _hrmos_open(path, data=None):
+    """1回だけ呼ぶ。(最後に着いた URL のパス, 本文)。"""
+    global hrmos_opener
+    import http.cookiejar
+    import urllib.request
+    from urllib.parse import urlencode
+    if hrmos_opener is None:
+        hrmos_opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        hrmos_opener.addheaders = [("User-Agent", "Mozilla/5.0 (dev-dashboard)")]
+    with hrmos_opener.open(HRMOS_BASE + path, None if data is None else urlencode(data).encode(), timeout=20) as r:
+        return urlsplit(r.geturl()).path, r.read().decode("utf-8", "replace")
+
+
+def hrmos_get(path):
+    """ページを読む。ログインが切れていたら入り直して、もう1回だけ読む。"""
+    import html
+    import urllib.error
+    cfg = hrmos_cfg()
+    # ログインしていないと、ログイン画面へ送られるのではなく 404 が返る
+    try:
+        url, page = _hrmos_open(path)
+        if "/login" not in url:
+            return page
+    except urllib.error.HTTPError as e:
+        if e.code not in (401, 403, 404):
+            raise
+    login = f"/{cfg['company']}/login"
+    _, form = _hrmos_open(login)
+    m = HRMOS_TOKEN.search(form)
+    url, _ = _hrmos_open(login, [("utf8", "✓"), ("authenticity_token", html.unescape(m.group(1)) if m else ""),
+                                 ("user[login_id]", cfg["login_id"]), ("user[password]", cfg["password"]), ("Submit", "ログイン")])
+    if "/login" in url:
+        raise OSError("HRMOS にログインできませんでした（ID・パスワードを確かめてください）")
+    url, page = _hrmos_open(path)
+    if "/login" in url:
+        raise OSError("HRMOS にログインしましたが、ページを開けませんでした")
+    return page
+
+
+def hrmos_day_id(date):
+    """その日の日報の ID（月の一覧のリンクから拾う）。date は datetime.date。
+
+    ID は変わらないので、一度読んだ月の分は覚えておく（HRMOS への読み込みを減らす。再起動で忘れる）。
+    """
+    key = (date.year, date.month)
+    if key not in hrmos_ids:
+        page = hrmos_get(f"/daily_reports?month={date:%Y-%m}")
+        found = {int(m.group(2)): m.group(1) for m in re.finditer(r'href="/daily_reports/(\d+)"[^>]*>\s*(\d{1,2})\s', page)}
+        if found:
+            hrmos_ids[key] = found
+    if date.day in hrmos_ids.get(key, {}):
+        return hrmos_ids[key][date.day]
+    raise OSError(f"{date:%Y-%m-%d} の日報が月の一覧に見つかりません")
+
+
+from html.parser import HTMLParser  # noqa: E402
+
+
+class _HrmosForm(HTMLParser):
+    """編集画面のフォームの項目を、ブラウザが送るのと同じ並びで集める: [name, value, 選択肢の表示名]。"""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.fields, self.token, self.date = [], "", ""
+        self._sel = self._opt = self._ta = None
+
+    def _close_opt(self):
+        o, self._opt = self._opt, None
+        if o is None or self._sel is None:
+            return
+        if o["selected"] or not self._sel["seen"]:  # 選択が無ければ先頭の選択肢（ブラウザと同じ）
+            self._sel.update(value=o["value"], label=o["text"].strip())
+        self._sel["seen"] = True
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "input":
+            name = a.get("name") or ""
+            if name == "authenticity_token":
+                self.token = a.get("value") or ""
+            if name and "disabled" not in a and a.get("type") in ("hidden", "text", "time", None):
+                self.fields.append([name, a.get("value") or "", ""])
+        elif tag == "select":
+            self._sel = {"name": a.get("name") or "", "value": "", "label": "", "seen": False, "disabled": "disabled" in a}
+        elif tag == "option":
+            self._close_opt()
+            if self._sel is not None:
+                self._opt = {"value": a.get("value") or "", "selected": "selected" in a, "text": ""}
+        elif tag == "textarea":
+            self._ta = {"name": a.get("name") or "", "text": "", "disabled": "disabled" in a}
+
+    def handle_data(self, data):
+        if self._opt is not None:
+            self._opt["text"] += data
+        elif self._ta is not None:
+            self._ta["text"] += data
+
+    def handle_endtag(self, tag):
+        if tag == "option":
+            self._close_opt()
+        elif tag == "select" and self._sel is not None:
+            self._close_opt()
+            s, self._sel = self._sel, None
+            if s["name"] and not s["disabled"]:
+                self.fields.append([s["name"], s["value"], s["label"]])
+            elif not s["name"] and re.fullmatch(r"\d{4}-\d{2}-\d{2}", s["label"]):
+                self.date = s["label"]  # 画面上部の日付の選択（名前の無い select）
+        elif tag == "textarea" and self._ta is not None:
+            t, self._ta = self._ta, None
+            if t["name"] and not t["disabled"]:
+                self.fields.append([t["name"], t["text"].removeprefix("\n"), ""])
+
+
+def hrmos_day(day_id):
+    """1日分の編集画面を読む: 送信用の token と、いまある行。"""
+    p = _HrmosForm()
+    p.feed(hrmos_get(f"/daily_reports/{day_id}/edit"))
+    if not p.token:
+        raise OSError("日報の編集画面を読めませんでした（締め済み・承認済みの日かもしれません）")
+    rows = {}
+    for name, value, label in p.fields:
+        m = HRMOS_ROW.fullmatch(name)
+        if not m or m.group(2) == "_destroy":
+            continue
+        r = rows.setdefault(int(m.group(1)), {})
+        r[m.group(2)] = value
+        if label and value:
+            r[m.group(2) + "_label"] = label
+    out = []
+    for _, r in sorted(rows.items()):
+        if not r.get("id"):
+            continue  # 空の日に出る入力用の空行
+        out.append({"id": r["id"], "service_name": r.get("service_name", ""), "plan": r.get("plan_time_str", ""),
+                    "result": r.get("result_time_str", ""), "notes": r.get("notes", "").replace("\r\n", "\n").replace("\r", "\n"),
+                    "partner": r.get("business_partner_id_label", ""), "project": r.get("project_id_label", ""),
+                    "category": " / ".join(x for x in (r.get("service_large_category_id_label", ""), r.get("service_medium_category_id_label", ""),
+                                                      r.get("service_category_id_label", "")) if x),
+                    **{k: r.get(k, "") for k in HRMOS_ID_FIELDS}})
+    return {"token": p.token, "rows": out, "page_date": p.date}
+
+
+def hrmos_time(value, default="00:00"):
+    """ "1:5" や "01:05" を "01:05" にそろえる。空なら default。不正なら ValueError。"""
+    v = str(value or "").strip()
+    if not v:
+        return default
+    m = HRMOS_TIME.fullmatch(v)
+    if not m or int(m.group(2)) > 59 or int(m.group(1)) > 23:
+        raise ValueError(f"時間「{v}」が不正です（0:00〜23:59）")
+    return f"{int(m.group(1)):02d}:{m.group(2)}"
+
+
+def nippo_date(text):
+    """ "today" / "YYYY-MM-DD" を datetime.date に。today は朝 4:00 区切りの今日。"""
+    from datetime import date, datetime
+    if not text or text == "today":
+        return date.fromtimestamp(day_start())
+    return datetime.strptime(text, "%Y-%m-%d").date()
+
+
+def nippo_view(date_text):
+    """日報の1日分。今日なら、チケット別の作業時間の下書き（timesheet）も付ける。"""
+    try:
+        d = nippo_date(date_text)
+        today_d = nippo_date("today")
+        work_total = ""
+        with hrmos_lock:
+            day_id = hrmos_day_id(d)
+            day = hrmos_day(day_id)
+            if d == today_d:
+                # 総労働時間（退勤の打刻後に出る）は表示画面にだけある。今日の日報を開いたときだけ読む
+                m = re.search(r"総労働時間(?:&nbsp;|\s)*(\d{1,2}:\d{2})", hrmos_get(f"/daily_reports/{day_id}"))
+                work_total = m.group(1) if m else ""
+    except Exception as e:
+        return {"error": f"HRMOS から日報を取れませんでした: {e}"}, 502
+    out = {"date": d.isoformat(), "today": today_d.isoformat(), "is_today": d == today_d, "id": day_id,
+           "url": f"{HRMOS_BASE}/daily_reports/{day_id}", "rows": day["rows"]}
+    if d == today_d:
+        out["work_total"] = work_total
+        out["timesheet"] = timesheet_today()
+    return out, 200
+
+
+def nippo_save(req):
+    """日報を登録する。updates = いまある行の変更（id・plan・result・notes）、adds = 足す行。dry なら送る内容だけ返す。"""
+    try:
+        d = nippo_date(req.get("date"))
+        updates, adds = req.get("updates") or [], req.get("adds") or []
+        if not isinstance(updates, list) or not isinstance(adds, list):
+            raise ValueError("updates / adds が不正です")
+        defaults = (load_config().get("hrmos") or {}).get("row_defaults") or {}
+        with hrmos_lock:
+            day_id = hrmos_day_id(d)
+            cur = hrmos_day(day_id)   # 送る直前に読み直す（token と、いまの値）
+            known = {r["id"]: r for r in cur["rows"]}
+            key = "daily_report[reports_attributes][%d][%s]"
+            data, n, summary = [("utf8", "✓"), ("_method", "patch"), ("authenticity_token", cur["token"])], 0, []
+            # HRMOS は未来の日付に実績を入れられない。未来の日は、実績をいまの値（足す行は 0:00）のまま送る
+            if d > nippo_date("today"):
+                updates = [{k: v for k, v in u.items() if k != "result"} for u in updates]
+                adds = [{**a, "result": ""} for a in adds]
+            wanted = {}
+            for u in updates:
+                if str(u.get("id")) not in known:
+                    raise ValueError(f"行 {u.get('id')} が HRMOS にありません（画面を取り直してください）")
+                wanted[str(u.get("id"))] = u
+            # 🚨 いまある行は「全部」送る（変えていない行も、いまの予定・実績・備考をそのまま付ける）。
+            #    HRMOS は送られてこなかった行の時間を 0:00 に書き換える（2026-11-14 に、変えた行だけ送って他の行の時間を消した）。
+            #    ブラウザの画面も全行を送っている。
+            changed = 0
+            for r in cur["rows"]:
+                u = wanted.get(r["id"], {})
+                new = {"plan_time_str": hrmos_time(u.get("plan"), hrmos_time(r["plan"])), "result_time_str": hrmos_time(u.get("result"), hrmos_time(r["result"])),
+                       "notes": str(u.get("notes", r["notes"])).replace("\r\n", "\n")[:2000]}
+                if (new["plan_time_str"], new["result_time_str"], new["notes"]) != (hrmos_time(r["plan"]), hrmos_time(r["result"]), r["notes"]):
+                    summary.append(f"変更 {r['service_name'][:40]}: 予定 {new['plan_time_str']}・実績 {new['result_time_str']}")
+                    changed += 1
+                new["notes"] = new["notes"].replace("\n", "\r\n")  # 備考の改行はブラウザが送る形（CRLF）にする
+                data += [(key % (n, "id"), r["id"])] + [(key % (n, k), v) for k, v in new.items()]
+                n += 1
+            names = {r["service_name"].strip() for r in cur["rows"]}
+            for a in adds:
+                name = str(a.get("service_name") or "").strip()[:255]
+                if not name:
+                    raise ValueError("足す行の業務名が空です")
+                if name in names:
+                    continue  # 同じ業務名の行がもうある（二重に足さない）
+                names.add(name)
+                ids = {k: str(a.get(k) or defaults.get(k) or "") for k in HRMOS_ID_FIELDS}
+                if not ids["business_partner_id"] or not ids["project_id"]:
+                    raise ValueError("足す行の取引先・プロジェクトが決まりません（config.json の hrmos.row_defaults）")
+                data += [(key % (n, k), v) for k, v in ids.items()]
+                data += [(key % (n, "service_name"), name), (key % (n, "plan_time_str"), hrmos_time(a.get("plan"))),
+                         (key % (n, "result_time_str"), hrmos_time(a.get("result"))), (key % (n, "notes"), str(a.get("notes") or "").replace("\r\n", "\n")[:2000].replace("\n", "\r\n"))]
+                summary.append(f"追加 {name[:40]}: 予定 {hrmos_time(a.get('plan'))}・実績 {hrmos_time(a.get('result'))}")
+                n += 1
+                changed += 1
+            if not changed:
+                return {"ok": True, "changed": 0, "summary": [], "message": "変更はありません"}, 200
+            if req.get("dry"):
+                return {"dry": True, "changed": changed, "sent_rows": n, "summary": summary, "fields": [[k, v] for k, v in data if k != "authenticity_token"]}, 200
+            _, page = _hrmos_open(f"/daily_reports/{day_id}", data)
+    except ValueError as e:
+        return {"error": str(e)}, 400
+    except Exception as e:
+        return {"error": f"HRMOS に登録できませんでした: {e}"}, 502
+    if "登録が完了しました" in page:
+        return {"ok": True, "changed": changed, "summary": summary, "url": f"{HRMOS_BASE}/daily_reports/{day_id}"}, 200
+    errs = re.findall(r"\d+行目：[^<\n]+", page) or (["エラーが発生しました。管理者にお問合せください。"] if "エラーが発生しました" in page else [])
+    return {"error": "HRMOS が登録を受け付けませんでした: " + (" / ".join(errs) if errs else "理由は画面から読み取れませんでした（HRMOS の画面で確かめてください）")}, 409
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1751,6 +2175,16 @@ class Handler(BaseHTTPRequestHandler):
                 redmine_cache["at"] = 0
                 refresh_prs()
             self.send_json(redmine_view())
+        elif self.path == "/api/nippo":
+            date = self.query.get("date", ["today"])[0]
+            if date != "today" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+                return self.send_json({"error": "date が不正です"}, 400)
+            self.send_json(*nippo_view(date))
+        elif self.path == "/api/redmine/statuses":
+            n = self.query.get("ticket", [""])[0]
+            if not re.fullmatch(r"\d{1,7}", n):
+                return self.send_json({"error": "ticket が不正です"}, 400)
+            self.send_json(*redmine_statuses(n))
         elif self.path == "/api/history":
             n = self.query.get("ticket", [""])[0]
             if not re.fullmatch(r"\d{4,6}", n):
@@ -1785,6 +2219,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "連動先は自分以外の 1〜12 です"}, 400)
             body, code = set_link(slot, targets)
             return self.send_json(body, code)
+        if self.path == "/api/nippo":
+            date = req.get("date") or "today"
+            if date != "today" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(date)):
+                return self.send_json({"error": "date が不正です"}, 400)
+            return self.send_json(*nippo_save(req))
+        if self.path == "/api/redmine/status":
+            try:
+                ticket, status_id = int(req.get("ticket")), int(req.get("status_id"))
+            except (TypeError, ValueError):
+                return self.send_json({"error": "ticket / status_id が不正です"}, 400)
+            if ticket <= 0 or status_id <= 0:
+                return self.send_json({"error": "ticket / status_id が不正です"}, 400)
+            return self.send_json(*redmine_set_status(ticket, status_id))
         if self.path == "/api/cli":
             try:
                 slot = int(req.get("slot"))
