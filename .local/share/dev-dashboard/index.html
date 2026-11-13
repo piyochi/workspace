@@ -17,7 +17,16 @@
 body { margin: 0; background: var(--bg); color: var(--text);
        font: 14px/1.5 -apple-system, "Segoe UI", "Yu Gothic UI", "Hiragino Sans", sans-serif; }
 main { max-width: 560px; margin: 0 auto; padding: 12px 16px 24px; }
-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+/* ヘッダーは上に固定（スクロールしてもついてくる）。モーダル（z-index 10）より下 */
+header { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -12px -16px 8px; padding: 8px 16px 6px;
+         border-bottom: 1px solid var(--line); }
+.head-row { display: flex; justify-content: space-between; align-items: baseline; }
+.sys { display: flex; gap: 14px; margin-top: 4px; font-size: 12px; }
+.gauge { flex: 1; min-width: 0; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; }
+.gauge-label { color: var(--muted); }
+.gauge .bar { height: 6px; }
+.gauge .bar > i { transition: width .4s; }
+.gauge-val { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
 h1 { font-size: 15px; margin: 0; }
 .updated { color: var(--muted); font-size: 12px; }
 .sec { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
@@ -35,6 +44,7 @@ h2 { font-size: 12px; color: var(--muted); margin: 0; font-weight: 600; letter-s
 .chip { display: inline-flex; align-items: center; gap: 4px; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--off); }
 .dot.on { background: var(--ok); }
+.dot.detached { background: #eab308; }
 .actions { display: flex; gap: 6px; }
 select, button { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; }
 button { cursor: pointer; }
@@ -106,6 +116,12 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 .rm-copy { flex: none; font-size: 11px; padding: 0 5px; line-height: 16px; }
 .rm-subj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .rm-info { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 2px; font-size: 11px; color: var(--muted); }
+/* 今日（朝 4:00 以降）の作業。「今日作業した」で絞り込んだときは入力した文・コミットも出す */
+.rm-today { color: var(--accent); font-weight: 600; }
+.rm-tag.extra { border-color: var(--warn); color: var(--warn); }
+.rm-log { margin: 3px 0 0 8px; padding-left: 8px; border-left: 2px solid var(--line); font-size: 11px; color: var(--muted); }
+.rm-log div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rm-log b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .rm-sess { color: var(--text); }
 .rm-sess.busy { color: #ea580c; font-weight: 700; } .rm-sess.wait { color: var(--bad); font-weight: 700; } .rm-sess.idle { color: var(--ok); }
 .rm-br { flex-basis: 100%; display: flex; align-items: flex-start; gap: 6px; }
@@ -132,7 +148,13 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 </head>
 <body>
 <main>
-  <header><h1>開発ダッシュボード</h1><span class="updated" id="updated">読み込み中…</span></header>
+  <header>
+    <div class="head-row"><h1>開発ダッシュボード</h1><span class="updated" id="updated">読み込み中…</span></div>
+    <div class="sys">
+      <div class="gauge" id="g-cpu"><span class="gauge-label">CPU</span><div class="bar"><i style="width:0"></i></div><span class="gauge-val">–</span></div>
+      <div class="gauge" id="g-mem"><span class="gauge-label">メモリ</span><div class="bar"><i style="width:0"></i></div><span class="gauge-val">–</span></div>
+    </div>
+  </header>
 
   <details class="sec" data-key="claude" open>
     <summary><h2>Claude</h2></summary>
@@ -234,7 +256,9 @@ function renderServers(s) {
     <div class="env">
       <span class="env-name">${env}</span>
       <span class="chips">${["api", "app", "sqs"].map((c) =>
-        `<span class="chip"><span class="dot ${comps[c] ? "on" : ""}"></span>${c}</span>`).join("")}</span>
+        comps[c] === "detached"
+          ? `<span class="chip" title="動いていますが、枠の docker compose up が終わっています（ログが出ず、停止も効きません）。起動を押すと枠につなぎ直します"><span class="dot detached"></span>${c}（枠外）</span>`
+          : `<span class="chip"><span class="dot ${comps[c] ? "on" : ""}"></span>${c}</span>`).join("")}</span>
       <span class="actions">
         <select id="sel-${env}"><option value="all">全部</option><option value="api">api</option><option value="app">app</option><option value="sqs">sqs</option></select>
         <button data-env="${env}" data-action="up" ${busy ? "disabled" : ""}>起動</button>
@@ -333,7 +357,7 @@ async function refreshPanes() {
       if (!s) return `<div class="cell stopped"><div class="cell-head">[${i + 1}]</div><div class="cell-state">なし</div></div>`;
       return `<div class="cell ${s.state}" data-slot="${s.slot}" title="${esc(cellTip(s))}">
         <div class="cell-head"><span class="cell-name">[${s.slot}] ${esc(s.env)} ${esc(s.kind)}</span>${linkHtml(s)}</div>
-        <div class="cell-state">${PANE_STATES[s.state] || esc(s.state)}</div>
+        <div class="cell-state">${PANE_STATES[s.state] || esc(s.state)}${s.subagents ? `（サブ${s.subagents}）` : ""}</div>
         <div class="cell-task">${taskHtml(s)}</div>
         <div class="cell-skill${s.skill_done ? " done" : ""}">${s.skill ? skillText(s) : "&nbsp;"}</div></div>`;
     }).join("")}</div>`;
@@ -634,8 +658,24 @@ document.addEventListener("click", (e) => {
   el.classList.toggle("open"); fitBr(el.parentNode);
 });
 document.querySelector('details.sec[data-key="redmine"]')?.addEventListener("toggle", () => fitBr($("redmine")));
-function rmRows(items) {
+const hm = (t) => new Date(t * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+const todayOf = (i) => rmData && rmData.today && rmData.today.tickets[String(i.id)];
+// 今日の作業の1行: 「今日: env2 10:05〜13:27・コミット4」
+function todayHtml(t) {
+  const span = t.envs.map((e) => `${esc(e.env)} ${hm(e.first)}${hm(e.first) === hm(e.last) ? "" : `〜${hm(e.last)}`}`);
+  if (t.commits.length) span.push(`コミット${t.commits.length}`);
+  return `<span class="rm-today" title="朝 4:00 以降にこのチケットで作業したセッションの時間帯と、refs #番号 の自分のコミット">今日: ${span.join("・")}</span>`;
+}
+// 「今日作業した」で絞り込んだときだけ: 入力した文（新しい順）とコミット
+function todayLogHtml(t) {
+  const rows = [...t.prompts.map((p) => ({ ts: p.ts, html: `<b>${hm(p.ts)}</b> ${esc(p.env)} ${esc(p.text)}`, title: p.text })),
+    ...t.commits.map((c) => ({ ts: c.ts, html: `<b>${hm(c.ts)}</b> コミット ${esc(c.where)}: ${esc(c.subject)}`, title: c.subject }))]
+    .sort((a, b) => b.ts - a.ts);
+  return rows.length ? `<div class="rm-log">${rows.map((r) => `<div title="${esc(r.title)}">${r.html}</div>`).join("")}</div>` : "";
+}
+function rmRows(items, opts = {}) {
   return items.length ? items.map((i) => {
+    const td = todayOf(i);
     const sess = i.sessions.map((x) => `<span class="rm-sess ${x.state}">▶ [${x.slot}] ${esc(x.env)} ${esc(x.kind)} ${PANE_STATES[x.state] || ""}${x.skill ? ` <span class="${x.skill_done ? "skill-done" : ""}">${skillText(x)}</span>` : ""}</span>`);
     // ブランチは環境ごとにまとめる。checkout 中のものは太字
     const byEnv = {};
@@ -658,14 +698,16 @@ function rmRows(items) {
     const hist = i.history.length ? [`<span title="直近${rmData ? rmData.history_days : 30}日に、ユーザーが入力した文にこの番号が出たセッション">履歴: ${i.history.map((h) => `${esc(h.env)} ${mdDate(h.last)}`).join("・")}</span>`] : [];
     const full = rmFull[i.id];
     const fullInfo = full ? [full.loading ? `<span>全期間を調べています…</span>` : fullHtml(full)] : [];
-    const info = [...rmRelHtml(i).filter((h) => h.includes("rm-wait")), ...sess, ...br, ...hist, ...fullInfo, ...rmRelHtml(i).filter((h) => !h.includes("rm-wait"))];
+    const info = [...(td ? [todayHtml(td)] : []), ...rmRelHtml(i).filter((h) => h.includes("rm-wait")), ...sess, ...br, ...hist, ...fullInfo, ...rmRelHtml(i).filter((h) => !h.includes("rm-wait"))];
     return `<div class="rm-row">
-      <div class="rm-head"><span class="rm-tag ${i.priority === "急いで" || i.priority === "今すぐ" ? "hot" : ""}">${esc(i.priority)}</span>
-        <span class="rm-tag">${esc(i.status)}</span>
+      <div class="rm-head">${i.priority ? `<span class="rm-tag ${i.priority === "急いで" || i.priority === "今すぐ" ? "hot" : ""}">${esc(i.priority)}</span>` : ""}
+        ${i.extra ? `<span class="rm-tag extra" title="今日作業したが、自分担当の未完了チケットではないもの">${i.closed ? "完了" : `担当外${i.assignee ? `: ${esc(i.assignee)}` : ""}`}</span>` : ""}
+        ${i.status ? `<span class="rm-tag">${esc(i.status)}</span>` : ""}
         <span class="rm-subj" title="#${i.id}: ${esc(i.subject)}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${i.id}</a>: ${esc(i.subject)}</span>
         <button class="rm-copy" data-copy="${esc(`#${i.id}: ${i.subject}`)}" title="「#番号: タイトル」をコピー">⧉</button>
         ${!i.history.length && !full ? `<button class="rm-full" data-ticket="${i.id}" title="直近${rmData ? rmData.history_days : 30}日に見つからなかったので、残っている Claude・Codex の記録全部と各環境の git のコミットから探す">全期間で調べる</button>` : ""}</div>
       ${info.length ? `<div class="rm-info">${info.join("")}</div>` : ""}
+      ${opts.todayLog && td ? todayLogHtml(td) : ""}
     </div>`;
   }).join("") : `<div class="empty">該当するチケットはありません</div>`;
 }
@@ -689,15 +731,20 @@ function renderRmAll() {
   const cat = $("rm-cat").value, words = $("rm-q").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const statuses = [...new Set(rmData.issues.map((i) => i.status))];
   const count = (fn) => rmData.issues.filter(fn).length;
-  $("rm-cat").innerHTML = [`<option value="">すべて（${rmData.issues.length}）</option>`]
+  // 「今日作業した」は担当外・完了済み（today_extra）も含め、最後に作業した時刻の新しい順
+  const todayItems = [...rmData.issues, ...(rmData.today_extra || [])].filter(todayOf)
+    .sort((a, b) => todayOf(b).last - todayOf(a).last);
+  $("rm-cat").innerHTML = [`<option value="">すべて（${rmData.issues.length}）</option>`,
+    `<option value="s:today" ${cat === "s:today" ? "selected" : ""} title="朝 4:00 以降に作業したもの">今日作業した（${todayItems.length}）</option>`]
     .concat(Object.entries(RM_FILTERS).map(([k, [label, fn]]) => `<option value="${k}" ${k === cat ? "selected" : ""}>${label}（${count(fn)}）</option>`))
     .concat(statuses.map((st) => `<option value="st:${esc(st)}" ${cat === `st:${st}` ? "selected" : ""}>ステータス: ${esc(st)}（${count((i) => i.status === st)}）</option>`)).join("");
-  const fn = rmFilterFn(cat);
-  const items = rmData.issues.filter((i) => fn(i) && words.every((w) => rmText(i).includes(w)));
+  const isToday = cat === "s:today";
+  const fn = rmFilterFn(isToday ? "" : cat);
+  const items = (isToday ? todayItems : rmData.issues).filter((i) => fn(i) && words.every((w) => rmText(i).includes(w)));
   const body = $("rm-all"), top = body.scrollTop;
-  body.innerHTML = rmRows(items); fitBr(body);
+  body.innerHTML = rmRows(items, { todayLog: isToday }); fitBr(body);
   body.scrollTop = top;
-  $("rm-modal-meta").textContent = `${items.length} / ${rmData.issues.length} 件`;
+  $("rm-modal-meta").textContent = isToday ? `${items.length} 件（${hm(rmData.today.start)} 以降）` : `${items.length} / ${rmData.issues.length} 件`;
 }
 async function loadRedmine(force) {
   try {
@@ -705,7 +752,8 @@ async function loadRedmine(force) {
     if (d.error) { $("redmine").innerHTML = `<div class="err">${esc(d.error)}</div>`; return; }
     rmData = d;
     $("redmine").innerHTML = rmRows(d.issues.slice(0, 10)); fitBr($("redmine"));
-    $("redmine-more").style.display = d.issues.length > 10 ? "" : "none";
+    // 10 件以下でも、今日作業したもの（担当外・完了済みを含む）があれば詳細画面を開けるようにする
+    $("redmine-more").style.display = d.issues.length > 10 || Object.keys((d.today || {}).tickets || {}).length ? "" : "none";
     const t = new Date(d.fetched_at * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
     $("redmine-meta").textContent = `${d.issues.length} 件・Redmine は ${t} 時点（5分ごとに取り直し）`;
     if (rmOpen) renderRmAll();
@@ -731,6 +779,30 @@ $("rm-modal").addEventListener("mousedown", (e) => { downOnRmOverlay = e.target.
 $("rm-modal").addEventListener("click", (e) => { if (e.target.id === "rm-modal" && downOnRmOverlay) closeRm(); downOnRmOverlay = false; });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && rmOpen) closeRm(); });
 
+// ヘッダーの CPU・メモリ。CPU は使用率で色、メモリは Mac の圧迫レベル（1=正常 2=警告 4=危険）で色を変える
+const PRESSURE = { 1: ["正常", ""], 2: ["警告", "warn"], 4: ["危険", "bad"] };
+function setGauge(id, pct, text, cls, title) {
+  const g = $(id), bar = g.querySelector(".bar > i");
+  bar.style.width = pct == null ? "0" : `${Math.min(100, pct)}%`;
+  bar.className = cls || "";
+  g.querySelector(".gauge-val").textContent = text;
+  g.title = title || "";
+}
+async function loadSys() {
+  try {
+    const d = await (await fetch("/api/sys")).json();
+    const c = d.cpu;
+    setGauge("g-cpu", c, c == null ? "–" : `${Math.round(c)}%`, c >= 90 ? "bad" : c >= 70 ? "warn" : "", "全コア合計");
+    const m = d.mem;
+    if (!m) { setGauge("g-mem", null, "–"); return; }
+    const gb = (b) => (b / 2 ** 30).toFixed(1);
+    const [label, cls] = PRESSURE[m.pressure] || [`レベル${m.pressure}`, "warn"];
+    setGauge("g-mem", m.pct, `${gb(m.used)}/${gb(m.total)}GB`, cls, `${Math.round(m.pct)}%・圧迫: ${label}`);
+  } catch (e) { setGauge("g-cpu", null, "–"); setGauge("g-mem", null, "–"); }
+}
+
+loadSys();
+setInterval(loadSys, 3000);
 refresh();
 setInterval(refresh, 30000);
 loadRedmine();

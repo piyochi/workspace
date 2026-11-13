@@ -16,6 +16,7 @@
 #    2. 無ければ親プロセスをたどり、tmux の枠と同じ端末（tty）を持つプロセスの枠
 #       セッションの実行が daemon の作業用プロセス（claude bg-spare）に移ると、フックに TMUX / TMUX_PANE が
 #       渡らない（2026-11-11 実測: bg-spare → bg-pty-host → daemon → 枠の claude の順で、枠の claude だけが枠の tty を持つ）
+#    sub   サブエージェントの開始・終了の記録だけ（SubagentStart / SubagentStop から呼ぶ）
 #  サブエージェントの道具の実行（入力に agent_id がある）は busy にしない。本体が入力待ち（Stop の後）に
 #  サブエージェントが動くと、処理中に戻って入力待ちに戻らないため（SubagentStop では idle にしない＝本体の状態を変えない）
 # ============================================================================
@@ -50,6 +51,37 @@ fi
 printf '%s\t%s\t%s\tpane=%s(%s)\tagent=%s\n' "$(date '+%H:%M:%S')" "$event" "$state" "${pane:-なし}" "$how" "${agent_id:-}" >> "$LOG" 2>/dev/null
 
 [[ -z "$pane" ]] && exit 0
+
+# 動いているサブエージェントを枠ごとに 1 ファイルずつ記録する（ダッシュボードが「処理中」に数える）。
+# 本体の @ai_state とは別に持つ（本体が入力待ちのままバックグラウンドで動くことがあるため）。
+# 1 体 1 ファイルなので、並列のサブエージェントのフックが同時に来ても書き合わない。
+SUBDIR="$HOME/.local/share/dev-dashboard/cache/subagents/${pane#%}"
+if [[ -n "$agent_id" && "$agent_id" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  case "$event" in
+    SubagentStop) rm -f "$SUBDIR/$agent_id" 2>/dev/null ;;
+    SubagentStart|PostToolUse|PreToolUse) mkdir -p "$SUBDIR" 2>/dev/null && touch "$SUBDIR/$agent_id" 2>/dev/null ;;
+  esac
+fi
+[[ "$state" == "clear" ]] && rm -rf "$SUBDIR" 2>/dev/null
+
+# 枠のタイトルの色用に、動いている数を @ai_sub にも写す（変わったときだけ書き換えて描き直す）
+if [[ -n "$agent_id" || "$state" == "clear" ]]; then
+  n=$(ls "$SUBDIR" 2>/dev/null | wc -l | tr -d ' ')
+  [[ "$n" == "0" ]] && n=""
+  cur_sub=$(tmux show-options -pqv -t "$pane" @ai_sub 2>/dev/null)
+  if [[ "$cur_sub" != "$n" ]]; then
+    if [[ -z "$n" ]]; then
+      tmux set-option -p -u -t "$pane" @ai_sub 2>/dev/null
+    else
+      tmux set-option -p -t "$pane" @ai_sub "$n" 2>/dev/null
+    fi
+    for c in $(tmux list-clients -F '#{client_name}' 2>/dev/null); do
+      tmux refresh-client -t "$c" 2>/dev/null
+    done
+  fi
+fi
+[[ "$state" == "sub" ]] && exit 0
+
 # サブエージェントの道具の実行では本体の状態を変えない（確認待ちの wait は本体の操作が要るので変える）
 [[ -n "$agent_id" && "$state" == "busy" ]] && exit 0
 

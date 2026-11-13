@@ -3,10 +3,12 @@
 
   GET  /             … index.html
   GET  /api/status   … 環境1・2のサーバー状態 + Claude / Codex の使用率
+  GET  /api/sys      … Mac 本体の CPU 使用率・メモリ使用量（ヘッダーのゲージ）
   POST /api/run      … ~/bin/local-server <up|down|restart> <env> <comp> を裏で実行
   GET  /api/pane     … [n] の枠の画面の文字と、起動できるモード
   GET  /api/links    … AI（Claude / Codex）が出した文章の URL（直近7日・新しい順。cat=種類・q=フリーワード）
-  GET  /api/redmine  … 自分担当の未完了チケット（5分キャッシュ、refresh=1 で取り直し）と、各チケットの枠・ブランチ・issue docs
+  GET  /api/redmine  … 自分担当の未完了チケット（5分キャッシュ、refresh=1 で取り直し）と、各チケットの枠・ブランチ・issue docs、
+                       今日（朝 4:00 以降）の作業（today）と、今日作業した担当外・完了済みのチケット（today_extra）
   GET  /api/history  … 1 チケットを全期間で探す（Claude・Codex の記録全部と各環境の git のコミット）
   POST /api/link     … [n] の枠の連動先（@link_slot。「2,4」のように複数可）を付ける・外す
   POST /api/cli      … [n] の枠で Claude / Codex を起動（monitor.txt のコマンド）・停止（入力待ちのときだけ）
@@ -51,7 +53,7 @@ DEFAULT_CONFIG = {
 ENVS = ("env1", "env2")
 COMPS = ("api", "app", "sqs", "all")
 ACTIONS = {"up": "起動", "down": "停止", "restart": "再起動"}
-STATUS_LINE = re.compile(r"^([●○])\s+(env\d)\s+(api|app|sqs)")
+STATUS_LINE = re.compile(r"^([●◐○])\s+(env\d)\s+(api|app|sqs)")
 
 job_lock = threading.Lock()
 job = {"running": False, "target": None, "output": "", "rc": None, "started": None, "finished": None}
@@ -67,6 +69,67 @@ def load_config():
     return cfg
 
 
+# --- Mac 本体の CPU・メモリ（ヘッダーのゲージ用。/api/sys） ---------------------------------
+import ctypes  # noqa: E402
+
+_libc = ctypes.CDLL("/usr/lib/libSystem.dylib")
+_libc.mach_host_self.restype = ctypes.c_uint
+_sys_lock = threading.Lock()
+_sys_cpu = {"pct": None}
+VM_LINE = re.compile(r'^"?([^":]+)"?:\s+(\d+)\.', re.M)
+
+
+def _cpu_ticks():
+    """host_statistics(HOST_CPU_LOAD_INFO) の累計ティック [user, system, idle, nice]。取れなければ None。"""
+    arr = (ctypes.c_uint * 4)()
+    cnt = ctypes.c_uint(4)
+    if _libc.host_statistics(_libc.mach_host_self(), 3, arr, ctypes.byref(cnt)) != 0:
+        return None
+    return list(arr)
+
+
+def cpu_loop():
+    """2秒ごとにティックの差分から CPU 使用率（全コア合計を 100% とする）を出しておく。"""
+    prev = _cpu_ticks()
+    while True:
+        time.sleep(2)
+        cur = _cpu_ticks()
+        if prev and cur:
+            d = [(b - a) & 0xFFFFFFFF for a, b in zip(prev, cur)]
+            total = sum(d)
+            if total:
+                with _sys_lock:
+                    _sys_cpu["pct"] = round(100 * (d[0] + d[1] + d[3]) / total, 1)
+        prev = cur
+
+
+def _sysctl(name):
+    return subprocess.run(["sysctl", "-n", name], capture_output=True, text=True, timeout=3).stdout.strip()
+
+
+def sys_usage():
+    """CPU 使用率とメモリ使用量。
+
+    メモリはアクティビティモニタの「使用済みメモリ」と同じ計算（アプリ用 = 匿名 - パージ可能、+ 固定、+ 圧縮）。
+    pressure は Mac のメモリ圧迫レベル（1=正常 2=警告 4=危険）。取れない値は None にしてゲージを空にする。
+    """
+    with _sys_lock:
+        cpu = _sys_cpu["pct"]
+    mem = None
+    try:
+        out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=3).stdout
+        page = int(re.search(r"page size of (\d+)", out).group(1))
+        v = {m.group(1): int(m.group(2)) for m in VM_LINE.finditer(out)}
+        total = int(_sysctl("hw.memsize"))
+        used = (v["Anonymous pages"] - v["Pages purgeable"] + v["Pages wired down"]
+                + v["Pages occupied by compressor"]) * page
+        mem = {"used": used, "total": total, "pct": round(100 * used / total, 1),
+               "pressure": int(_sysctl("kern.memorystatus_vm_pressure_level") or 1)}
+    except (OSError, ValueError, KeyError, AttributeError, subprocess.SubprocessError) as e:
+        print(f"{time.strftime('%F %T')} メモリ使用量を取れませんでした: {e}", file=sys.stderr, flush=True)
+    return {"cpu": cpu, "mem": mem}
+
+
 def server_status():
     try:
         out = subprocess.run([LOCAL_SERVER, "status"], capture_output=True, text=True, timeout=30).stdout
@@ -77,7 +140,8 @@ def server_status():
     for line in out.splitlines():
         m = STATUS_LINE.match(line.strip())
         if m:
-            envs.setdefault(m.group(2), {})[m.group(3)] = m.group(1) == "●"
+            # ◐ = 動いているが枠から外れている（docker compose up が落ちた等）。画面では黄色
+            envs.setdefault(m.group(2), {})[m.group(3)] = {"●": True, "◐": "detached", "○": False}[m.group(1)]
         elif line.strip():
             other.append(line.strip())
     return {"envs": envs, "messages": other}
@@ -422,6 +486,69 @@ def codex_slots(kinds):
     return slots
 
 
+SUBAGENT_DIR = os.path.join(HOME, ".local", "share", "dev-dashboard", "cache", "subagents")
+SUBAGENT_STALE = 15 * 60  # SubagentStop が来ないまま（中断・強制終了）この秒数、道具を使っていなければ数えない
+
+
+subagent_paths = {}  # agent_id -> サブエージェントの会話の記録（jsonl）のパス
+
+
+def subagent_finished(agent_id):
+    """サブエージェントの記録の最後の行で、終わったかを見る。
+    中断（Esc・停止）では SubagentStop が来ないので、印が残って「処理中」のままになるのを防ぐ。
+    終わった: 最後が assistant の end_turn / 「[Request interrupted」。記録が見つからなければ判断しない（False）"""
+    path = subagent_paths.get(agent_id)
+    if not path or not os.path.exists(path):
+        found = glob.glob(os.path.join(HOME, ".claude", "projects", "*", "*", "subagents", f"agent-{agent_id}.jsonl"))
+        if not found:
+            return False
+        path = subagent_paths[agent_id] = found[0]
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 65536))
+            lines = [l for l in f.read().splitlines() if l.strip()]
+        last = json.loads(lines[-1]) if lines else {}
+    except (OSError, ValueError):
+        return False
+    msg = last.get("message") or {}
+    if last.get("type") == "assistant" and msg.get("stop_reason") in ("end_turn", "stop_sequence", "max_tokens"):
+        return True
+    content = msg.get("content")
+    if last.get("type") == "user" and isinstance(content, list) and content and content[0].get("type") == "text":
+        return str(content[0].get("text", "")).startswith("[Request interrupted")
+    return False
+
+
+def running_subagents(pane_id):
+    """枠の Claude で動いているサブエージェントの数（~/bin/tmux-ai-state が SubagentStart〜Stop の間ファイルを置く）。"""
+    d = os.path.join(SUBAGENT_DIR, pane_id.removeprefix("%"))
+    now, n, removed = time.time(), 0, False
+    try:
+        for name in os.listdir(d):
+            p = os.path.join(d, name)
+            try:
+                if subagent_finished(name):
+                    os.remove(p)
+                    subagent_paths.pop(name, None)
+                    removed = True
+                elif now - os.path.getmtime(p) < SUBAGENT_STALE:
+                    n += 1
+                else:
+                    os.remove(p)
+                    removed = True
+            except OSError:
+                pass
+    except OSError:
+        pass
+    if removed:  # 枠のタイトルの色（@ai_sub）も合わせる。消し忘れでオレンジのまま残らないように
+        if n:
+            tmux("set-option", "-p", "-t", pane_id, "@ai_sub", str(n))
+        else:
+            tmux("set-option", "-p", "-u", "-t", pane_id, "@ai_sub")
+    return n
+
+
 def pane_status(pane_id, cmd, ai_state, tty, slot_kind, kinds):
     """(動いている CLI の種類, 状態) を返す。止まっていれば種類は枠の既定。"""
     # CLI はラッパーの bash から起動されるので、ログインシェル（zsh）に戻っていれば止まっている。
@@ -431,7 +558,10 @@ def pane_status(pane_id, cmd, ai_state, tty, slot_kind, kinds):
         return slot_kind, "stopped"
     kind = "codex" if "codex" in found and "claude" not in found else ("claude" if "claude" in found else slot_kind)
     if kind == "claude":
-        return kind, (ai_state if ai_state in ("busy", "wait") else "idle")
+        if ai_state in ("busy", "wait"):
+            return kind, ai_state
+        # 本体は入力待ちでも、バックグラウンドのサブエージェントが動いていれば処理中
+        return kind, ("busy" if running_subagents(pane_id) else "idle")
     return kind, codex_state(pane_id)
 
 
@@ -487,7 +617,9 @@ def ai_panes():
             link = {"slots": marked, "from": "dashboard"}
         elif state != "stopped" and env_slots.get(tty.removeprefix("/dev/")):
             link = {"slots": [int(env_slots[tty.removeprefix("/dev/")])], "from": "codex_slot"}
+        subagents = running_subagents(pane_id) if kind == "claude" and state != "stopped" else 0
         slots[n] = {"slot": n, "env": env, "kind": kind, "slot_kind": slot_kind, "state": state, "task": task, "ticket": ticket,
+                    "subagents": subagents,
                     "skill": skill, "skill_done": skill_done, "link": link,
                     "ticket_from": "title" if m and ticket == m.group(1) and not session_ticket else ("session" if ticket else "")}
     return {"running": True, "slots": [slots[k] for k in sorted(slots)]}
@@ -699,6 +831,8 @@ LINE_TICKET = re.compile(r"#(1\d{4})(?!\d)|/issues/(1\d{4})(?!\d)")
 ONLY_TICKET = re.compile(r"\s*(?:スキル[:：]\s*\S+\s*)?#?(1\d{4})\s*")
 SKILL_ARGS = re.compile(r"\s*[/$]?ct-[\w-]+\s+(.*)", re.S)
 BRANCH_TICKET = re.compile(r"feature/(1\d{4})|(?<![\d/])(1\d{4})_\d")
+HEAD_TICKET = re.compile(r"\s*#(1\d{4})(?!\d)")
+GIT_BRANCH_TICKET = re.compile(r"^(?:feature|design)/(1\d{4})(?!\d)")
 
 
 def work_ticket(text, command_args=None):
@@ -720,6 +854,14 @@ def work_ticket(text, command_args=None):
         return main_ticket(m.group(1))
     # ブランチ名は短い指示の中のものだけ（ブランチ一覧の貼り付けなど、長い文に並んだものは作業の指示ではない）
     m = BRANCH_TICKET.search(text) if len(text) <= 300 else None
+    if m:
+        return m.group(1) or m.group(2)
+    # 長い引き継ぎ文でも、1 行目の先頭の「#番号」と 1 行目のブランチ名は作業の指示（「#14339 feature/14339_2_2 の作業を引き継いで…」）
+    head = text.lstrip().split("\n", 1)[0][:120]
+    m = HEAD_TICKET.match(head)
+    if m:
+        return m.group(1)
+    m = BRANCH_TICKET.search(head)
     return (m.group(1) or m.group(2)) if m else ""
 
 
@@ -775,6 +917,21 @@ def iso_ts(value):
         return 0.0
 
 
+PREV_TRANSCRIPT = re.compile(r"read the full transcript at:\s*(\S+?\.jsonl)")
+
+
+def session_fallback_ticket(path, depth=0):
+    """入力から番号が取れなかったセッションの代わりの番号: 作業ブランチ → 圧縮前のセッション（たどれるだけ）で入力された番号。"""
+    st = links_files.get(path) or {}
+    if st.get("branch_ticket"):
+        return st["branch_ticket"]
+    prev = st.get("prev_path")
+    if not prev or depth >= 5 or prev == path:
+        return ""
+    pst = links_files.get(prev) or {}
+    return pst.get("ticket") or session_fallback_ticket(prev, depth + 1)
+
+
 def scan_links_once():
     """Claude・Codex の記録（直近 LINK_DAYS 日に更新されたもの）から、AI が出した文章の URL を集める。
 
@@ -800,9 +957,21 @@ def scan_links_once():
                 except ValueError:
                     continue
                 st["cwd"] = d.get("cwd") or st.get("cwd", "")
+                # 入力から番号が取れないときの代わり: 記録に残る作業ブランチ（feature/番号）
+                bm = GIT_BRANCH_TICKET.match(d.get("gitBranch") or "")
+                if bm:
+                    st["branch_ticket"] = bm.group(1)
                 tk = claude_work_ticket(d)
                 if tk:
                     st["ticket"] = tk  # このあとに出た URL は、このチケットの作業で出たものとみなす
+                elif d.get("type") == "user" and not st.get("prev_path"):
+                    # 圧縮のあとに続いたセッションは、要約に前のセッションの記録のパスがある。そこで入力された番号を引き継ぐ
+                    # （要約の中の番号は、話に出ただけの番号が多く混ざるので使わない）
+                    pt = prompt_text(d) or ""
+                    if d.get("isCompactSummary") or pt.lstrip().startswith("This session is being continued"):
+                        pm = PREV_TRANSCRIPT.search(pt)
+                        if pm:
+                            st["prev_path"] = pm.group(1)
                 if d.get("type") != "assistant" or "http" not in line:
                     continue
                 text = "\n".join(b.get("text", "") for b in (d.get("message") or {}).get("content") or []
@@ -834,10 +1003,14 @@ def scan_links_once():
                 text = "\n".join(c.get("text", "") for c in pl.get("content") or [] if isinstance(c, dict))
             with links_lock:
                 add_links(text, iso_ts(d.get("timestamp")) or os.path.getmtime(path),
-                          f"{env_of(st.get('cwd'))} {kind}", path, st.get("ticket", ""))
+                          f"{env_of(st.get('cwd'))} {kind}", path, st.get("ticket") or st.get("branch_ticket", ""))
     with links_lock:
         for url in [u for u, v in links.items() if v["ts"] < limit]:
             del links[url]
+        # 番号が後から分かったセッション（圧縮前に出た URL・番号を入れる前に出た URL）は、そのセッションの代わりの番号で埋める
+        for v in links.values():
+            if not v["ticket"]:
+                v["ticket"] = session_fallback_ticket(v["path"])
 
 
 def scan_links_locked():
@@ -1137,18 +1310,25 @@ def redmine_view():
             sessions.setdefault(sl["ticket"], []).append(
                 {"slot": sl["slot"], "env": sl["env"], "kind": sl["kind"], "state": sl["state"], "skill": sl.get("skill", ""), "skill_done": sl.get("skill_done", False)})
     places = ticket_places()
-    items = []
-    for i in data["issues"]:
+
+    def item(i):
         n = str(i["id"])
         p = places.get(n, {"branches": [], "docs": []})
         with hist_lock:
             h = sorted(hist.get(n, {}).items(), key=lambda kv: -kv[1])
         with pr_lock:
             branches = [{**b, "pr": pr_cache["prs"].get((b["repo"], b["branch"]))} for b in p["branches"]]
-        items.append({**i, "url": f"{data['host']}/issues/{n}", "sessions": sessions.get(n, []),
-                      "branches": branches, "docs": sorted(set(p["docs"])),
-                      "history": [{"env": e, "last": t} for e, t in h]})
-    return {"fetched_at": data["fetched_at"], "issues": items, "history_days": HIST_DAYS, "pr_at": pr_cache["at"]}
+        return {"relations": [], **i, "url": f"{data['host']}/issues/{n}", "sessions": sessions.get(n, []),
+                "branches": branches, "docs": sorted(set(p["docs"])),
+                "history": [{"env": e, "last": t} for e, t in h]}
+
+    items = [item(i) for i in data["issues"]]
+    tv = today_view()
+    mine = {str(i["id"]) for i in data["issues"]}
+    host, key = redmine_creds()
+    extra = [{**item(i), "extra": True} for i in today_extra_issues(set(tv["tickets"]) - mine, host, key)]
+    return {"fetched_at": data["fetched_at"], "issues": items, "history_days": HIST_DAYS, "pr_at": pr_cache["at"],
+            "today": tv, "today_extra": extra}
 
 
 HIST_DAYS = 30
@@ -1284,6 +1464,188 @@ def history_full(n):
     return result
 
 
+# --- 今日の作業（Redmine 欄の「今日作業した」） ---------------------------------------------
+# 「今日」は朝 4:00 で区切る（0:00〜3:59 は前の日の続き）。1 分ごとに、今日更新された Claude・Codex の記録を
+# 追記分だけ読み、セッションごとに「いま作業しているチケット」を追って、その番号に作業した時間帯と入力した文を付ける。
+DAY_START_HOUR = 4
+TODAY_PROMPTS = 8          # 1 チケット・1 環境あたり残す入力の数（新しいものから）
+TODAY_SNIPPET = 90         # 入力の冒頭として残す文字数
+TS_FIELD = re.compile(r'"timestamp"\s*:\s*"([^"]+)"')
+today_lock = threading.Lock()
+today = {"start": 0, "files": {}, "work": {}, "commits": {}, "commits_at": 0}
+extra_cache = {"at": 0, "ids": (), "issues": []}  # 今日作業した担当外・完了済みのチケット（5 分覚える）
+
+
+def day_start(now=None):
+    """今日の始まり（朝 4:00）の時刻。4:00 より前なら前の日の 4:00。"""
+    t = time.localtime(now or time.time())
+    start = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, DAY_START_HOUR, 0, 0, 0, 0, -1))
+    return start - 86400 if t.tm_hour < DAY_START_HOUR else start
+
+
+def snippet(text):
+    text = re.sub(r"<pasted_content\b.*?</pasted_content[^>]*>", " [貼り付け] ", text or "", flags=re.S)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:TODAY_SNIPPET] + ("…" if len(text) > TODAY_SNIPPET else "")
+
+
+def session_ticket(text, wt):
+    """入力からセッションの作業番号を決める: work_ticket を優先し、無ければ 300 文字以内の入力の主な番号。"""
+    if wt:
+        return wt
+    if text and len(text) <= 300 and "<pasted_content" not in text \
+            and not text.lstrip().startswith("This session is being continued"):
+        return main_ticket(text)
+    return ""
+
+
+def _today_touch(work, tk, env, ts, prompt=None):
+    w = work.setdefault(tk, {}).setdefault(env, {"first": ts, "last": ts, "prompts": []})
+    w["first"], w["last"] = min(w["first"], ts), max(w["last"], ts)
+    if prompt:
+        w["prompts"] = (w["prompts"] + [{"ts": ts, "text": prompt}])[-TODAY_PROMPTS:]
+
+
+def scan_today_once():
+    start = day_start()
+    with today_lock:
+        if today["start"] != start:  # 日が変わったら最初から
+            today.update(start=start, files={}, work={}, commits={}, commits_at=0)
+        files, work = today["files"], today["work"]
+    for path, kind in history_files():
+        try:
+            if os.path.getmtime(path) < start:
+                continue
+        except OSError:
+            continue
+        st = files.setdefault(path, {"offset": 0, "cwd": "", "cur": ""})
+        try:
+            lines = read_new_lines(path, st)
+        except OSError:
+            continue
+        found = []  # (ticket, env, ts, prompt)
+        for line in lines:
+            m = TS_FIELD.search(line)
+            ts = iso_ts(m.group(1)) if m else 0.0
+            prompt, wt = None, ""
+            if kind == "claude":
+                if '"cwd"' in line and '"user"' in line and '"tool_use_id"' not in line:
+                    try:
+                        d = json.loads(line)
+                    except ValueError:
+                        d = {}
+                    st["cwd"] = d.get("cwd") or st["cwd"]
+                    text = prompt_text(d)
+                    if text and not d.get("isCompactSummary"):
+                        prompt, wt = text, claude_work_ticket(d)
+            else:
+                if '"session_meta"' in line:
+                    try:
+                        st["cwd"] = json.loads(line).get("payload", {}).get("cwd", "") or st["cwd"]
+                    except ValueError:
+                        pass
+                elif '"user"' in line:
+                    try:
+                        text = codex_prompt_text(json.loads(line).get("payload") or {})
+                    except ValueError:
+                        text = ""
+                    if text:
+                        prompt, wt = text, work_ticket(text)
+            if prompt:
+                st["cur"] = session_ticket(prompt, wt) or st["cur"]
+            env = env_of(st["cwd"])
+            if ts >= start and st["cur"] and env in ENV_DIRS.values():
+                found.append((st["cur"], env, ts, snippet(prompt) if prompt else None))
+        if found:
+            with today_lock:
+                for tk, env, ts, p in found:
+                    _today_touch(work, tk, env, ts, p)
+    if time.time() - today["commits_at"] >= 300:
+        commits = today_commits(start)
+        with today_lock:
+            today.update(commits=commits, commits_at=time.time())
+
+
+def today_commits(start):
+    """今日の 4:00 以降の自分のコミット（refs #番号 を含むもの）。各環境で fetch した同じコミットは 1 件にまとめる。"""
+    seen, out = set(), {}
+    for d, env in ENV_DIRS.items():
+        root = os.path.join(HOME, "www", d)
+        for repo in ("", *REPO_NAMES):
+            path = os.path.join(root, repo) if repo else root
+            if not os.path.isdir(os.path.join(path, ".git")):
+                continue
+            try:
+                me = subprocess.run(["git", "-C", path, "config", "user.email"], capture_output=True, text=True, timeout=5).stdout.strip()
+                log = subprocess.run(["git", "-C", path, "log", "--all", f"--since=@{int(start)}", "--format=%H%x09%ct%x09%ae%x09%s"],
+                                     capture_output=True, text=True, timeout=20).stdout.splitlines()
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            for row in log:
+                parts = row.split("\t", 3)
+                if len(parts) < 4 or parts[0] in seen or (me and parts[2] != me):
+                    continue
+                for n in set(re.findall(r"#(1\d{4})(?!\d)", parts[3])):
+                    seen.add(parts[0])
+                    out.setdefault(n, []).append({"ts": int(parts[1]), "subject": parts[3][:120],
+                                                  "where": f"{env} {repo or 'workspace'}"})
+    return out
+
+
+def today_loop():
+    while True:
+        try:
+            scan_today_once()
+        except Exception as e:  # 集め損ねても次の回でやり直す
+            print(f"{time.strftime('%F %T')} 今日の作業の収集に失敗: {e}", file=sys.stderr, flush=True)
+        time.sleep(60)
+
+
+def today_view():
+    """チケット番号 -> {"envs": [{env, first, last}], "prompts": [{ts, env, text}], "commits": [...], "last"}。"""
+    with today_lock:
+        work = json.loads(json.dumps(today["work"]))
+        commits = dict(today["commits"])
+        start = today["start"] or day_start()
+    out = {}
+    for n in set(work) | set(commits):
+        envs = [{"env": e, "first": w["first"], "last": w["last"]} for e, w in sorted(work.get(n, {}).items())]
+        prompts = sorted(({"ts": p["ts"], "env": e, "text": p["text"]} for e, w in work.get(n, {}).items() for p in w["prompts"]),
+                         key=lambda p: -p["ts"])[:TODAY_PROMPTS]
+        cm = sorted(commits.get(n, []), key=lambda c: -c["ts"])
+        last = max([x["last"] for x in envs] + [c["ts"] for c in cm] or [0])
+        out[n] = {"envs": envs, "prompts": prompts, "commits": cm, "last": last}
+    return {"start": start, "tickets": out}
+
+
+def today_extra_issues(ids, host, key):
+    """今日作業したが担当一覧に無いチケット（担当外・完了済み）を Redmine から引く。5 分覚える。"""
+    ids = tuple(sorted(ids))
+    if not ids:
+        return []
+    if extra_cache["ids"] == ids and time.time() - extra_cache["at"] < 300:
+        return extra_cache["issues"]
+    import urllib.request
+    issues = []
+    for k in range(0, len(ids), 50):
+        req = urllib.request.Request(f"{host}/issues.json?issue_id={','.join(ids[k:k + 50])}&status_id=*&limit=100",
+                                     headers={"X-Redmine-API-Key": key})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                issues += json.load(r).get("issues", [])
+        except Exception as e:  # 引けなくても番号だけは出す
+            print(f"{time.strftime('%F %T')} 今日の作業のチケットを Redmine から取れませんでした: {e}", file=sys.stderr, flush=True)
+    found = {i["id"] for i in issues}
+    rows = [{"id": i["id"], "subject": i.get("subject", ""), "status": (i.get("status") or {}).get("name", ""),
+             "priority": (i.get("priority") or {}).get("name", ""), "updated_on": i.get("updated_on", ""),
+             "assignee": (i.get("assigned_to") or {}).get("name", ""),
+             "closed": bool((i.get("status") or {}).get("is_closed")) or bool(i.get("closed_on"))} for i in issues]
+    rows += [{"id": int(n), "subject": "（Redmine で見つかりません）", "status": "", "priority": "", "updated_on": "",
+              "assignee": "", "closed": False} for n in ids if int(n) not in found]
+    extra_cache.update(at=time.time(), ids=ids, issues=rows)
+    return rows
+
+
 def run_action(action, env, comp):
     try:
         proc = subprocess.Popen([LOCAL_SERVER, action, env, comp], stdout=subprocess.PIPE,
@@ -1362,6 +1724,8 @@ class Handler(BaseHTTPRequestHandler):
                 "codex": codex_usage(cfg),
                 "stale_minutes": cfg["stale_minutes"],
             })
+        elif self.path == "/api/sys":
+            self.send_json(sys_usage())
         elif self.path == "/api/pane":
             try:
                 n = int(self.query.get("slot", ["0"])[0])
@@ -1458,8 +1822,10 @@ def main():
     cfg = load_config()
     if not cfg["key"]:
         sys.exit("config.json に key（合言葉）を設定してください")
+    threading.Thread(target=cpu_loop, daemon=True).start()
     threading.Thread(target=links_loop, daemon=True).start()
     threading.Thread(target=history_loop, daemon=True).start()
+    threading.Thread(target=today_loop, daemon=True).start()
     threading.Thread(target=pr_loop, daemon=True).start()
     httpd = ThreadingHTTPServer((cfg["bind"], cfg["port"]), Handler)
     print(f"dev-dashboard: {cfg['bind']}:{cfg['port']} 許可: {', '.join(cfg['allow_ips'])}", flush=True)

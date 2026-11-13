@@ -32,6 +32,7 @@
 #
 #  操作:
 #    Alt + 1~9          prefix不要で即切り替え
+#    Alt + 0 / ほ / へ  10 / 11 / 12番目を即切り替え（JIS 配列）
 #    prefix + F1~F12    10~21番目を切り替え
 #    ペインクリック → prefix + Enter でメインに持ってくる
 #    prefix + a         新しいペインを追加
@@ -180,6 +181,7 @@ Usage: claude-monitor [OPTIONS] [DIR1 DIR2 ...]
 
 操作キー:
   Alt + 1~9             prefix不要で即切り替え
+  Alt + 0 / ほ / へ     10 / 11 / 12番目を即切り替え（JIS 配列）
   prefix + F1~F12       10~21番目を切り替え
   ペインクリック + prefix+Enter  クリックしたペインをメインに
   prefix + a            新しいペインを追加
@@ -370,7 +372,7 @@ if [[ "$AUTO_CLAUDE" == true ]]; then
 fi
 
 if [[ $NUM -gt 9 ]]; then
-  echo "⚠ 10個以上: prefix+F1~F12 / マウス+prefix+Enter で操作。"
+  echo "⚠ 10個以上: 10~12番目は Alt+0 / Alt+ほ / Alt+へ 、それ以降は prefix+F1~F12 / マウス+prefix+Enter で操作。"
 fi
 
 # =============================================
@@ -728,8 +730,9 @@ tmux set-option -t "$CURRENT_SESSION" mouse on
 tmux unbind-key -T root MouseDown3Pane
 tmux set-option -w -t "$WIN_ID" pane-border-status top
 # タイトルの色: Claude は @ai_state（~/bin/tmux-ai-state をフックから呼んで付ける）で busy=オレンジ・wait=赤、
+# 本体が入力待ちでもサブエージェントが動いていれば（@ai_sub）オレンジ、
 # 印の無いペインは Codex の処理中表示を画面から見る（~/bin/tmux-codex-busy、10 秒ごと）
-tmux set-option -w -t "$WIN_ID" pane-border-format ' #{?#{==:#{@ai_state},busy},#[bg=colour208#,fg=black],#{?#{==:#{@ai_state},wait},#[bg=colour196#,fg=white],#{?#{@ai_state},,#(~/bin/tmux-codex-busy #{pane_id})}}}#[bold] #{@cm_title} #[default]'
+tmux set-option -w -t "$WIN_ID" pane-border-format ' #{?#{==:#{@ai_state},wait},#[bg=colour196#,fg=white],#{?#{||:#{==:#{@ai_state},busy},#{@ai_sub}},#[bg=colour208#,fg=black],#{?#{@ai_state},,#(~/bin/tmux-codex-busy #{pane_id})}}}#[bold] #{@cm_title} #[default]'
 
 # =============================================
 #  レイアウト構築
@@ -875,6 +878,15 @@ tmux set-option -t "${WIN_ID}.${CLI1_IDX}" -p @cm_title "[1] → $DIR_LABEL"
 MAX9=$((NUM > 9 ? 9 : NUM))
 for ((i = 1; i <= MAX9; i++)); do
   tmux bind-key -T root "M-$i" run-shell "$DISPATCH_SCRIPT $i"
+done
+
+# 10〜12番目も数字キーの並びの続きでワンボタンにする（JIS 配列: Alt+0=10, Alt+-(ほ)=11, Alt+へ=12）
+# Terminal.app は JIS 配列の Option+へ を ESC ' で送るため、12番目は M-' に割り当てる
+EXTRA_ALT_KEYS=("0" "-" "'")
+for ((k = 0; k < ${#EXTRA_ALT_KEYS[@]}; k++)); do
+  i=$((10 + k))
+  [[ $i -gt $NUM ]] && break
+  tmux bind-key -T root "M-${EXTRA_ALT_KEYS[$k]}" run-shell "$DISPATCH_SCRIPT $i"
 done
 
 if [[ $NUM -gt 9 ]]; then
