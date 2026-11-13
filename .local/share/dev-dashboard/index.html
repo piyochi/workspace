@@ -14,6 +14,7 @@
           --ok: #22c55e; --off: #6b7280; --warn: #f59e0b; --bad: #f87171; --accent: #60a5fa; --bar: #2c3039; }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--text);
        font: 14px/1.5 -apple-system, "Segoe UI", "Yu Gothic UI", "Hiragino Sans", sans-serif; }
 main { max-width: 560px; margin: 0 auto; padding: 12px 16px 24px; }
@@ -21,12 +22,30 @@ main { max-width: 560px; margin: 0 auto; padding: 12px 16px 24px; }
 header { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -12px -16px 8px; padding: 8px 16px 6px;
          border-bottom: 1px solid var(--line); }
 .head-row { display: flex; justify-content: space-between; align-items: baseline; }
+/* 開発サーバーの稼働状況（タイトル行の中に置くので縦幅は増えない）。環境番号 + api・app・sqs の点。押すと開発サーバー欄へ */
+.hsrv { display: inline-flex; align-self: center; gap: 9px; margin: 0 8px 0 auto; padding-right: 10px; cursor: pointer; font-size: 11px; }
+.hsrv-env { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); font-weight: 700; }
+.hsrv-env.up { color: var(--text); }
+.hsrv-env .dot { width: 7px; height: 7px; }
+.hsrv-env .dot:first-of-type { margin-left: 2px; }
 .sys { display: flex; gap: 14px; margin-top: 4px; font-size: 12px; }
 .gauge { flex: 1; min-width: 0; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; }
 .gauge-label { color: var(--muted); }
 .gauge .bar { height: 6px; }
 .gauge .bar > i { transition: width .4s; }
 .gauge-val { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+/* ヘッダーの小さい版（Claude・Codex の使用率、tmux の処理中・確認待ち）。元の欄が画面から外れたときだけ出す */
+/* ヘッダーの下に重ねて出す（ページの配置を動かさないので、出し入れで元の欄が見え隠れしてちらつかない） */
+.mini-wrap { position: absolute; left: 0; right: 0; top: 100%; background: var(--bg); padding: 0 16px 5px; border-bottom: 1px solid var(--line); }
+.mini { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 4px; font-size: 11px; }
+.mini-src { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.mini-name { color: var(--muted); font-weight: 600; }
+.mini-win { display: inline-flex; align-items: center; gap: 3px; }
+.mini-win .bar { width: 36px; height: 5px; }
+.mini-win b { font-variant-numeric: tabular-nums; }
+.mini-pane { border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; line-height: 17px; white-space: nowrap; cursor: pointer; font: inherit; background: var(--bg); color: inherit; }
+.mini-pane.busy { border-color: #f97316; color: #ea580c; }
+.mini-pane.wait { border-color: var(--bad); color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--bg)); font-weight: 700; }
 h1 { font-size: 15px; margin: 0; }
 .updated { color: var(--muted); font-size: 12px; }
 .sec { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
@@ -155,10 +174,14 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 <body>
 <main>
   <header>
-    <div class="head-row"><h1>開発ダッシュボード</h1><span class="updated" id="updated">読み込み中…</span></div>
+    <div class="head-row"><h1>開発ダッシュボード</h1><span class="hsrv" id="hsrv"></span><span class="updated" id="updated">読み込み中…</span></div>
     <div class="sys">
       <div class="gauge" id="g-cpu"><span class="gauge-label">CPU</span><div class="bar"><i style="width:0"></i></div><span class="gauge-val">–</span></div>
       <div class="gauge" id="g-mem"><span class="gauge-label">メモリ</span><div class="bar"><i style="width:0"></i></div><span class="gauge-val">–</span></div>
+    </div>
+    <div class="mini-wrap" id="mini-wrap" hidden>
+      <div class="mini" id="mini-usage" hidden></div>
+      <div class="mini" id="mini-panes" hidden></div>
     </div>
   </header>
 
@@ -255,7 +278,23 @@ const fmtReset = (t) => {
 };
 let jobPolling = null;
 
+// ヘッダーの稼働状況。「1 ●●○」= 環境1 の api・app・sqs（緑＝動作中、黄＝枠外、灰＝停止）
+function renderHeadServers(s) {
+  const word = (v) => v === "detached" ? "枠外" : v ? "動作中" : "停止";
+  $("hsrv").innerHTML = s.error ? "" : Object.entries(s.envs).map(([env, comps]) => {
+    const cs = ["api", "app", "sqs"];
+    return `<span class="hsrv-env ${cs.some((c) => comps[c]) ? "up" : ""}" title="${env}: ${cs.map((c) => `${c} ${word(comps[c])}`).join("・")}">${env.replace("env", "")}${
+      cs.map((c) => `<span class="dot ${comps[c] === "detached" ? "detached" : comps[c] ? "on" : ""}"></span>`).join("")}</span>`;
+  }).join("");
+}
+$("hsrv").onclick = () => {
+  const sec = document.querySelector('.sec[data-key="servers"]');
+  sec.open = true;
+  window.scrollTo({ top: sec.getBoundingClientRect().top + window.scrollY - document.querySelector("header").offsetHeight - 8, behavior: "smooth" });
+};
+
 function renderServers(s) {
+  renderHeadServers(s);
   if (s.error) { $("servers").innerHTML = `<div class="err">${esc(s.error)}</div>`; return; }
   const busy = !!(window.__job && window.__job.running);
   $("servers").innerHTML = Object.entries(s.envs).map(([env, comps]) => `
@@ -298,6 +337,8 @@ async function refresh() {
     renderServers(d.servers);
     renderUsage($("claude"), d.claude, d.stale_minutes, d.now);
     renderUsage($("codex"), d.codex, d.stale_minutes * 48, d.now);
+    mini.usage = { claude: d.claude, codex: d.codex };
+    renderMini();
     $("updated").textContent = `更新 ${fmtTime(d.now)}`;
   } catch (e) {
     $("updated").innerHTML = `<span class="err">Mac に接続できません</span>`;
@@ -366,6 +407,8 @@ async function refreshPanes() {
     if (prevStates && d.slots.some((s) => prevStates[s.slot] === "busy" && s.state !== "busy")) loadLinks(true);
     prevStates = Object.fromEntries(d.slots.map((s) => [s.slot, s.state]));
     window.__slots = bySlot;
+    mini.slots = d.slots;
+    renderMini();
     if (modalSlot) renderLink();
     $("panes").innerHTML = `<div class="grid">${Array.from({ length: 12 }, (_, i) => {
       const s = bySlot[i + 1];
@@ -378,6 +421,47 @@ async function refreshPanes() {
     }).join("")}</div>`;
   } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
 }
+
+// ヘッダーの小さい版。元の欄（Claude・Codex・tmux）が画面に見えている間は出さず、
+// 下にスクロールして見えなくなったとき（または欄を閉じたとき）だけ出す
+const mini = { usage: null, slots: null, visible: { claude: true, codex: true, tmux: true } };
+const miniBar = (p) => `<span class="bar"><i class="${p >= 90 ? "bad" : p >= 70 ? "warn" : ""}" style="width:${p}%"></i></span>`;
+function miniUsage(name, rows) {
+  if (!rows || !rows.length) return "";
+  return rows.map((r) => {
+    const wins = Object.entries(r.windows).filter(([, w]) => w);
+    if (!wins.length) return "";
+    const label = rows.length > 1 ? `${name} ${r.label}` : name;
+    return `<span class="mini-src" title="${esc(`${name}: ${r.label}`)}"><span class="mini-name">${esc(label)}</span>${wins.map(([n, w]) => {
+      const p = Math.min(100, w.percent);
+      return `<span class="mini-win" title="${esc(n)} ${p.toFixed(0)}%${w.resets_at ? `・${fmtReset(w.resets_at)}` : ""}">${esc(n)} ${miniBar(p)}<b>${p.toFixed(0)}%</b></span>`;
+    }).join("")}</span>`;
+  }).join("");
+}
+function renderMini() {
+  const u = mini.usage, v = mini.visible;
+  const usage = u ? (v.claude ? "" : miniUsage("Claude", u.claude)) + (v.codex ? "" : miniUsage("Codex", u.codex)) : "";
+  $("mini-usage").innerHTML = usage;
+  $("mini-usage").hidden = !usage;
+  const act = v.tmux || !mini.slots ? [] : mini.slots.filter((s) => s.state === "busy" || s.state === "wait");
+  $("mini-panes").innerHTML = act.map((s) =>
+    `<button type="button" class="mini-pane ${s.state}" data-slot="${s.slot}" title="${esc(cellTip(s))}">[${s.slot}] ${esc(s.env)} ${PANE_STATES[s.state]}</button>`).join("");
+  $("mini-panes").hidden = !act.length;
+  $("mini-wrap").hidden = !usage && !act.length;
+}
+$("mini-panes").addEventListener("click", (e) => { const b = e.target.closest("[data-slot]"); if (b) openPane(Number(b.dataset.slot)); });
+// 欄が閉じている・ヘッダーの下に隠れている・画面の外にあるときは「見えていない」とみなす
+function watchSection(key, contentId) {
+  const sec = document.querySelector(`details.sec[data-key="${key}"]`), body = $(contentId);
+  const update = (shown) => { mini.visible[key] = sec.open && shown; renderMini(); };
+  let shown = true;
+  new IntersectionObserver(([e]) => { shown = e.isIntersecting; update(shown); },
+    { rootMargin: `-${document.querySelector("header").offsetHeight}px 0px 0px 0px` }).observe(body);
+  sec.addEventListener("toggle", () => update(shown));
+}
+watchSection("claude", "claude");
+watchSection("codex", "codex");
+watchSection("tmux", "panes");
 
 // 開閉の状態はこのブラウザにだけ覚える（読めなくても全部開いた状態で動く）
 document.querySelectorAll("details.sec").forEach((d) => {
