@@ -129,13 +129,41 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 .link-url { color: var(--accent); word-break: break-all; }
 .link-ctx { color: var(--muted); font-size: 12px; word-break: break-all; }
 .link-more { margin-top: 6px; display: flex; align-items: center; gap: 8px; }
-.link-more .label { color: var(--muted); font-size: 11px; }
+.link-more .label { color: var(--muted); font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-more button { flex: none; white-space: nowrap; }  /* ボタンの文字は折り返さない（幅が足りないときは右の説明を「…」で切る） */
 .links-modal-filter { padding: 8px 12px; margin: 0; border-bottom: 1px solid var(--line); }
 .links-modal-body { flex: 1; overflow: auto; padding: 4px 12px 12px; }
 .rm-row { padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px; }
 .rm-row:first-child { border-top: 0; }
 /* tmux の枠で作業中のチケットは背景を薄く色づける（欄の左右の余白まで塗る） */
 .rm-row.active { background: color-mix(in srgb, var(--accent) 9%, var(--card)); margin: 0 -12px; padding: 5px 12px; }
+/* tmux の枠に送る画面（日報・Redmine の一覧の上に重ねる） */
+#send-modal { z-index: 12; }
+.send-box { width: min(640px, 100%); height: auto; max-height: min(85vh, 900px); }
+.send-body { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.send-label { font-size: 11px; font-weight: 600; color: var(--muted); margin-top: 6px; }
+.send-chips { display: flex; flex-wrap: wrap; gap: 4px; min-height: 22px; }
+.send-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; border: 1px solid var(--accent); border-radius: 12px; padding: 0 4px 0 8px; line-height: 20px; }
+.send-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.send-chip b { color: var(--accent); }
+.send-chip button { border: 0; background: none; padding: 0 4px; color: var(--muted); }
+.send-cand { display: block; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; padding: 3px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.send-cand.sel { background: color-mix(in srgb, var(--accent) 18%, var(--card)); }
+.send-cand:hover { background: color-mix(in srgb, var(--accent) 9%, var(--card)); }
+.send-cand b { color: var(--accent); }
+.send-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px; }
+.send-slot { text-align: left; padding: 3px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.send-slot.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--card)); font-weight: 700; }
+.send-slot:disabled { opacity: .45; cursor: not-allowed; }
+.send-cmd-list { max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+.send-cmd-list .send-cand:first-child { border-top: 0; }
+.send-cmd-list .send-cand span { color: var(--muted); font-size: 11px; }
+#send-free { width: 100%; font: inherit; font-size: 12px; line-height: 1.5; padding: 3px 6px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; resize: vertical; }
+.send-launch { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.send-launch button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--card)); font-weight: 700; }
+.send-slot.stopped { border-style: dashed; color: var(--muted); }
+.send-preview { margin: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+button.rm-send { flex: none; font-size: 10px; padding: 0 5px; line-height: 16px; }
 /* 日報の入力画面 */
 .np-bar { align-items: center; }
 .np-bar button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -145,6 +173,11 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 .np-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 56px 56px 74px minmax(140px, 30%); gap: 4px 6px; align-items: start; padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px; }
 .np-row.head { border-top: 0; color: var(--muted); font-size: 11px; padding-bottom: 0; }
 .np-row.off .np-name, .np-row.off input[type=text], .np-row.off textarea { opacity: .45; }
+.np-row.del { background: color-mix(in srgb, var(--bad) 8%, var(--card)); }
+.np-row.del .np-name { text-decoration: line-through; }
+button.np-del { font-size: 10px; padding: 0 3px; line-height: 16px; color: var(--muted); border-color: transparent; background: none; }
+button.np-del:hover { color: var(--bad); border-color: var(--bad); }
+.np-row.del button.np-del { color: var(--accent); }
 .np-row.changed { background: color-mix(in srgb, var(--warn) 10%, var(--card)); }
 .np-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .np-name input { width: 100%; }
@@ -273,7 +306,7 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
   <details class="sec" data-key="redmine" open>
     <summary><h2>Redmine 担当チケット</h2></summary>
     <div id="redmine"></div>
-    <div class="link-more"><button id="redmine-more">もっと見る</button><button id="redmine-reload">取り直す</button> <span class="label" id="redmine-meta"></span></div>
+    <div class="link-more"><button id="redmine-more">もっと見る</button><button id="redmine-reload">取り直す</button><button id="send-open" title="チケット番号を選んで、tmux の枠の Claude / Codex に /ct-redmine などを送る">tmux に送る</button> <span class="label" id="redmine-meta"></span></div>
   </details>
 
   <details class="sec" data-key="links" open>
@@ -316,6 +349,36 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
       <span class="np-msg" id="np-msg"></span>
       <button id="np-reload">取り直す</button>
       <button id="np-save" class="primary">HRMOS に登録する</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="send-modal" role="dialog" aria-modal="true">
+  <div class="modal-box send-box">
+    <div class="modal-head">
+      <a href="#" class="back" id="send-back">← 戻る</a>
+      <span class="modal-title" id="send-title">tmux の枠に送る</span>
+      <span class="modal-meta" id="send-meta"></span>
+    </div>
+    <div class="links-modal-body send-body">
+      <div class="send-label">チケット（複数可。番号を取らないコマンドなら空のままで送れます）</div>
+      <div class="send-chips" id="send-chips"></div>
+      <input type="search" id="send-q" placeholder="番号・件名のキーワードで探して足す（番号だけ入れて Enter でも足せます）" autocomplete="off">
+      <div id="send-cands"></div>
+      <div class="send-label">コマンド</div>
+      <input type="text" id="send-cmd" spellcheck="false" autocomplete="off" placeholder="クリックすると全部のコマンドが出ます。打つと名前・説明で絞れます">
+      <div class="send-cmd-list" id="send-cmd-list" hidden></div>
+      <div class="send-label">自由入力（コマンド・番号のあとに続けて送ります。コマンドを空にすれば、この文だけ送れます）</div>
+      <textarea id="send-free" rows="2" maxlength="1000" placeholder="例: testing で確認して / --light / ステータスを進行中にして"></textarea>
+      <div class="send-label">送り先（入力待ちの枠か、停止中の枠。停止中は起動してから送ります）</div>
+      <div class="send-slots" id="send-slots"></div>
+      <div class="send-launch" id="send-launch" hidden></div>
+      <div class="send-label">送る内容</div>
+      <pre class="send-preview" id="send-preview"></pre>
+    </div>
+    <div class="np-foot">
+      <span class="np-msg" id="send-msg"></span>
+      <button id="send-go" class="primary">送る</button>
     </div>
   </div>
 </div>
@@ -651,9 +714,11 @@ function renderActions(d) {
   const now = d.state === "stopped" ? "" : `${d.kind === "claude" ? "Claude" : "Codex"} `;
   $("modal-actions").innerHTML = `<span class="st">${now}${PANE_STATES[d.state] || esc(d.state)}</span>
     <span class="label">起動:</span>${launch}<button class="danger" data-stop="1" title="${stopTip}" ${d.state !== "idle" || busy ? "disabled" : ""}>停止</button>
+    <button data-send="1" title="この枠に作業を頼む（/ct- で始まるコマンド・チケット番号・自由な文を送る。停止中なら起動してから送る）" ${d.state === "idle" || stopped ? "" : "disabled"}>作業依頼</button>
     ${busy ? `<span class="label">${esc(pendingCli)}…</span>` : ""}`;
   $("modal-actions").querySelectorAll("button[data-mode]").forEach((b) => b.onclick = () => cli("launch", b.dataset.kind, b.dataset.mode, b.title));
   const sb = $("modal-actions").querySelector("button[data-stop]"); if (sb) sb.onclick = () => cli("stop");
+  const sendBtn = $("modal-actions").querySelector("button[data-send]"); if (sendBtn) sendBtn.onclick = () => sndOpen(null, modalSlot, "/ct-");
 }
 let pendingCli = "";
 async function cli(action, kind, mode, cmd) {
@@ -965,6 +1030,7 @@ function rmRows(items, opts = {}) {
         ${rmStatusHtml(i)}
         <span class="rm-subj" title="#${i.id}: ${esc(i.subject)}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${i.id}</a>: ${esc(i.subject)}</span>
         <button class="rm-copy" data-copy="${esc(`#${i.id}: ${i.subject}`)}" data-url="${esc(i.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button>
+        <button class="rm-send" data-ticket="${i.id}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button>
         ${!i.history.length && !full ? `<button class="rm-full" data-ticket="${i.id}" title="直近${rmData ? rmData.history_days : 30}日に見つからなかったので、残っている Claude・Codex の記録全部と各環境の git のコミットから探す">全期間で調べる</button>` : ""}</div>
       ${info.length ? `<div class="rm-info">${info.join("")}</div>` : ""}
       ${opts.todayLog && td ? todayLogHtml(td, i.id) : ""}
@@ -1033,7 +1099,8 @@ function npNameHtml(name) {
   const url = npIssueUrl(name), m = /#(\d{4,6})/.exec(name);
   const copy = `<button class="rm-copy" data-copy="${esc(name)}" data-url="${esc(url)}" title="業務名を${url ? "リンク付きで" : ""}コピー">⧉</button> `;
   if (!url) return copy + esc(name);
-  return `${copy}${esc(name.slice(0, m.index))}<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Redmine で #${m[1]} を開く">#${m[1]}</a>${esc(name.slice(m.index + m[0].length))}`;
+  const send = `<button class="rm-send" data-ticket="${m[1]}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button> `;
+  return `${copy}${send}${esc(name.slice(0, m.index))}<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Redmine で #${m[1]} を開く">#${m[1]}</a>${esc(name.slice(m.index + m[0].length))}`;
 }
 // HRMOS の行と候補から、画面の行（np.rows）を作る
 function npBuild(data, src) {
@@ -1067,13 +1134,13 @@ function npBuild(data, src) {
   return rows;
 }
 function npRowHtml(r, i) {
-  const cur = r.kind === "cur", off = !cur && !r.checked;
+  const cur = r.kind === "cur", off = cur ? !!r.del : !r.checked;
   const changed = cur && (npMin(r.plan) !== r.orig.plan || npMin(r.result) !== r.orig.result || r.notes !== r.orig.notes);
   const dis = off ? "disabled" : "";
   const bad = (v) => npMin(v) == null ? "bad" : "";
   const future = npFuture();  // HRMOS は未来の日付に実績を入れられない
-  return `<div class="np-row${off ? " off" : ""}${changed ? " changed" : ""}" data-i="${i}">
-    <span class="np-check">${cur ? "" : `<input type="checkbox" data-f="checked" ${r.checked ? "checked" : ""}>`}</span>
+  return `<div class="np-row${off ? " off" : ""}${cur && r.del ? " del" : changed ? " changed" : ""}" data-i="${i}">
+    <span class="np-check">${cur ? `<button class="np-del" title="${r.del ? "削除をやめる" : "この行を削除する（登録するまで消えません）"}">${r.del ? "↩" : "✕"}</button>` : `<input type="checkbox" data-f="checked" ${r.checked ? "checked" : ""}>`}</span>
     <span class="np-name" title="${esc(r.name)}">${r.free ? `<input type="text" data-f="name" value="${esc(r.name)}" placeholder="業務名（例: MTG）">` : npNameHtml(r.name)}${r.sub ? ` <span class="np-sub">${esc(r.sub)}</span>` : ""}</span>
     <input type="text" class="${bad(r.plan)}" data-f="plan" value="${esc(r.plan)}" inputmode="numeric" placeholder="0:00" title="予定" ${dis}>
     <input type="text" class="${bad(r.result)}" data-f="result" value="${esc(future ? "" : r.result)}" inputmode="numeric" placeholder="${future ? "–" : "0:00"}" title="${future ? "未来の日付には実績を入れられません（HRMOS の決まり）" : "実績"}" ${future ? "disabled" : dis}>
@@ -1118,10 +1185,10 @@ const npFuture = () => !!(np.data && np.date > np.data.today);
 function npFit(t) { t.style.height = "auto"; t.style.height = `${t.scrollHeight + 2}px`; }
 function npTotals() {
   document.querySelectorAll("#np-body textarea").forEach(npFit);
-  const on = np.rows.filter((r) => r.kind === "cur" || r.checked);
+  const on = np.rows.filter((r) => r.kind === "cur" ? !r.del : r.checked);
   const sum = (f) => on.reduce((a, r) => a + (npMin(r[f]) || 0), 0);
-  const adds = np.rows.filter((r) => r.kind === "add" && r.checked).length;
-  $("np-total").textContent = `予定 ${npFmt(sum("plan"))}${npFuture() ? "" : `・実績 ${npFmt(sum("result"))}`}${adds ? `・+${adds}` : ""}`;
+  const adds = np.rows.filter((r) => r.kind === "add" && r.checked).length, dels = np.rows.filter((r) => r.del).length;
+  $("np-total").textContent = `予定 ${npFmt(sum("plan"))}${npFuture() ? "" : `・実績 ${npFmt(sum("result"))}`}${adds ? `・+${adds}` : ""}${dels ? `・−${dels}` : ""}`;
 }
 async function npLoad() {
   np.busy = true; np.data = null; np.msg = ""; np.msgCls = ""; npRender();
@@ -1180,17 +1247,19 @@ $("np-body").addEventListener("change", (e) => {
   np.rows[Number(t.closest(".np-row").dataset.i)].checked = t.checked; npRender();
 });
 $("np-body").addEventListener("click", (e) => {
+  const del = e.target.closest("button.np-del");
+  if (del) { const r = np.rows[Number(del.closest(".np-row").dataset.i)]; r.del = !r.del; npRender(); return; }
   const d = e.target.closest("button.np-draft");
   if (d) { np.rows[Number(d.closest(".np-row").dataset.i)].result = npFmt(Number(d.dataset.draft)); npRender(); return; }
   if (e.target.id === "np-free") { np.rows.push({ kind: "add", group: "free", free: true, checked: true, name: "", plan: "0:00", result: "0:00", notes: "", draft: 0, sub: "" }); npRender(); return; }
   if (e.target.id === "np-apply") {
     // 下書きのある行（登録済み + チェックした候補）の実績を入れる。合計の指定があれば、他の行の実績を引いた残りを下書きの割合で配る（5分単位・端数は大きい順）
-    const rows = np.rows.filter((r) => r.draft && (r.kind === "cur" || r.checked));
+    const rows = np.rows.filter((r) => r.draft && (r.kind === "cur" ? !r.del : r.checked));
     const target = npMin($("np-target").value);
     if ($("np-target").value.trim() && target == null) { np.msg = "合計の時間が不正です（例 8:00）"; np.msgCls = "err"; npRender(); return; }
     if (target == null) rows.forEach((r) => { r.result = npFmt(npRound5(r.draft)); });
     else {
-      const others = np.rows.filter((r) => !r.draft && (r.kind === "cur" || r.checked)).reduce((a, r) => a + (npMin(r.result) || 0), 0);
+      const others = np.rows.filter((r) => !r.draft && (r.kind === "cur" ? !r.del : r.checked)).reduce((a, r) => a + (npMin(r.result) || 0), 0);
       const units = Math.max(0, Math.round((target - others) / 5)), total = rows.reduce((a, r) => a + r.draft, 0);
       const exact = rows.map((r) => r.draft / total * units), base = exact.map(Math.floor);
       let rest = units - base.reduce((a, b) => a + b, 0);
@@ -1201,11 +1270,12 @@ $("np-body").addEventListener("click", (e) => {
   }
 });
 $("np-save").onclick = async () => {
-  const on = np.rows.filter((r) => r.kind === "cur" || r.checked);
+  const on = np.rows.filter((r) => r.kind === "cur" ? !r.del : r.checked);
   if (on.some((r) => npMin(r.plan) == null || npMin(r.result) == null)) { np.msg = "時間の形が不正な行があります（例 1:30）"; np.msgCls = "err"; npRender(); return; }
   if (on.some((r) => r.kind === "add" && !r.name.trim())) { np.msg = "業務名が空の行があります"; np.msgCls = "err"; npRender(); return; }
   const body = { date: np.date,
-    updates: np.rows.filter((r) => r.kind === "cur").map((r) => ({ id: r.id, plan: r.plan.trim(), result: r.result.trim(), notes: r.notes })),
+    deletes: np.rows.filter((r) => r.kind === "cur" && r.del).map((r) => r.id),
+    updates: np.rows.filter((r) => r.kind === "cur" && !r.del).map((r) => ({ id: r.id, plan: r.plan.trim(), result: r.result.trim(), notes: r.notes })),
     adds: np.rows.filter((r) => r.kind === "add" && r.checked).map((r) => ({ service_name: r.name.trim(), plan: r.plan.trim(), result: r.result.trim(), notes: r.notes, ...(r.ids || {}) })) };
   const post = async (b) => (await fetch("/api/nippo", { method: "POST", headers: { "Content-Type": "application/json", "X-Dashboard": "1" }, body: JSON.stringify(b) })).json();
   np.busy = true; np.msg = "送る内容を確かめています…"; np.msgCls = ""; npRender();
@@ -1229,6 +1299,179 @@ let downOnNpOverlay = false;
 $("np-modal").addEventListener("mousedown", (e) => { downOnNpOverlay = e.target.id === "np-modal"; });
 $("np-modal").addEventListener("click", (e) => { if (e.target.id === "np-modal" && downOnNpOverlay) npClose(); downOnNpOverlay = false; });
 
+
+// ---- tmux の枠に送る: チケット番号を選んで、入力待ちの枠の Claude / Codex に「/ct-redmine 番号…」を打ち込む ----
+const snd = { open: false, tickets: [], slot: null, launch: null, q: "", msg: "", msgCls: "", busy: false, timer: null };
+// 停止中の枠で起動できる CLI（サーバーの CLI_MODES と同じ）
+const SND_LAUNCH = [["claude", "new", "Claude（新規）"], ["claude", "continue", "Claude（前回の続き）"], ["codex", "new", "Codex（新規）"], ["codex", "resume", "Codex（前回の続き）"]];
+const sndCmd = () => $("send-cmd").value.trim();
+const sndFree = () => $("send-free").value.replace(/\s+/g, " ").trim();  // 改行は空白にして1行で送る
+const sndText = () => [sndCmd(), ...snd.tickets, sndFree()].filter(Boolean).join(" ");
+// コマンドの候補（全スキル）。欄をクリックすると全部出し、打つと名前・説明で絞る
+let sndSkills = null, sndCmdOpen = false, sndCmdQ = "", sndCmdIdx = -1, sndTkIdx = -1;
+// 候補の一覧を ↓↑ で動かす。box の中の候補のうち idx 番目に印を付け、見える位置までスクロールする
+function sndMark(box, idx) {
+  const items = [...box.querySelectorAll(".send-cand")];
+  items.forEach((b, i) => b.classList.toggle("sel", i === idx));
+  if (items[idx]) items[idx].scrollIntoView({ block: "nearest" });
+  return items;
+}
+function sndMove(box, idx, key) {
+  const n = box.querySelectorAll(".send-cand").length;
+  if (!n) return -1;
+  return key === "ArrowDown" ? (idx + 1) % n : (idx <= 0 ? n - 1 : idx - 1);
+}
+async function sndLoadSkills() {
+  if (sndSkills) return;
+  try { sndSkills = (await (await fetch("/api/skills")).json()).skills || []; } catch (e) { sndSkills = []; }
+  sndRenderCmds();
+}
+function sndRenderCmds() {
+  const box = $("send-cmd-list");
+  box.hidden = !sndCmdOpen;
+  if (!sndCmdOpen) return;
+  if (!sndSkills) { box.innerHTML = `<div class="empty">読み込んでいます…</div>`; return; }
+  const words = sndCmdQ.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const rows = sndSkills.filter((k) => words.every((w) => `${k.cmd} ${k.desc}`.toLowerCase().includes(w)));
+  box.innerHTML = rows.map((k) => `<button class="send-cand" data-cmd="${esc(k.cmd)}" title="${esc(k.desc)}"><b>${esc(k.cmd)}</b> <span>${esc(k.desc)}</span></button>`).join("")
+    || `<div class="empty">該当するコマンドはありません（このまま送ることもできます）</div>`;
+  sndMark(box, sndCmdIdx);
+}
+function sndPickCmd(cmd) {
+  $("send-cmd").value = cmd; sndCmdOpen = false; sndCmdIdx = -1; sndRenderCmds(); sndRender(); $("send-cmd").blur();
+}
+function sndAdd(n) { n = String(n); if (/^\d{4,6}$/.test(n) && !snd.tickets.includes(n)) snd.tickets.push(n); }
+function sndRender() {
+  const subj = (n) => { const i = npIssues().find((x) => String(x.id) === n); return i ? i.subject : ""; };
+  $("send-chips").innerHTML = snd.tickets.length ? snd.tickets.map((n) =>
+    `<span class="send-chip" title="${esc(subj(n))}"><span><b>#${n}</b> ${esc(subj(n))}</span><button data-rm="${n}" title="外す">×</button></span>`).join("")
+    : `<span class="empty">下の欄で探して足してください</span>`;
+  const words = snd.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const seen = new Set();  // 担当外のチケットは一覧と today_extra の両方にあるので、番号で1つにまとめる
+  const cands = words.length ? npIssues().filter((i) => !seen.has(i.id) && seen.add(i.id) && !snd.tickets.includes(String(i.id)) && words.every((w) => `#${i.id} ${i.subject}`.toLowerCase().includes(w))).slice(0, 8) : [];
+  $("send-cands").innerHTML = cands.map((i) => `<button class="send-cand" data-add="${i.id}"><b>#${i.id}</b> ${esc(i.subject)}</button>`).join("")
+    || (words.length ? `<div class="empty">一覧に該当なし${/^\d{4,6}$/.test(snd.q.trim()) ? "（Enter でこの番号を足せます）" : ""}</div>` : "");
+  sndMark($("send-cands"), sndTkIdx);
+  // 送り先: 入力待ち（idle）か停止中（stopped）の枠を選べる。選んでいた枠がどちらでもなくなったら選択を外す
+  const slots = mini.slots || [], can = (s) => s.state === "idle" || s.state === "stopped";
+  if (snd.slot && !slots.some((s) => s.slot === snd.slot && can(s))) snd.slot = null;
+  $("send-slots").innerHTML = slots.length ? slots.map((s) =>
+    `<button class="send-slot${snd.slot === s.slot ? " on" : ""}${s.state === "stopped" ? " stopped" : ""}" data-slot="${s.slot}" ${can(s) ? "" : "disabled"} title="${esc(cellTip(s))}">[${s.slot}] ${esc(s.env)} ${esc(s.kind || "")}・${PANE_STATES[s.state] || esc(s.state)}${s.ticket ? ` #${esc(s.ticket)}` : ""}</button>`).join("")
+    : `<div class="empty">tmux の枠が見つかりません</div>`;
+  // 停止中の枠を選んだら、起動する CLI を選ぶ（既定はその枠の種類の新規）
+  const sel = slots.find((s) => s.slot === snd.slot), stopped = !!sel && sel.state === "stopped";
+  if (!stopped) snd.launch = null;
+  else if (!snd.launch) snd.launch = { kind: String(sel.slot_kind || "").startsWith("codex") ? "codex" : "claude", mode: "new" };
+  $("send-launch").hidden = !stopped;
+  $("send-launch").innerHTML = stopped ? `<span class="send-label" style="margin:0">[${sel.slot}] で起動する:</span>` + SND_LAUNCH.map(([k, m, label]) =>
+    `<button data-lk="${k}" data-lm="${m}" class="${snd.launch.kind === k && snd.launch.mode === m ? "on" : ""}">${label}</button>`).join("") : "";
+  $("send-preview").textContent = sndText() || "（コマンドを選ぶと、ここに送る文が出ます）";
+  $("send-meta").textContent = snd.tickets.length ? `${snd.tickets.length} 件` : "";
+  $("send-msg").textContent = snd.msg; $("send-msg").className = `np-msg ${snd.msgCls}`;
+  const cmdOk = sndCmd() ? /^\/[a-z][a-z0-9:-]{1,40}$/.test(sndCmd()) && !/[-:]$/.test(sndCmd()) : !!sndFree();  // "/ct-" のような書きかけは送らない
+  $("send-go").disabled = snd.busy || !snd.slot || !cmdOk;
+}
+// slot = 枠の画面から開いたときの送り先。cmdPrefix = コマンド欄に入れておく書きかけ（枠の画面の「作業依頼」は "/ct-" で止めておく）
+function sndOpen(ticket, slot, cmdPrefix) {
+  snd.tickets = []; snd.q = ""; snd.msg = ""; snd.msgCls = ""; snd.slot = slot || null; snd.launch = null;
+  $("send-title").textContent = cmdPrefix ? `作業依頼${slot ? ` [${slot}]` : ""}` : "tmux の枠に送る";
+  if (ticket) sndAdd(ticket);
+  // Redmine・日報から開いたときはいつも /ct-redmine（前に送ったコマンドは引き継がない）
+  const cmd = cmdPrefix || "/ct-redmine";
+  try { localStorage.removeItem("dd_send_cmd"); } catch (e) {}  // 以前の版が覚えた値を消す
+  $("send-cmd").value = cmd; $("send-q").value = ""; $("send-free").value = "";
+  snd.open = true; $("send-modal").classList.add("open");
+  if (!rmData) loadRedmine().then(sndRender);
+  clearInterval(snd.timer); snd.timer = setInterval(() => { if (snd.open && !snd.busy) sndRender(); }, 3000);  // 枠の状態を追う
+  sndRender();
+  if (cmdPrefix) {  // 書きかけの続きをすぐ打てるよう、コマンド欄の末尾にカーソルを置き、その書きかけで候補を絞る
+    sndKeepCmd = true; $("send-cmd").focus();
+    try { $("send-cmd").setSelectionRange(cmd.length, cmd.length); } catch (e) {}
+  } else $("send-q").focus();
+}
+function sndHide() { snd.open = false; clearInterval(snd.timer); $("send-modal").classList.remove("open"); }
+// 送る画面は履歴に積まない（下の画面＝日報・Redmine の一覧・枠の画面の「戻る」と混ざらないように）。
+// 「← 戻る」・Esc・外側クリックは送る画面だけ閉じる。ブラウザの戻るは下の画面ごと閉じる
+function sndClose() { if (snd.open) sndHide(); }
+window.addEventListener("popstate", sndHide);
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !snd.open) return;
+  e.stopImmediatePropagation();
+  if (sndCmdOpen) { sndCmdOpen = false; sndCmdIdx = -1; sndRenderCmds(); } else sndClose();  // コマンドの候補が出ていれば、まず候補だけ閉じる
+}, true);
+document.addEventListener("click", (e) => { const b = e.target.closest("button.rm-send"); if (b) sndOpen(b.dataset.ticket); });
+$("send-open").onclick = () => sndOpen();
+$("send-back").onclick = (e) => { e.preventDefault(); sndClose(); };
+$("send-q").addEventListener("input", (e) => { snd.q = e.target.value; sndTkIdx = -1; sndRender(); });
+$("send-q").addEventListener("keydown", (e) => {
+  if (e.isComposing) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault(); sndTkIdx = sndMove($("send-cands"), sndTkIdx, e.key); sndMark($("send-cands"), sndTkIdx); return;
+  }
+  if (e.key !== "Enter") return;
+  const items = [...$("send-cands").querySelectorAll("[data-add]")], v = snd.q.trim().replace(/^#/, "");
+  // ↓↑ で選んだ候補 → 番号そのもの → 先頭の候補、の順で足す
+  if (items[sndTkIdx]) sndAdd(items[sndTkIdx].dataset.add); else if (/^\d{4,6}$/.test(v)) sndAdd(v); else if (items[0]) sndAdd(items[0].dataset.add); else return;
+  snd.q = ""; sndTkIdx = -1; $("send-q").value = ""; sndRender();
+});
+$("send-free").addEventListener("input", sndRender);
+$("send-cmd").addEventListener("input", (e) => { sndCmdQ = e.target.value; sndCmdOpen = true; sndCmdIdx = -1; sndRenderCmds(); sndRender(); });
+$("send-cmd").addEventListener("keydown", (e) => {
+  if (e.isComposing) return;
+  const box = $("send-cmd-list");
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if (!sndCmdOpen) { sndCmdOpen = true; sndRenderCmds(); }
+    sndCmdIdx = sndMove(box, sndCmdIdx, e.key); sndMark(box, sndCmdIdx);
+  } else if (e.key === "Enter") {
+    const items = [...box.querySelectorAll("[data-cmd]")], pick = items[sndCmdIdx] || (items.length === 1 ? items[0] : null);
+    e.preventDefault();
+    if (sndCmdOpen && pick) sndPickCmd(pick.dataset.cmd); else e.target.blur();  // 候補を選んでいなければ、打った文のまま確定する
+  } else if (e.key === "Escape" && sndCmdOpen) {
+    e.stopPropagation(); sndCmdOpen = false; sndCmdIdx = -1; sndRenderCmds();  // 候補だけ閉じる（画面は閉じない）
+  }
+});
+let sndKeepCmd = false;  // true のフォーカスは、欄の中身を選択せず、中身で候補を絞る（「作業依頼」で開いたとき）
+$("send-cmd").addEventListener("focus", (e) => {
+  if (sndKeepCmd) { sndKeepCmd = false; sndCmdQ = e.target.value; } else { sndCmdQ = ""; e.target.select(); }
+  sndCmdIdx = -1; sndCmdOpen = true; sndLoadSkills(); sndRenderCmds();
+});
+$("send-cmd").addEventListener("blur", () => setTimeout(() => { sndCmdOpen = false; sndRenderCmds(); }, 200));  // 候補のクリックを先に通す
+$("send-cmd-list").addEventListener("mousedown", (e) => {
+  const b = e.target.closest("[data-cmd]"); if (!b) return;
+  e.preventDefault();
+  sndPickCmd(b.dataset.cmd);
+});
+$("send-modal").addEventListener("click", (e) => {
+  const add = e.target.closest("[data-add]"), rm = e.target.closest("[data-rm]"), slot = e.target.closest("[data-slot]"), lk = e.target.closest("[data-lk]");
+  if (lk) { snd.launch = { kind: lk.dataset.lk, mode: lk.dataset.lm }; sndRender(); }
+  else if (add) { sndAdd(add.dataset.add); snd.q = ""; $("send-q").value = ""; sndRender(); $("send-q").focus(); }
+  else if (rm) { snd.tickets = snd.tickets.filter((n) => n !== rm.dataset.rm); sndRender(); }
+  else if (slot && !slot.disabled) { snd.slot = Number(slot.dataset.slot); snd.launch = null; sndRender(); }
+  if ((lk || rm || slot) && document.activeElement && document.activeElement.tagName === "BUTTON") document.activeElement.blur();
+});
+// どこにもフォーカスが無いときの Enter は「送る」（入力欄・ボタンにフォーカスがある間は、その欄の Enter のまま）
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.isComposing || !snd.open || snd.busy) return;
+  const a = document.activeElement;
+  if (a && a !== document.body && a !== document.documentElement) return;
+  if (!$("send-go").disabled) { e.preventDefault(); $("send-go").click(); }
+});
+$("send-go").onclick = async () => {
+  snd.busy = true; snd.msg = snd.launch ? "起動してから送ります…（1分ほどかかることがあります）" : "送っています…"; snd.msgCls = ""; sndRender();
+  try {
+    const res = await (await fetch("/api/send", { method: "POST", headers: { "Content-Type": "application/json", "X-Dashboard": "1" },
+      body: JSON.stringify({ slot: snd.slot, cmd: sndCmd(), tickets: snd.tickets, free: sndFree(), ...(snd.launch ? { launch: snd.launch } : {}) }) })).json();
+    if (res.error) throw new Error(res.error);
+    snd.msg = res.message; snd.msgCls = res.ok ? "ok" : "err";
+    refreshPanes();
+  } catch (e) { snd.msg = e.message || "Mac に接続できません"; snd.msgCls = "err"; }
+  snd.busy = false; sndRender();
+};
+let downOnSendOverlay = false;
+$("send-modal").addEventListener("mousedown", (e) => { downOnSendOverlay = e.target.id === "send-modal"; });
+$("send-modal").addEventListener("click", (e) => { if (e.target.id === "send-modal" && downOnSendOverlay) sndClose(); downOnSendOverlay = false; });
+
 async function loadRedmine(force) {
   try {
     const d = await (await fetch(`/api/redmine${force ? "?refresh=1" : ""}`)).json();
@@ -1239,7 +1482,9 @@ async function loadRedmine(force) {
     $("redmine-more").style.display = d.issues.length > 10 || Object.keys((d.today || {}).tickets || {}).length ? "" : "none";
     const t = new Date(d.fetched_at * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
     const mineN = d.mine_count ?? d.issues.length, recentN = d.issues.length - mineN;
-    $("redmine-meta").textContent = `${mineN} 件${recentN > 0 ? `＋担当外・完了 ${recentN} 件` : ""}・Redmine は ${t} 時点（5分ごとに取り直し）`;
+    // 下のボタンが1行に収まるよう短く出し、内訳はマウスを乗せたときに出す
+    $("redmine-meta").textContent = `${mineN}${recentN > 0 ? `＋${recentN}` : ""} 件・${t} 時点`;
+    $("redmine-meta").title = `自分の担当（未完了）${mineN} 件${recentN > 0 ? `＋担当外・完了済みで直近に作業したもの ${recentN} 件` : ""}。Redmine は ${t} 時点（5分ごとに取り直し）`;
     if (rmOpen) renderRmAll();
   } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
 }

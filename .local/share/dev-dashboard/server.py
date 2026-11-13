@@ -829,6 +829,86 @@ def cli_stop(n):
     return {"ok": False, "message": "停止を確認できませんでした。画面を見てください"}, 200
 
 
+SEND_CMD = re.compile(r"/[a-z][a-z0-9:-]{1,40}")
+SEND_STATES = {"busy": "処理中", "wait": "確認待ち", "stopped": "停止中"}
+
+
+skills_cache = {"at": 0, "rows": []}
+
+
+def skill_list():
+    """送る画面のコマンドの候補: 各環境の .claude/skills・.claude/commands と ~/.claude/skills のスキル名と説明。10 分覚える。"""
+    if skills_cache["rows"] and time.time() - skills_cache["at"] < 600:
+        return skills_cache["rows"]
+    roots = [os.path.join(HOME, ".claude")] + [os.path.join(HOME, "www", d, ".claude") for d in ENV_DIRS]
+    found = {}
+    for root in roots:
+        files = glob.glob(os.path.join(root, "skills", "*", "SKILL.md")) + glob.glob(os.path.join(root, "commands", "*.md"))
+        for path in files:
+            name = os.path.basename(os.path.dirname(path)) if path.endswith("SKILL.md") else os.path.basename(path)[:-3]
+            try:
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    head = f.read(4000)
+            except OSError:
+                continue
+            m = re.search(r"^name:\s*(.+)$", head, re.M)
+            name = (m.group(1).strip().strip("'\"") if m else name)
+            d = re.search(r"^description:\s*(.+)$", head, re.M)
+            if SEND_CMD.fullmatch("/" + name) and name not in found:
+                found[name] = (d.group(1).strip().strip("'\"") if d else "")[:160]
+    rows = [{"cmd": "/" + n, "desc": found[n]} for n in sorted(found)]
+    skills_cache.update(at=time.time(), rows=rows)
+    return rows
+
+
+def wait_ready(pane_id, timeout=60):
+    """起動した CLI が入力を受け付けるまで待つ: 画面の表示が 2 秒続けて変わらなくなったら準備できたとみなす（最短 4 秒）。"""
+    start, prev, stable = time.time(), None, 0
+    while time.time() - start < timeout:
+        time.sleep(1)
+        cur = tmux("capture-pane", "-p", "-t", pane_id).stdout
+        stable = stable + 1 if cur == prev and cur.strip() else 0
+        prev = cur
+        if stable >= 2 and time.time() - start >= 4:
+            return True
+    return False
+
+
+def slot_send(n, cmd, tickets, launch=None, free=""):
+    """[n] の枠の Claude / Codex に「<スラッシュコマンド> <チケット番号…>」を打ち込んで Enter を押す。入力待ちの枠だけ。
+
+    止まっている枠は、launch = (kind, mode) があれば先にその CLI を起動し、入力できるようになってから送る。
+
+    送る文は「コマンド名 チケット番号… 自由な文」。自由な文は1行だけ（改行は Enter になって途中で送られるので空白にする）。
+    Enter が効かないことがあるので、動き出さなければ Enter をもう1回だけ送る。
+    """
+    p = slot_pane(n)
+    if not p:
+        return {"error": f"[{n}] の枠が見つかりません"}, 404
+    text = " ".join(x for x in (cmd, *tickets, free) if x)
+    if p["state"] == "stopped" and launch:
+        body, code = cli_launch(n, *launch)
+        if code != 200:
+            return body, code
+        if not body.get("ok") or not wait_ready(p["id"]):
+            return {"ok": False, "message": f"{p['title']} を起動しましたが、入力できる状態を確認できませんでした。「{text}」は送っていません"}, 200
+        p = slot_pane(n) or p
+    if p["state"] != "idle":
+        return {"error": f"{p['title']} は{SEND_STATES.get(p['state'], p['state'])}です。入力待ちの枠か、起動する CLI を選んだ停止中の枠にだけ送れます"}, 409
+    tmux("send-keys", "-t", p["id"], "-l", "--", text)  # -- : 文が - で始まっても tmux のオプションと読ませない
+    time.sleep(0.5)
+    tmux("send-keys", "-t", p["id"], "Enter")
+    for attempt in range(2):
+        for _ in range(8):
+            time.sleep(0.5)
+            now = slot_pane(n)
+            if now and now["state"] != "idle":
+                return {"ok": True, "message": f"{p['title']} に「{text}」を送りました"}, 200
+        if attempt == 0:
+            tmux("send-keys", "-t", p["id"], "Enter")
+    return {"ok": False, "message": f"{p['title']} に「{text}」を送りましたが、動き出しを確認できませんでした。画面を見てください"}, 200
+
+
 LINK_URL = re.compile(r"https?://[^\s<>()\[\]{}\"'`|*、。，）」』]+")  # * は Markdown の太字なので URL に含めない
 LINK_DAYS = 7
 ENV_DIRS = {"ticket_v2": "env1", "ticket_v2_second": "env2", "ticket_v2_third": "env3", "ticket_v2_fourth": "env4"}
@@ -1793,7 +1873,7 @@ def run_action(action, env, comp):
 
 # --- 日報（HRMOS勤怠 p.ieyasu.co）-----------------------------------------------------------
 # 公開 API ではなく、画面と同じフォームを送る。HRMOS 側の画面が変わると動かなくなる。
-# 更新は、いまある行を全部（変えていない行はいまの値のまま）と、足す行を送る。送らなかった行は HRMOS 側で時間が 0:00 になる。行の削除・メール送信はしない。
+# 更新は、いまある行を全部（変えていない行はいまの値のまま）と、足す行を送る。送らなかった行は HRMOS 側で時間が 0:00 になる。行の削除は _destroy=1 で送る。メール送信はしない。
 HRMOS_BASE = "https://p.ieyasu.co"
 HRMOS_TOKEN = re.compile(r'name="authenticity_token"\s+value="([^"]+)"')
 HRMOS_ROW = re.compile(r"daily_report\[reports_attributes\]\[(\d+)\]\[(\w+)\]")
@@ -2018,7 +2098,7 @@ def nippo_view(date_text):
 
 
 def nippo_save(req):
-    """日報を登録する。updates = いまある行の変更（id・plan・result・notes）、adds = 足す行。dry なら送る内容だけ返す。"""
+    """日報を登録する。updates = いまある行の変更（id・plan・result・notes）、adds = 足す行、deletes = 削除する行の id。dry なら送る内容だけ返す。"""
     try:
         d = nippo_date(req.get("date"))
         updates, adds = req.get("updates") or [], req.get("adds") or []
@@ -2043,8 +2123,17 @@ def nippo_save(req):
             # 🚨 いまある行は「全部」送る（変えていない行も、いまの予定・実績・備考をそのまま付ける）。
             #    HRMOS は送られてこなかった行の時間を 0:00 に書き換える（2026-11-14 に、変えた行だけ送って他の行の時間を消した）。
             #    ブラウザの画面も全行を送っている。
+            deletes = {str(x) for x in (req.get("deletes") or [])}
+            if deletes - set(known):
+                raise ValueError("削除する行が HRMOS にありません（画面を取り直してください）")
             changed = 0
             for r in cur["rows"]:
+                if r["id"] in deletes:  # 行の削除は、画面の「削除」と同じ _destroy=1 を送る
+                    data += [(key % (n, "id"), r["id"]), (key % (n, "_destroy"), "1")]
+                    summary.append(f"削除 {r['service_name'][:40]}（予定 {hrmos_time(r['plan'])}・実績 {hrmos_time(r['result'])}）")
+                    changed += 1
+                    n += 1
+                    continue
                 u = wanted.get(r["id"], {})
                 new = {"plan_time_str": hrmos_time(u.get("plan"), hrmos_time(r["plan"])), "result_time_str": hrmos_time(u.get("result"), hrmos_time(r["result"])),
                        "notes": str(u.get("notes", r["notes"])).replace("\r\n", "\n")[:2000]}
@@ -2054,7 +2143,7 @@ def nippo_save(req):
                 new["notes"] = new["notes"].replace("\n", "\r\n")  # 備考の改行はブラウザが送る形（CRLF）にする
                 data += [(key % (n, "id"), r["id"])] + [(key % (n, k), v) for k, v in new.items()]
                 n += 1
-            names = {r["service_name"].strip() for r in cur["rows"]}
+            names = {r["service_name"].strip() for r in cur["rows"] if r["id"] not in deletes}
             for a in adds:
                 name = str(a.get("service_name") or "").strip()[:255]
                 if not name:
@@ -2076,10 +2165,14 @@ def nippo_save(req):
             if req.get("dry"):
                 return {"dry": True, "changed": changed, "sent_rows": n, "summary": summary, "fields": [[k, v] for k, v in data if k != "authenticity_token"]}, 200
             _, page = _hrmos_open(f"/daily_reports/{day_id}", data)
+            # 削除を頼んだ行が本当に消えたかを読み直して確かめる
+            left = [r["service_name"][:40] for r in hrmos_day(day_id)["rows"] if r["id"] in deletes] if deletes and "登録が完了しました" in page else []
     except ValueError as e:
         return {"error": str(e)}, 400
     except Exception as e:
         return {"error": f"HRMOS に登録できませんでした: {e}"}, 502
+    if "登録が完了しました" in page and left:
+        return {"error": "登録はされましたが、次の行が削除されずに残っています: " + " / ".join(left)}, 409
     if "登録が完了しました" in page:
         return {"ok": True, "changed": changed, "summary": summary, "url": f"{HRMOS_BASE}/daily_reports/{day_id}"}, 200
     errs = re.findall(r"\d+行目：[^<\n]+", page) or (["エラーが発生しました。管理者にお問合せください。"] if "エラーが発生しました" in page else [])
@@ -2175,6 +2268,8 @@ class Handler(BaseHTTPRequestHandler):
                 redmine_cache["at"] = 0
                 refresh_prs()
             self.send_json(redmine_view())
+        elif self.path == "/api/skills":
+            self.send_json({"skills": skill_list()})
         elif self.path == "/api/nippo":
             date = self.query.get("date", ["today"])[0]
             if date != "today" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
@@ -2218,6 +2313,36 @@ class Handler(BaseHTTPRequestHandler):
             if not 1 <= slot <= 12 or any(not 1 <= t <= 12 or t == slot for t in targets):
                 return self.send_json({"error": "連動先は自分以外の 1〜12 です"}, 400)
             body, code = set_link(slot, targets)
+            return self.send_json(body, code)
+        if self.path == "/api/send":
+            try:
+                slot = int(req.get("slot"))
+            except (TypeError, ValueError):
+                return self.send_json({"error": "slot が不正です"}, 400)
+            cmd, tickets = str(req.get("cmd") or ""), req.get("tickets")
+            if not 1 <= slot <= 12:
+                return self.send_json({"error": "slot は 1〜12 です"}, 400)
+            # 自由な文: 1行にそろえ（改行・タブは空白）、制御文字は落とす。1000 文字まで
+            free = re.sub(r"[\x00-\x1f\x7f]", "", re.sub(r"[\r\n\t]+", " ", str(req.get("free") or ""))).strip()
+            if len(free) > 1000:
+                return self.send_json({"error": "自由入力は 1000 文字までです"}, 400)
+            if cmd and not SEND_CMD.fullmatch(cmd):
+                return self.send_json({"error": "コマンドは /ct-redmine のような形（/ と英小文字・数字・-）だけです"}, 400)
+            if not cmd and not free:
+                return self.send_json({"error": "コマンドか自由入力のどちらかを入れてください"}, 400)
+            if not isinstance(tickets, list) or len(tickets) > 20 or not all(re.fullmatch(r"\d{4,6}", str(t)) for t in tickets):
+                return self.send_json({"error": "チケット番号（4〜6桁）は 20 件までです"}, 400)
+            launch = req.get("launch")
+            if launch is not None:
+                launch = (launch.get("kind"), launch.get("mode")) if isinstance(launch, dict) else (None, None)
+                if launch[1] not in CLI_MODES.get(launch[0], {}):
+                    return self.send_json({"error": "起動する CLI の指定が不正です"}, 400)
+            if not cli_lock.acquire(blocking=False):  # 同じ枠に重ねて打たないよう、起動・停止・送信は1つずつ
+                return self.send_json({"error": "別の起動・停止・送信を実行中です"}, 409)
+            try:
+                body, code = slot_send(slot, cmd, [str(t) for t in tickets], launch, free)
+            finally:
+                cli_lock.release()
             return self.send_json(body, code)
         if self.path == "/api/nippo":
             date = req.get("date") or "today"
