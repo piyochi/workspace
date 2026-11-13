@@ -50,7 +50,7 @@ DEFAULT_CONFIG = {
     "stale_minutes": 30,
 }
 
-ENVS = ("env1", "env2")
+ENVS = ("env1", "env2", "env3", "env4")
 COMPS = ("api", "app", "sqs", "all")
 ACTIONS = {"up": "起動", "down": "停止", "restart": "再起動"}
 STATUS_LINE = re.compile(r"^([●◐○])\s+(env\d)\s+(api|app|sqs)")

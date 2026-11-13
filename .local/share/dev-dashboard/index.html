@@ -35,6 +35,12 @@ h1 { font-size: 15px; margin: 0; }
 .sec > summary::before { content: "▸"; color: var(--muted); font-size: 11px; transition: transform .15s; }
 .sec[open] > summary::before { transform: rotate(90deg); }
 .sec[open] > summary { margin-bottom: 6px; }
+.job-log { margin-top: 6px; }
+.job-log > summary { list-style: none; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.job-log > summary::-webkit-details-marker { display: none; }
+.job-log > summary::before { content: "▸"; font-size: 11px; transition: transform .15s; }
+.job-log[open] > summary::before { transform: rotate(90deg); }
+.job-log .job-state { color: var(--text); }
 h2 { font-size: 12px; color: var(--muted); margin: 0; font-weight: 600; letter-spacing: .04em; }
 .ticket { font-weight: 700; color: var(--accent); }
 .env { display: flex; align-items: center; gap: 10px; padding: 6px 0; flex-wrap: wrap; }
@@ -298,12 +304,21 @@ async function refresh() {
   }
 }
 
+// 実行ログ（local-server の出力）は普段は閉じておく。開閉はこのブラウザに記憶する
+let jobOpen = (() => { try { return localStorage.getItem("dd_job_open") === "1"; } catch (e) { return false; } })();
+
 function renderJob(j) {
   window.__job = j;
   if (!j.target) { $("job").innerHTML = ""; return; }
   const state = j.running ? "実行中…" : j.rc === 0 ? "✅ 完了" : "⚠️ 失敗あり";
-  $("job").innerHTML = `<pre><b>${esc(j.target)}: ${state}</b>\n${esc(j.output)}</pre>`;
-  const pre = $("job").querySelector("pre"); pre.scrollTop = pre.scrollHeight;
+  $("job").innerHTML = `<details class="job-log"${jobOpen ? " open" : ""}><summary>実行ログ <span class="job-state">${esc(j.target)}: ${state}</span></summary><pre>${esc(j.output)}</pre></details>`;
+  const d = $("job").querySelector("details"), pre = d.querySelector("pre");
+  pre.scrollTop = pre.scrollHeight;
+  d.addEventListener("toggle", () => {
+    jobOpen = d.open;
+    try { localStorage.setItem("dd_job_open", jobOpen ? "1" : "0"); } catch (e) { /* 記憶できなくても表示は続ける */ }
+    if (d.open) pre.scrollTop = pre.scrollHeight;
+  });
 }
 
 async function pollJob() {

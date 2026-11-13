@@ -11,6 +11,9 @@ windows:
   - ~/bin/claude-monitor --no-window --name monitor -f ~/.tmuxp/ticket_v2_project/monitor.txt -l left -w 65% -g 4x3
   window_name: monitor
 - panes:
+  - ~/bin/claude-monitor --no-window --name envs -f ~/.tmuxp/ticket_v2_project/envs.txt -l left -w 50% -g 2x2
+  window_name: envs
+- panes:
   - ~/bin/claude-monitor --no-window --name env1 -f ~/.tmuxp/ticket_v2_project/env1.txt -l left -w 65% -g 4x3
   window_name: env1
 - panes:
@@ -18,5 +21,10 @@ windows:
   start_directory: ~/www/ticket_v2_second
   window_name: env2
 - panes:
-  - ~/bin/claude-monitor --no-window --name envs -f ~/.tmuxp/ticket_v2_project/envs.txt -l left -w 50% -g 2x2
-  window_name: envs
+  - ~/bin/claude-monitor --no-window --name env3 -f ~/.tmuxp/ticket_v2_project/env3.txt -l left -w 65% -g 4x3
+  start_directory: ~/www/ticket_v2_third
+  window_name: env3
+- panes:
+  - ~/bin/claude-monitor --no-window --name env4 -f ~/.tmuxp/ticket_v2_project/env4.txt -l left -w 65% -g 4x3
+  start_directory: ~/www/ticket_v2_fourth
+  window_name: env4

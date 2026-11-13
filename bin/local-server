@@ -1,0 +1,233 @@
+#!/bin/bash
+# ============================================================================
+#  local-server — ローカル開発環境（環境1〜4）の api / app サーバーと sqs ワーカーを
+#                 tmux のペインで起動・停止・再起動する
+#
+#  使い方: local-server <up|down|restart|status> [env1|env2|env3|env4|all] [api|app|sqs|all]
+#    既定は all all。例: local-server up env3 sqs / local-server restart env1
+#    all は status / down では env1〜env4、up / restart では env1 env2（4環境を一度に立てるとメモリが足りないため）
+#
+#  仕組み:
+#    - tmuxp（ticket_v2_project）の env1〜env4 タブにある「<env> api server」「<env> app server」
+#      「<env> sqs」ペインを claude-monitor の枠タイトルから探す
+#    - 起動コマンドは ~/.tmuxp/ticket_v2_project/<env>.txt の同じタイトルの行から読む（正本は txt）
+#    - up   … ペインがシェルに戻っていればコマンドを送る。起動順は api → app → sqs
+#              （sqs は api コンテナが動いてから送る）
+#    - down … ペインに Ctrl+C を送る（コンテナは停止するだけで削除しない）。停止順は sqs → app → api
+#              ペインから切り離されて残った sqs ワーカーはコンテナ内で kill -INT する
+#    - 完了は docker のコンテナ・プロセスで確かめる（判定は ~/bin/tmux-server-status と同じ）
+#  終了コード: 0 = すべて期待どおり / 1 = 失敗・時間切れ・ペインが見つからない等があった
+# ============================================================================
+
+set -uo pipefail
+
+ACTION="${1:-}"
+ENVS="${2:-all}"
+COMPS="${3:-all}"
+TXT_DIR="$HOME/.tmuxp/ticket_v2_project"
+UP_TIMEOUT=180
+DOWN_TIMEOUT=90
+RC=0
+SENT=" "   # このスクリプトがコマンドを送った「env:comp」。待って確かめるのはこれだけ
+
+usage() { sed -n '4,7p' "$0" | sed 's/^#  //'; exit 1; }
+[[ "$ACTION" =~ ^(up|down|restart|status)$ ]] || usage
+ALL_ENVS="env1 env2 env3 env4"
+case "$ENVS" in
+  all) if [[ "$ACTION" == up || "$ACTION" == restart ]]; then ENVS="env1 env2"; else ENVS="$ALL_ENVS"; fi ;;
+  env1|env2|env3|env4) ;;
+  *) usage ;;
+esac
+case "$COMPS" in all) COMPS="api app sqs" ;; api|app|sqs) ;; *) usage ;; esac
+
+log()  { echo "$*"; }
+fail() { echo "⚠️  $*"; RC=1; }
+
+# env1 はコンテナ名に番号が付かない。env2〜 は _<番号>（ticket_v2_api_3_app / ticket_v2_3_f）
+suffix() { [[ "$1" == env1 ]] && echo "" || echo "_${1#env}"; }
+api_container() { echo "ticket_v2_api$(suffix "$1")_app"; }
+app_container() { echo "ticket_v2$(suffix "$1")_f"; }
+comp_title()    { case "$2" in api) echo "$1 api server" ;; app) echo "$1 app server" ;; sqs) echo "$1 sqs" ;; esac; }
+
+container_up() { docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$1"; }
+
+# コンテナ内の sqs ワーカーの PID（コンテナ内の番号）
+sqs_pids() {
+  local c; c=$(api_container "$1")
+  container_up "$c" || return 0
+  docker exec "$c" ps -eo pid,args 2>/dev/null | awk '/sqs:worker|shoryuken/ && !/awk/ {print $1}'
+}
+
+running() {
+  case "$2" in
+    api) container_up "$(api_container "$1")" ;;
+    app) container_up "$(app_container "$1")" ;;
+    sqs) [[ -n "$(sqs_pids "$1")" ]] ;;
+  esac
+}
+
+# claude-monitor の枠タイトルからペイン ID を引く（フォーカス中の枠は FOCUS_IDX を使う。tmux_link.py partner と同じ）
+find_pane() {
+  local env="$1" title="$2" session win n idx
+  session=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -x ticket_v2_project) || return 1
+  win=$(tmux show-environment -t "$session" "CM_${env}_WINDOW_ID" 2>/dev/null | cut -d= -f2) || return 1
+  [[ -n "$win" ]] || return 1
+  n=$(tmux show-environment -t "$session" 2>/dev/null \
+      | grep -E "^CM_${env}_CLI_[0-9]+_TITLE=\[[0-9]+\] ${title}\$" | head -1 \
+      | sed -E "s/^CM_${env}_CLI_([0-9]+)_TITLE=.*/\1/")
+  [[ -n "$n" ]] || return 1
+  if [[ "$(tmux show-environment -t "$session" "CM_${env}_FOCUSED_CLI" 2>/dev/null | cut -d= -f2)" == "$n" ]]; then
+    idx=$(tmux show-environment -t "$session" "CM_${env}_FOCUS_IDX" 2>/dev/null | cut -d= -f2)
+  else
+    idx=$(tmux show-environment -t "$session" "CM_${env}_CLI_${n}_IDX" 2>/dev/null | cut -d= -f2)
+  fi
+  tmux display -p -t "${win}.${idx}" '#{pane_id}' 2>/dev/null
+}
+
+# txt の「dir | cmd | title」行から dir と cmd を取り出す
+read_line() {
+  local env="$1" title="$2"
+  awk -F'|' -v t="$title" '!/^[[:space:]]*#/ && NF>=3 {
+      ti=$NF; gsub(/^[ \t]+|[ \t]+$/, "", ti)
+      if (ti==t) { d=$1; c=$2; for(i=3;i<NF;i++) c=c "|" $i
+        gsub(/^[ \t]+|[ \t]+$/, "", d); gsub(/^[ \t]+|[ \t]+$/, "", c); sub(/^@/, "", c)
+        print d "\t" c; exit } }' "$TXT_DIR/$env.txt"
+}
+
+pane_idle() {
+  local cmd; cmd=$(tmux display -p -t "$1" '#{pane_current_command}' 2>/dev/null)
+  [[ "$cmd" =~ ^-?(zsh|bash|sh)$ ]]
+}
+
+# 動いているのに、起動した枠はシェルに戻っている（docker compose up が落ちた・枠の外で起動した）。
+# コンテナは動き続けるがログが枠に出ず、停止（枠への Ctrl+C）も効かない
+detached() { # detached env comp
+  local pane; pane=$(find_pane "$1" "$(comp_title "$1" "$2")") || return 1
+  pane_idle "$pane"
+}
+
+wait_until() { # wait_until <秒> <up|down> env comp
+  local limit="$1" want="$2" i
+  for ((i = 0; i < limit; i += 3)); do
+    if [[ "$want" == up ]]; then running "$3" "$4" && return 0
+    else running "$3" "$4" || return 0; fi
+    sleep 3
+  done
+  return 1
+}
+
+start_one() {
+  local env="$1" comp="$2" title pane line dir cmd
+  title=$(comp_title "$env" "$comp")
+  pane=$(find_pane "$env" "$title") || pane=""
+  if running "$env" "$comp"; then
+    # api / app が枠から外れていたら、同じ docker compose up を送ってつなぎ直す（動いているコンテナは止めずにログの表示に戻る）
+    if [[ -n "$pane" && "$comp" != sqs ]] && pane_idle "$pane"; then
+      line=$(read_line "$env" "$title")
+      dir=$(eval echo "$(cut -f1 <<<"$line")"); cmd=$(cut -f2 <<<"$line")
+      tmux send-keys -t "$pane" "cd '$dir' && $cmd" Enter
+      log "▶ $title: 枠から外れていたのでつなぎ直しました → $cmd"
+    else
+      log "✅ $title: すでに起動中"
+    fi
+    return
+  fi
+  [[ -n "$pane" ]] || { fail "$title: ペインが見つかりません（tmuxp load ticket_v2_project で開いてください）"; return; }
+  line=$(read_line "$env" "$title")
+  [[ -n "$line" ]] || { fail "$title: $TXT_DIR/$env.txt に起動コマンドがありません"; return; }
+  dir=$(eval echo "$(cut -f1 <<<"$line")"); cmd=$(cut -f2 <<<"$line")
+  pane_idle "$pane" || { fail "$title: ペインで別のコマンドが動いています（$(tmux display -p -t "$pane" '#{pane_current_command}')）。送らずに止めました"; return; }
+  if [[ "$comp" == sqs ]] && ! running "$env" api; then
+    fail "$title: api コンテナが起動していないので送りませんでした"; return
+  fi
+  tmux send-keys -t "$pane" "cd '$dir' && $cmd" Enter
+  log "▶ $title: 送信 → $cmd"
+  SENT+="$env:$comp "
+}
+
+stop_one() {
+  local env="$1" comp="$2" title pane pids
+  title=$(comp_title "$env" "$comp")
+  if ! running "$env" "$comp"; then log "✅ $title: すでに停止"; return; fi
+  pane=$(find_pane "$env" "$title") || pane=""
+  if [[ -n "$pane" ]] && ! pane_idle "$pane"; then
+    tmux send-keys -t "$pane" C-c
+    log "■ $title: Ctrl+C を送信"
+    SENT+="$env:$comp "
+  elif [[ "$comp" == sqs ]]; then
+    pids=$(sqs_pids "$env" | xargs)
+    docker exec "$(api_container "$env")" kill -INT $pids 2>/dev/null
+    log "■ $title: ペインから切り離されたワーカー（コンテナ内 PID $pids）に kill -INT"
+    SENT+="$env:$comp "
+  else
+    fail "$title: ペインの外で起動しています（ペインはシェルに戻っています）。止めていません"
+  fi
+}
+
+check() { # check <up|down> env comp（このスクリプトが送ったものだけ待つ）
+  [[ "$SENT" == *" $2:$3 "* ]] || return 0
+  local title; title=$(comp_title "$2" "$3")
+  local limit=$UP_TIMEOUT; [[ "$1" == down ]] && limit=$DOWN_TIMEOUT
+  if wait_until "$limit" "$1" "$2" "$3"; then
+    [[ "$1" == up ]] && log "✅ $title: 起動しました" || log "✅ $title: 停止しました"
+  else
+    fail "$title: ${limit} 秒待っても$([[ "$1" == up ]] && echo 起動 || echo 停止)を確認できません"
+  fi
+}
+
+has_comp() { [[ " $COMPS " == *" $1 "* ]]; }
+
+# 起動後に api が動いている環境が3つ以上になるなら警告する（1環境 4〜6GB。Docker の上限は 11.67GB）
+warn_memory() {
+  local e n=0 names=""
+  for e in $ALL_ENVS; do
+    if container_up "$(api_container "$e")" || [[ " $ENVS " == *" $e "* ]]; then n=$((n + 1)); names+="$e "; fi
+  done
+  (( n >= 3 )) && log "⚠️  起動後に ${n} 環境（${names% }）が同時に動きます。メモリが足りなくなる恐れがあるので、使っていない環境を止めてください"
+  return 0
+}
+
+do_up() {
+  local env
+  has_comp api && warn_memory
+  for env in $ENVS; do
+    for c in api app; do has_comp "$c" && start_one "$env" "$c"; done
+  done
+  for env in $ENVS; do
+    for c in api app; do has_comp "$c" && check up "$env" "$c"; done
+    if has_comp sqs; then start_one "$env" sqs; check up "$env" sqs; fi
+  done
+}
+
+do_down() {
+  local env
+  for env in $ENVS; do has_comp sqs && stop_one "$env" sqs; done
+  for env in $ENVS; do has_comp sqs && check down "$env" sqs; done
+  for env in $ENVS; do
+    for c in app api; do has_comp "$c" && stop_one "$env" "$c"; done
+  done
+  for env in $ENVS; do
+    for c in app api; do has_comp "$c" && check down "$env" "$c"; done
+  done
+}
+
+do_status() {
+  local env c
+  for env in $ENVS; do
+    for c in $COMPS; do
+      if ! running "$env" "$c"; then log "○ $(comp_title "$env" "$c")"
+      elif detached "$env" "$c"; then log "◐ $(comp_title "$env" "$c")（枠から外れて動いています。起動で枠につなぎ直します）"
+      else log "● $(comp_title "$env" "$c")"; fi
+    done
+  done
+}
+
+docker info >/dev/null 2>&1 || { echo "⚠️  Docker に接続できません（Docker Desktop を起動してください）"; exit 1; }
+
+case "$ACTION" in
+  up)      do_up ;;
+  down)    do_down ;;
+  restart) do_down; [[ $RC -eq 0 ]] && { sleep 2; SENT=" "; do_up; } || fail "停止を確認できなかったので起動はしていません" ;;
+  status)  do_status ;;
+esac
+exit $RC

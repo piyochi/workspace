@@ -1,0 +1,19 @@
+# サーバー・DB コンソールは自動で起動しない（先頭の @ は履歴に積むだけ。↑ で呼び出す）。起動・停止は開発ダッシュボードで行う
+
+# Row 1: シェル
+~/www/ticket_v2_fourth/ticket_v2_api | | env4 ticket_v2_api
+~/www/ticket_v2_fourth/ticket_v2 | | env4 ticket_v2
+~/www/ticket_v2_fourth | | env4 shell
+~/www/ticket_v2_fourth/ticket_v2_api | @docker compose -f docker/docker-compose.yml --env-file docker/.env -p ticket_v2_api_4 up | env4 api server
+
+# Row 2: DB
+~/www/ticket_v2_fourth/ticket_v2_api | @docker compose -f docker/docker-compose.yml -p ticket_v2_api_4 run ticket_v2_api_app mysql ticket_v2_api_4_local -u root -h ticket_v2_api_db -proot | env4 primary
+~/www/ticket_v2_fourth/ticket_v2_api | @docker compose -f docker/docker-compose.yml -p ticket_v2_api_4 run ticket_v2_api_app mysql ticket_v2_api_4_portal_local -u root -h ticket_v2_api_portal_db -proot | env4 portal
+~/www/ticket_v2_fourth/ticket_v2_api | @docker compose -f docker/docker-compose.yml -p ticket_v2_api_4 run ticket_v2_api_app mysql ticket_v2_api_4_promoter_local_6 -u root -h ticket_v2_api_promoter_db -proot | env4 promoter
+~/www/ticket_v2_fourth/ticket_v2 | @docker compose -f docker-compose.yml -p ticket_v2_api_4_f --env-file .env.development up | env4 app server
+
+# Row 3: ワーカー・ログ
+~/www/ticket_v2_fourth/ticket_v2_api | @docker exec -it ticket_v2_api_4_app bundle exec rake sqs:worker | env4 sqs
+~/www/ticket_v2_fourth/ticket_v2_api | tail -f log/development.log | env4 api log
+~/www/ticket_v2_fourth/ticket_v2 | tail -f logs/* | env4 app log
+~/www/ticket_v2_fourth | | env4 free3

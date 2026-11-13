@@ -4,6 +4,6 @@
 ~/www/ticket_v2 | | env1
 ~/www/ticket_v2_second | | env2
 
-# Row 2: 設計・調査
+# Row 2: 設計・調査＋開発（2026-11-13 から開発も可。サーバーは env3 / env4 タブ）
 ~/www/ticket_v2_third | | env3
 ~/www/ticket_v2_fourth | | env4
