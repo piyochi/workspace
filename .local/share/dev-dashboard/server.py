@@ -2097,6 +2097,29 @@ def nippo_view(date_text):
     return out, 200
 
 
+NIPPO_PREV_DAYS = 62  # 「前回の日報をコピー」でさかのぼる日数（HRMOS の画面のコピーは5日前まで）
+
+
+def nippo_prev(date_text):
+    """date より前で、行のある一番近い日の日報（「前回の日報をコピー」の元）。休みの日など行の無い日は飛ばす。"""
+    from datetime import timedelta
+    try:
+        d = nippo_date(date_text)
+        with hrmos_lock:
+            for k in range(1, NIPPO_PREV_DAYS + 1):
+                p = d - timedelta(days=k)
+                try:
+                    day_id = hrmos_day_id(p)
+                except OSError:
+                    continue  # 月の一覧に無い日
+                rows = hrmos_day(day_id)["rows"]
+                if rows:
+                    return {"date": p.isoformat(), "id": day_id, "url": f"{HRMOS_BASE}/daily_reports/{day_id}", "rows": rows}, 200
+    except Exception as e:
+        return {"error": f"HRMOS から前回の日報を取れませんでした: {e}"}, 502
+    return {"error": f"{d:%Y-%m-%d} より前の {NIPPO_PREV_DAYS} 日間に、行のある日報がありません"}, 404
+
+
 def nippo_save(req):
     """日報を登録する。updates = いまある行の変更（id・plan・result・notes）、adds = 足す行、deletes = 削除する行の id。dry なら送る内容だけ返す。"""
     try:
@@ -2275,6 +2298,11 @@ class Handler(BaseHTTPRequestHandler):
             if date != "today" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
                 return self.send_json({"error": "date が不正です"}, 400)
             self.send_json(*nippo_view(date))
+        elif self.path == "/api/nippo/prev":
+            date = self.query.get("date", ["today"])[0]
+            if date != "today" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+                return self.send_json({"error": "date が不正です"}, 400)
+            self.send_json(*nippo_prev(date))
         elif self.path == "/api/redmine/statuses":
             n = self.query.get("ticket", [""])[0]
             if not re.fullmatch(r"\d{1,7}", n):

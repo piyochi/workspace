@@ -1111,20 +1111,24 @@ function npBuild(data, src) {
   const have = new Set(data.rows.map((r) => npTicket(r.service_name)).filter(Boolean));
   const haveName = new Set(data.rows.map((r) => r.service_name.trim()));
   const add = (o) => rows.push({ kind: "add", checked: false, plan: "0:00", result: "0:00", notes: "", draft: 0, sub: "", ...o });
+  if (src) {
+    // 元の日報（次回は今日の日報、「前回の日報をコピー」は行のある一番近い過去の日報）の行のうち、まだ無いもの。
+    // 時間は 0:00 に戻し、備考は引き継ぐ。今日の日報なら、下書き（作業時間）があれば実績に入れておく
+    src.rows.filter((r) => !haveName.has(r.service_name.trim())).forEach((r) => {
+      const n = npTicket(r.service_name), d = np.mode === "today" && n ? ts[n] || 0 : 0;
+      haveName.add(r.service_name.trim()); if (n) have.add(n);
+      add({ group: "copy", checked: true, name: r.service_name, notes: r.notes, sub: [r.project, r.category].filter(Boolean).join("・"),
+        draft: d, result: npFmt(npRound5(d)),
+        ids: { business_partner_id: r.business_partner_id, project_id: r.project_id, service_large_category_id: r.service_large_category_id,
+          service_medium_category_id: r.service_medium_category_id, service_category_id: r.service_category_id } });
+    });
+  }
   if (np.mode === "today") {
     // 今日作業したのに日報に無いチケット（作業時間の多い順）
     const worked = new Set([...Object.keys(ts), ...Object.keys((rmData && rmData.today && rmData.today.tickets) || {})]);
     [...worked].filter((n) => !have.has(n)).sort((a, b) => (ts[b] || 0) - (ts[a] || 0)).forEach((n) => {
       have.add(n);
       add({ group: "miss", checked: true, name: npSubject(n), draft: ts[n] || 0, result: npFmt(npRound5(ts[n] || 0)) });
-    });
-  } else if (src) {
-    // 今日の日報の行のうち、次回の日報にまだ無いもの（時間は 0:00 に戻し、備考は引き継ぐ）
-    src.rows.filter((r) => !haveName.has(r.service_name.trim())).forEach((r) => {
-      haveName.add(r.service_name.trim()); if (npTicket(r.service_name)) have.add(npTicket(r.service_name));
-      add({ group: "copy", checked: true, name: r.service_name, notes: r.notes, sub: [r.project, r.category].filter(Boolean).join("・"),
-        ids: { business_partner_id: r.business_partner_id, project_id: r.project_id, service_large_category_id: r.service_large_category_id,
-          service_medium_category_id: r.service_medium_category_id, service_category_id: r.service_category_id } });
     });
   }
   // Redmine の一覧から選んで足す（まだ無いチケットだけ）
@@ -1170,11 +1174,14 @@ function npRender() {
   const rmShown = rm.filter(([r]) => r.checked || words.every((w) => r.name.toLowerCase().includes(w)));
   body.innerHTML = [
     ts ? `<div class="np-note">⏱ 下書き = 今日（朝4:00以降）Claude・Codex を動かしていた時間をチケットごとに分けたもの（並行は等分・5分単位に丸め）。計 ${npFmt(ts.total)}、うちチケット以外 ${npFmt(ts.other)}。ブラウザ確認や打ち合わせの時間は入りません。</div>` : "",
-    `<div class="np-group">登録済みの行（${np.data.rows.length}）${ts ? `<button id="np-apply">下書きを実績に入れる</button><input type="text" id="np-target" size="5" value="${esc(np.target)}" placeholder="8:00" title="実績の合計をこの時間に合わせて、下書きの割合で配る（空なら下書きのまま）"><span>に合わせて配る${np.data.work_total ? `（HRMOS の総労働時間 ${esc(np.data.work_total)}）` : "（総労働時間は退勤の打刻後に入ります）"}</span>` : ""}</div>`,
+    `<div class="np-group">登録済みの行（${np.data.rows.length}）<button id="np-prev" ${np.busy || np.srcDate ? "disabled" : ""} title="${np.srcDate ? `${np.srcDate} の日報と突き合わせ済みです` : `この日より前で、行のある一番近い日の日報を読み、この日報に無い行だけを足します（最大2か月前まで。時間は 0:00、備考は引き継ぎ）`}">前回の日報から不足分を足す</button>${ts ?`<button id="np-apply">下書きを実績に入れる</button><input type="text" id="np-target" size="5" value="${esc(np.target)}" placeholder="8:00" title="実績の合計をこの時間に合わせて、下書きの割合で配る（空なら下書きのまま）"><span>に合わせて配る${np.data.work_total ? `（HRMOS の総労働時間 ${esc(np.data.work_total)}）` : "（総労働時間は退勤の打刻後に入ります）"}</span>` : ""}</div>`,
     np.data.rows.length ? head + rowsOf((r) => r.kind === "cur") : `<div class="empty">まだ行がありません</div>`,
+    np.mode === "next" || npCopied()
+      ? `<div class="np-group">${np.srcDate ? `${esc(np.srcDate)} の` : "今日の"}日報からコピーする行（${idx.filter(([r]) => r.group === "copy").length}）・時間は 0:00、備考は引き継ぎ</div>${rowsOf((r) => r.group === "copy") || `<div class="empty">コピーする行はありません</div>`}`
+      : "",
     np.mode === "today"
       ? `<div class="np-group">今日作業したのに日報に無いもの（${idx.filter(([r]) => r.group === "miss").length}）</div>${rowsOf((r) => r.group === "miss") || `<div class="empty">不足はありません</div>`}`
-      : `<div class="np-group">今日の日報からコピーする行（${idx.filter(([r]) => r.group === "copy").length}）・時間は 0:00、備考は引き継ぎ</div>${rowsOf((r) => r.group === "copy") || `<div class="empty">コピーする行はありません</div>`}`,
+      : "",
     `<div class="np-group">Redmine から足す（${rm.length}）<input type="search" id="np-q" value="${esc(np.q)}" placeholder="番号・件名で絞る"><button id="np-free">＋ 自由入力の行</button></div>`,
     rowsOf((r) => r.group === "free"),
     rmShown.map(([r, i]) => npRowHtml(r, i)).join("") || `<div class="empty">該当するチケットはありません</div>`,
@@ -1182,6 +1189,7 @@ function npRender() {
   npTotals();
 }
 const npFuture = () => !!(np.data && np.date > np.data.today);
+const npCopied = () => np.rows.some((r) => r.group === "copy");
 function npFit(t) { t.style.height = "auto"; t.style.height = `${t.scrollHeight + 2}px`; }
 function npTotals() {
   document.querySelectorAll("#np-body textarea").forEach(npFit);
@@ -1191,7 +1199,7 @@ function npTotals() {
   $("np-total").textContent = `予定 ${npFmt(sum("plan"))}${npFuture() ? "" : `・実績 ${npFmt(sum("result"))}`}${adds ? `・+${adds}` : ""}${dels ? `・−${dels}` : ""}`;
 }
 async function npLoad() {
-  np.busy = true; np.data = null; np.msg = ""; np.msgCls = ""; npRender();
+  np.busy = true; np.data = null; np.rows = []; np.srcDate = ""; np.msg = ""; np.msgCls = ""; npRender();
   try {
     if (!rmData) await loadRedmine();
     const get = async (d) => (await fetch(`/api/nippo?date=${d}`)).json();
@@ -1199,7 +1207,9 @@ async function npLoad() {
     if (data.error) throw new Error(data.error);
     if (src && src.error) throw new Error(src.error);
     if (np.mode === "today") np.date = data.date;
-    np.data = data; np.rows = npBuild(data, src && src.date !== data.date ? src : null);
+    // 次回の日報は今日の日報と突き合わせる。今日の日報がまだ空なら、ボタンで前回の日報を探せるように突き合わせ済みにしない
+    const from = src && src.date !== data.date && src.rows.length ? src : null;
+    np.data = data; np.rows = npBuild(data, from); np.srcDate = from ? from.date : "";
     // 退勤後なら HRMOS の総労働時間を、5分単位に丸めて「合わせて配る」に入れておく（8:32 → 8:30）
     np.target = npMin(data.work_total) == null ? "" : npFmt(npRound5(npMin(data.work_total)));
   } catch (e) { np.msg = e.message || "Mac に接続できません"; np.msgCls = "err"; }
@@ -1251,6 +1261,7 @@ $("np-body").addEventListener("click", (e) => {
   if (del) { const r = np.rows[Number(del.closest(".np-row").dataset.i)]; r.del = !r.del; npRender(); return; }
   const d = e.target.closest("button.np-draft");
   if (d) { np.rows[Number(d.closest(".np-row").dataset.i)].result = npFmt(Number(d.dataset.draft)); npRender(); return; }
+  if (e.target.id === "np-prev") { npCopyPrev(); return; }
   if (e.target.id === "np-free") { np.rows.push({ kind: "add", group: "free", free: true, checked: true, name: "", plan: "0:00", result: "0:00", notes: "", draft: 0, sub: "" }); npRender(); return; }
   if (e.target.id === "np-apply") {
     // 下書きのある行（登録済み + チェックした候補）の実績を入れる。合計の指定があれば、他の行の実績を引いた残りを下書きの割合で配る（5分単位・端数は大きい順）
@@ -1269,6 +1280,26 @@ $("np-body").addEventListener("click", (e) => {
     np.msg = `下書きを ${rows.length} 行の実績に入れました（まだ登録していません）`; np.msgCls = ""; npRender();
   }
 });
+// 「前回の日報から不足分を足す」: この日より前で行のある一番近い日の日報を読み、この日報に同じ業務名の行が無いものだけを
+// コピーする行として並べる（登録はまだ）。日報がもうあっても使える。登録前の手元の変更（登録済みの行の時間・備考・削除の印、
+// 候補のチェックや入力、自由入力の行）は残す
+async function npCopyPrev() {
+  if (!np.data || np.srcDate) return;
+  np.busy = true; np.msg = "前回の日報を探しています…"; np.msgCls = ""; npRender();
+  try {
+    const prev = await (await fetch(`/api/nippo/prev?date=${np.date}`)).json();
+    if (prev.error) throw new Error(prev.error);
+    const old = np.rows, cur = old.filter((r) => r.kind === "cur");
+    const same = (r) => old.find((o) => o.kind === "add" && o.group === r.group && o.name === r.name);
+    np.rows = npBuild(np.data, prev).map((r) => r.kind === "cur" ? cur.shift() || r : same(r) || r)
+      .concat(old.filter((r) => r.group === "free"));
+    np.srcDate = prev.date;
+    const n = np.rows.filter((r) => r.group === "copy").length;
+    np.msg = n ? `${prev.date} の日報から、この日報に無い ${n} 行を足しました（まだ登録していません）` : `${prev.date} の日報の行はすべてこの日報にあります（不足はありません）`;
+    np.msgCls = "ok";
+  } catch (e) { np.msg = e.message || "Mac に接続できません"; np.msgCls = "err"; }
+  np.busy = false; npRender();
+}
 $("np-save").onclick = async () => {
   const on = np.rows.filter((r) => r.kind === "cur" ? !r.del : r.checked);
   if (on.some((r) => npMin(r.plan) == null || npMin(r.result) == null)) { np.msg = "時間の形が不正な行があります（例 1:30）"; np.msgCls = "err"; npRender(); return; }
