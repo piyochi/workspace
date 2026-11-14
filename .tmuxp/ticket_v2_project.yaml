@@ -7,7 +7,7 @@ windows:
     - ' ~/bin/ai-warmup &!'
   window_name: zsh
 - panes:
-  - ~/bin/claude-monitor --no-window --name vim -f ~/.tmuxp/ticket_v2_project/vim.txt -l left -w 65% -g 4x2
+  - ~/bin/claude-monitor --no-window --name vim -f ~/.tmuxp/ticket_v2_project/vim.txt -l left -w 50% -g 4x2
   window_name: vim
 - panes:
   - ~/bin/claude-monitor --no-window --name monitor -f ~/.tmuxp/ticket_v2_project/monitor.txt -l left -w 65% -g 4x3
