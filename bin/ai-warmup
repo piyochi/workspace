@@ -1,0 +1,25 @@
+#!/bin/zsh
+# Claude・Codex の利用枠（5時間枠・週枠）の計測を始めるため、1回だけ短い問い合わせを送る。
+# tmuxp（ticket_v2_project.yaml の zsh ウィンドウ）から起動する。
+# - 会話を保存しない（monitor の --continue / resume --last が拾わないように）
+# - プロジェクト外の固定ディレクトリ ~/.cache/ai-warmup-work で実行する（CLAUDE.md・AGENTS.md を読ませないため。
+#   一時ディレクトリだと ~/.claude/projects に空フォルダが毎回増える）
+# - 結果は ~/.cache/ai-warmup.log に追記する
+
+CLAUDE_BIN=$HOME/.local/bin/claude
+CODEX_BIN=$HOME/.nvm/versions/node/v22.12.0/bin/codex
+export PATH=$HOME/.nvm/versions/node/v22.12.0/bin:$HOME/.local/bin:$PATH
+
+log=$HOME/.cache/ai-warmup.log
+dir=$HOME/.cache/ai-warmup-work
+mkdir -p "$dir"
+cd "$dir" || exit 1
+
+{
+  echo "=== $(date '+%Y-%m-%d %H:%M:%S') claude"
+  "$CLAUDE_BIN" -p "ok" --model haiku --no-session-persistence </dev/null
+  echo "exit=$?"
+  echo "=== $(date '+%Y-%m-%d %H:%M:%S') codex"
+  "$CODEX_BIN" exec --ephemeral --skip-git-repo-check -s read-only "ok" </dev/null
+  echo "exit=$?"
+} >>"$log" 2>&1

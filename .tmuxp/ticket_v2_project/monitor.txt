@@ -1,16 +1,16 @@
 # Claude と Codex を対で起動する（1↔2・3↔4・5↔6・7↔8・9↔10・11↔12）。
 # CODEX_SLOT は相方の Codex の枠番号。Claude は ct-tmux-link の tmux_link.py partner でペインを引く
-# コマンドの先頭が @ の枠は起動せず履歴に積むだけ（ペインで ↑ → Enter で起動）。最初に立ち上がるのは [1][2][5][6]
+# コマンドの先頭が @ の枠は起動せず履歴に積むだけ（ペインで ↑ → Enter で起動）。全枠 @ なので起動時は何も立ち上がらない
 
 # Row 1: 環境1
-~/www/ticket_v2 | CODEX_SLOT=2 bin/claude ticket_v2 ticket_v2_api --permission-mode auto --continue | env1 claude(continue)
-~/www/ticket_v2 | bin/codex ticket_v2_api ticket_v2 resume --last | env1 codex(continue)
+~/www/ticket_v2 | @CODEX_SLOT=2 bin/claude ticket_v2 ticket_v2_api --permission-mode auto --continue | env1 claude(continue)
+~/www/ticket_v2 | @bin/codex ticket_v2_api ticket_v2 resume --last | env1 codex(continue)
 ~/www/ticket_v2 | @CODEX_SLOT=4 bin/claude ticket_v2 ticket_v2_api --permission-mode auto | env1 claude(new)
 ~/www/ticket_v2 | @bin/codex ticket_v2_api ticket_v2 | env1 codex(new)
 
 # Row 2: 環境2
-~/www/ticket_v2_second | CODEX_SLOT=6 bin/claude ticket_v2 ticket_v2_api --permission-mode auto --continue | env2 claude(continue)
-~/www/ticket_v2_second | bin/codex ticket_v2_api ticket_v2 resume --last | env2 codex(continue)
+~/www/ticket_v2_second | @CODEX_SLOT=6 bin/claude ticket_v2 ticket_v2_api --permission-mode auto --continue | env2 claude(continue)
+~/www/ticket_v2_second | @bin/codex ticket_v2_api ticket_v2 resume --last | env2 codex(continue)
 ~/www/ticket_v2_second | @CODEX_SLOT=8 bin/claude ticket_v2 ticket_v2_api --permission-mode auto | env2 claude(new)
 ~/www/ticket_v2_second | @bin/codex ticket_v2_api ticket_v2 | env2 codex(new)
 
