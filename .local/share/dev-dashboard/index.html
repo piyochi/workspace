@@ -48,7 +48,7 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -1
 .mini-pane.wait { border-color: var(--bad); color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--bg)); font-weight: 700; }
 h1 { font-size: 15px; margin: 0; }
 .updated { color: var(--muted); font-size: 12px; }
-.memo { width: 100%; box-sizing: border-box; margin-top: 6px; min-height: 96px; resize: vertical; font: inherit; font-size: 13px; line-height: 1.6;
+.memo { width: 100%; box-sizing: border-box; margin-top: 6px; min-height: 288px; resize: vertical; font: inherit; font-size: 13px; line-height: 1.6;
   color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
 .memo:focus { outline: 2px solid var(--ok); outline-offset: 0; }
 .memo-foot button.danger { border-color: var(--bad); color: var(--bad); }
@@ -57,6 +57,8 @@ h1 { font-size: 15px; margin: 0; }
 .memo-view { margin-top: 6px; font-size: 13px; line-height: 1.6; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-height: 2em; cursor: text; }
 .memo-view:empty::before { content: "メモはまだありません。「編集」で書けます"; color: var(--muted); }
 .memo-wrap { position: relative; }
+.np-fold { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.np-fold:hover { text-decoration: underline; }
 .memo-suggest { position: absolute; left: 0; right: 0; z-index: 4; margin: 2px 0 0; padding: 4px 0; list-style: none; max-height: 260px; overflow: auto;
   background: var(--card); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 18px rgb(0 0 0 / .15); font-size: 13px; }
 .memo-suggest li { padding: 4px 10px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
@@ -254,6 +256,7 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
 .rm-st-edit select { font-size: 11px; padding: 0 2px; }
 .rm-st-edit button { font-size: 10px; padding: 0 4px; line-height: 16px; }
 .rm-copy { flex: none; font-size: 11px; padding: 0 5px; line-height: 16px; }
+.rm-memo { flex: none; font-size: 11px; padding: 0 5px; line-height: 16px; }
 .rm-subj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .rm-info { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 2px; font-size: 11px; color: var(--muted); }
 /* 今日（朝 4:00 以降）の作業。「今日作業した」で絞り込んだときは入力した文・コミットも出す */
@@ -329,7 +332,7 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
     <summary><h2>メモ</h2></summary>
     <div id="memo-view" class="memo-view" title="ダブルクリックで編集"></div>
     <div class="memo-wrap">
-      <textarea id="memo-text" class="memo" rows="6" spellcheck="false" hidden placeholder="自由に書けます。入力をやめて1秒ほどで保存します（電源を落としても残ります）。「見出し------」の行は、表示のときに開け閉めできるまとまりになります。# を打つとチケットの候補が出ます"></textarea>
+      <textarea id="memo-text" class="memo" rows="18" spellcheck="false" hidden placeholder="自由に書けます。入力をやめて1秒ほどで保存します（電源を落としても残ります）。「見出し------」の行は、表示のときに開け閉めできるまとまりになります。# を打つとチケットの候補が出ます"></textarea>
       <ul id="memo-suggest" class="memo-suggest" role="listbox" hidden></ul>
     </div>
     <div class="memo-foot"><button id="memo-edit">編集</button><span class="label" id="memo-status"></span><button id="memo-reload" hidden>読み込み直す</button><button id="memo-force" class="danger" hidden>この内容で上書き</button></div>
@@ -857,6 +860,15 @@ document.addEventListener("click", async (e) => {
   b.textContent = ok ? "✓" : "✗"; b.title = ok ? "コピーしました" : "コピーできませんでした";
   setTimeout(() => { b.textContent = "⧉"; b.title = "「#番号: タイトル」をリンク付きでコピー"; }, 1500);
 });
+// Redmine の行: ✎ で「#番号: タイトル -----」（見出し）をメモの最後に足す（すぐ保存する。同じ番号がもうメモにあれば足さない）
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button.rm-memo"); if (!b) return;
+  // 後ろに「 -----」を付けて見出しにする（その下に書いたことを、表示のときに開け閉めできる）
+  const r = window.__memoAppend ? window.__memoAppend(`${b.dataset.memo} -----`) : "error";
+  b.textContent = r === "added" ? "✓" : r === "exists" ? "済" : "✗";
+  b.title = r === "added" ? "メモに足しました" : r === "exists" ? "この番号はもうメモにあります" : "メモに足せませんでした";
+  setTimeout(() => { b.textContent = "✎"; b.title = "「#番号: タイトル -----」をメモの最後に見出しとして足す"; }, 1500);
+});
 $("modal-back").onclick = (e) => { e.preventDefault(); closePane(); };
 // 外側クリックで閉じるのは、押した所も離した所も外側のときだけ。
 // 文字を選びながら外側で離すと click が外側に届くので、押した所を覚えておいて区別する
@@ -1068,6 +1080,7 @@ function rmRows(items, opts = {}) {
         ${rmStatusHtml(i)}
         <span class="rm-subj" title="#${i.id}: ${esc(i.subject)}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${i.id}</a>: ${esc(i.subject)}</span>
         <button class="rm-copy" data-copy="${esc(`#${i.id}: ${i.subject}`)}" data-url="${esc(i.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button>
+        <button class="rm-memo" data-memo="${esc(`#${i.id}: ${i.subject}`)}" title="「#番号: タイトル -----」をメモの最後に見出しとして足す">✎</button>
         <button class="rm-send" data-ticket="${i.id}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button>
         ${!i.history.length && !full ? `<button class="rm-full" data-ticket="${i.id}" title="直近${rmData ? rmData.history_days : 30}日に見つからなかったので、残っている Claude・Codex の記録全部と各環境の git のコミットから探す">全期間で調べる</button>` : ""}</div>
       ${info.length ? `<div class="rm-info">${info.join("")}</div>` : ""}
@@ -1115,7 +1128,7 @@ function renderRmAll() {
 }
 
 // ---- 日報（HRMOS勤怠）: 今日の日報に不足分を足す・時間を入れる／次回（次の平日）の日報を今日の行と Redmine から作る ----
-const np = { open: false, mode: "today", date: "", data: null, rows: [], msg: "", msgCls: "", busy: false, q: "", target: "" };
+const np = { open: false, mode: "today", date: "", data: null, rows: [], msg: "", msgCls: "", busy: false, q: "", target: "", memoOpen: false };
 const npMin = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "").trim()); return m && Number(m[2]) < 60 ? Number(m[1]) * 60 + Number(m[2]) : null; };
 const npFmt = (min) => `${Math.floor(min / 60)}:${String(Math.round(min) % 60).padStart(2, "0")}`;
 const npRound5 = (min) => Math.round(min / 5) * 5;
@@ -1141,6 +1154,14 @@ function npNameHtml(name) {
   return `${copy}${send}${esc(name.slice(0, m.index))}<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Redmine で #${m[1]} を開く">#${m[1]}</a>${esc(name.slice(m.index + m[0].length))}`;
 }
 // HRMOS の行と候補から、画面の行（np.rows）を作る
+// メモ欄の「#番号」（全角の ＃ も）を、出てくる順に重ならないように [番号, 件名] で返す。件名は「#番号: 件名」と書いてあるときだけ
+function npMemoTickets() {
+  const text = (($("memo-text") || {}).value || "").replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)), out = new Map();
+  for (const m of text.matchAll(/[#＃](\d{4,6})(?!\d)(?:[:：]\s*([^\n]*))?/g)) {
+    if (!out.has(m[1]) || (!out.get(m[1]) && m[2])) out.set(m[1], (m[2] || "").replace(/\s*-{3,}\s*$/, "").trim());
+  }
+  return [...out.entries()];
+}
 function npBuild(data, src) {
   const ts = (data.timesheet || {}).tickets || {};
   const rows = data.rows.map((r) => ({ kind: "cur", id: r.id, name: r.service_name, sub: [r.project, r.category].filter(Boolean).join("・"),
@@ -1169,6 +1190,13 @@ function npBuild(data, src) {
       add({ group: "miss", checked: true, name: npSubject(n), draft: ts[n] || 0, result: npFmt(npRound5(ts[n] || 0)) });
     });
   }
+  // メモに書いてあるチケット（まだ無いものだけ・メモに出てくる順）。件名は Redmine 欄から、無ければメモの「#番号: 件名」から取る
+  npMemoTickets().filter(([n]) => !have.has(n)).forEach(([n, subject]) => {
+    have.add(n);
+    const known = npIssues().find((i) => String(i.id) === n);
+    add({ group: "memo", name: known ? `#${n}: ${known.subject}` : (subject ? `#${n}: ${subject}` : `#${n}`),
+      sub: known ? [known.status, known.extra ? (known.closed ? "完了" : "担当外") : ""].filter(Boolean).join("・") : "" });
+  });
   // Redmine の一覧から選んで足す（まだ無いチケットだけ）
   (rmData ? rmData.issues : []).filter((i) => !have.has(String(i.id))).forEach((i) => {
     add({ group: "rm", name: `#${i.id}: ${i.subject}`, sub: [i.priority, i.status, i.extra ? (i.closed ? "完了" : "担当外") : ""].filter(Boolean).join("・") });
@@ -1219,6 +1247,10 @@ function npRender() {
       : "",
     np.mode === "today"
       ? `<div class="np-group">今日作業したのに日報に無いもの（${idx.filter(([r]) => r.group === "miss").length}）</div>${rowsOf((r) => r.group === "miss") || `<div class="empty">不足はありません</div>`}`
+      : "",
+    // メモのチケットは既定で閉じる（閉じていても、チェックを入れた行は見せる＝登録される行を隠さない）
+    idx.some(([r]) => r.group === "memo")
+      ? `<div class="np-group"><button id="np-memo-toggle" class="np-fold" aria-expanded="${np.memoOpen}">${np.memoOpen ? "▾" : "▸"} メモに書いてあるチケット（${idx.filter(([r]) => r.group === "memo").length}）</button></div>${rowsOf((r) => r.group === "memo" && (np.memoOpen || r.checked))}`
       : "",
     `<div class="np-group">Redmine から足す（${rm.length}）<input type="search" id="np-q" value="${esc(np.q)}" placeholder="番号・件名で絞る"><button id="np-free">＋ 自由入力の行</button></div>`,
     rowsOf((r) => r.group === "free"),
@@ -1300,6 +1332,7 @@ $("np-body").addEventListener("click", (e) => {
   const d = e.target.closest("button.np-draft");
   if (d) { np.rows[Number(d.closest(".np-row").dataset.i)].result = npFmt(Number(d.dataset.draft)); npRender(); return; }
   if (e.target.id === "np-prev") { npCopyPrev(); return; }
+  if (e.target.closest("#np-memo-toggle")) { np.memoOpen = !np.memoOpen; npRender(); return; }
   if (e.target.id === "np-free") { np.rows.push({ kind: "add", group: "free", free: true, checked: true, name: "", plan: "0:00", result: "0:00", notes: "", draft: 0, sub: "" }); npRender(); return; }
   if (e.target.id === "np-apply") {
     // 下書きのある行（登録済み + チェックした候補）の実績を入れる。合計の指定があれば、他の行の実績を引いた残りを下書きの割合で配る（5分単位・端数は大きい順）
@@ -1677,6 +1710,17 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     view.replaceChildren(...els);
   }
   window.__memoRender = () => { if (ta.hidden) renderView(); };  // Redmine 欄を読んだあとに #番号をリンクにし直す
+  // Redmine 欄の ✎ から呼ぶ。メモの最後に1行足して、待たずに保存する
+  window.__memoAppend = (line) => {
+    const n = (line.match(/#(\d{4,6})/) || [])[1];
+    const norm = ta.value.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+    if (n && new RegExp(`[#＃]${n}(?!\\d)`).test(norm)) return "exists";
+    ta.value = ta.value.replace(/\s*$/, "") + (ta.value.trim() ? "\n" : "") + line;
+    dirty = true; clearTimeout(timer);
+    if (ta.hidden) renderView();
+    if (!conflict) save(false);
+    return "added";
+  };
   function setEditing(on) {
     ta.hidden = !on; view.hidden = on;
     editBtn.textContent = on ? "表示に戻る" : "編集";
