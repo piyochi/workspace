@@ -424,7 +424,8 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
 
   <details class="sec" data-key="cmds" open>
     <summary><h2>コマンド</h2></summary>
-    <div class="link-filter"><select id="cmd-cat" title="カテゴリで絞る"></select><select id="cmd-where" title="置き場所で絞る（ホーム = ~/.claude/skills・プロジェクト = 各環境の .claude/skills）"></select><input type="search" id="cmd-q" placeholder="名前・説明で絞る（スペース区切りで AND）" autocomplete="off"></div>
+    <div class="link-filter"><select id="cmd-cat" title="カテゴリで絞る"></select><select id="cmd-where" title="置き場所で絞る（ホーム = ~/.claude/skills・プロジェクト = 各環境の .claude/skills）"></select></div>
+    <div class="link-filter"><input type="search" id="cmd-q" placeholder="名前・説明で絞る（スペース区切りで AND）" autocomplete="off"></div>
     <div id="cmds" class="cmd-list"></div>
     <div class="link-more"><span class="label" id="cmd-count"></span></div>
   </details>
