@@ -81,7 +81,8 @@ h1 { font-size: 15px; margin: 0; }
 .mv-sec { margin: 4px 0 6px calc(1em + 6px); }
 .mv-sec textarea { width: 100%; box-sizing: border-box; min-height: 0; }
 .mv-sec-foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
-.mv-edit { padding: 0 5px; font-size: 11px; line-height: 16px; }
+.mv-edit, .mv-del { padding: 0 5px; font-size: 11px; line-height: 16px; }
+.mv-del:hover { border-color: var(--bad); color: var(--bad); }
 .mv-btns { order: 9; flex: none; display: flex; gap: 4px; font-weight: 400; }
 .mv-tk .rm-info { padding-left: calc(1em + 6px); font-weight: 400; }
 .mv-st { flex: none; font-size: 11px; font-weight: 400; }
@@ -951,7 +952,7 @@ function hideLinks() { linksOpen = false; $("links-modal").classList.remove("ope
 function closeLinks() { if (!linksOpen) return; if (history.state && history.state.links) history.back(); else hideLinks(); }
 window.addEventListener("popstate", hideLinks);
 $("link-more").onclick = openLinks;
-$("link-reload").onclick = async (e) => { const b = e.target; b.disabled = true; await loadLinks(true); b.disabled = false; };
+$("link-reload").onclick = async (e) => { const b = e.target; b.disabled = true; b.textContent = "取り直し中…"; try { await loadLinks(true); } finally { b.disabled = false; b.textContent = "取り直す"; } };
 $("links-back").onclick = (e) => { e.preventDefault(); closeLinks(); };
 $("link-cat").onchange = () => { $("links-all").scrollTop = 0; loadAllLinks(); };
 $("link-q").oninput = () => { clearTimeout(linkTimer); linkTimer = setTimeout(() => { $("links-all").scrollTop = 0; loadAllLinks(); }, 300); };
@@ -1335,7 +1336,11 @@ $("np-open-next").onclick = () => npOpen("next");
 $("np-tab-today").onclick = () => npOpen("today");
 $("np-tab-next").onclick = () => npOpen("next");
 $("np-back").onclick = (e) => { e.preventDefault(); npClose(); };
-$("np-reload").onclick = () => npLoad();
+$("np-reload").onclick = async (e) => {
+  const b = e.target; b.disabled = true; b.textContent = "取り直し中…";
+  try { await npLoad(); } finally { b.disabled = false; b.textContent = "取り直す"; }
+  if (np.data && !np.msg) { np.msg = `HRMOS から取り直しました（${new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}）`; np.msgCls = ""; npRender(); }
+};
 // 今日の日報でも日付を選べる（選んだ日の日報を読む。下書き・「今日作業したのに日報に無いもの」は今日のときだけ）
 $("np-date").onchange = (e) => {
   if (!e.target.value) return;
@@ -1638,7 +1643,11 @@ function hideRm() { rmOpen = false; $("rm-modal").classList.remove("open"); }
 function closeRm() { if (!rmOpen) return; if (history.state && history.state.rm) history.back(); else hideRm(); }
 window.addEventListener("popstate", hideRm);
 $("redmine-more").onclick = openRm;
-$("redmine-reload").onclick = () => loadRedmine(true);
+// 取り直しは Redmine に問い合わせ直すので数秒かかる。押したと分かるように、終わるまでボタンを「取り直し中…」にする
+$("redmine-reload").onclick = async (e) => {
+  const b = e.target; b.disabled = true; b.textContent = "取り直し中…";
+  try { await loadRedmine(true); } finally { b.disabled = false; b.textContent = "取り直す"; }
+};
 $("rm-back").onclick = (e) => { e.preventDefault(); closeRm(); };
 $("rm-cat").onchange = () => { $("rm-all").scrollTop = 0; renderRmAll(); };
 $("rm-q").oninput = () => { clearTimeout(rmTimer); rmTimer = setTimeout(() => { $("rm-all").scrollTop = 0; renderRmAll(); }, 200); };
@@ -1746,8 +1755,9 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
         h.className = "mv-head" + (open ? " open" : "");
         h.setAttribute("role", "button"); h.tabIndex = 0;
         h.innerHTML = `<span>${linkify(r.text)}</span>` + (!open && r.count ? `<span class="mv-count">（${r.count} 行）</span>` : "")
-          + `<span class="mv-btns"><button class="mv-edit" title="このまとまり（見出しの行から次の ----- の手前まで）だけを直す">✎</button></span>`;
+          + `<span class="mv-btns"><button class="mv-edit" title="このまとまり（見出しの行から次の ----- の手前まで）だけを直す">✎</button><button class="mv-del" title="このまとまり（見出しの行から次の ----- の手前まで）を消す（確認が出ます）">🗑</button></span>`;
         h.querySelector(".mv-edit").onclick = () => secOpen(r);
+        h.querySelector(".mv-del").onclick = () => secDelete(r);
         h.setAttribute("aria-expanded", String(open));
         const toggle = () => { open ? openSet.delete(r.text) : openSet.add(r.text); saveOpen(); renderView(); };
         h.onclick = (e) => { if (!e.target.closest("a, button, select")) toggle(); };
@@ -1797,6 +1807,31 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   function secCancel() {
     if (sec && sec.draft !== sec.orig && !confirm("直した内容を捨てますか？")) return;
     sec = null; renderView();
+  }
+  // まとまりを消す。確認を出してから、別の画面の分を取り込み、同じ内容がまだあるときだけ消す
+  async function secDelete(r) {
+    if (sec) { alert("まとまりを直している最中です。先に保存するか、やめてください"); return; }
+    const lines = ta.value.split("\n");
+    const orig = lines.slice(r.start, r.end).join("\n").replace(/\s+$/, "");
+    const body = orig.split("\n").length - 1;
+    if (!confirm(`このまとまりを消しますか？\n\n${r.text}\n（見出しの行と、その下の ${body} 行）\n\n消すとすぐ保存されます。元に戻すボタンはありません。`)) return;
+    await load(false);
+    const now = ta.value.split("\n");
+    let start = r.start;
+    if (now.slice(start, start + orig.split("\n").length).join("\n").replace(/\s+$/, "") !== orig) {
+      const at = ta.value.indexOf(orig);
+      if (at < 0) { alert("このまとまりが別の画面で変わっていたので、消しませんでした。画面を確かめてからもう一度押してください"); renderView(); return; }
+      start = ta.value.slice(0, at).split("\n").length - 1;
+    }
+    // 見出しの行から次の ----- の手前まで（まとまりの後ろの空行も一緒に）消す
+    let end = start + orig.split("\n").length;
+    while (end < now.length && !now[end].trim()) end++;
+    now.splice(start, end - start);
+    ta.value = now.join("\n");
+    if (openSet.delete(r.text)) saveOpen();
+    dirty = true; clearTimeout(timer);
+    renderView();
+    if (!conflict) save(false);
   }
   async function secSave() {
     if (!sec) return;
