@@ -73,12 +73,20 @@ h1 { font-size: 15px; margin: 0; }
 .mv-head.open::before { content: "▾"; }
 .mv-head::after { content: ""; flex: 1; border-bottom: 1px dashed var(--line); }
 .mv-more { margin-top: 2px; }
+/* 見出しの文字は2行まで（続きは「…」。マウスを乗せると全部出る） */
+.mv-title { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .mv-count { font-weight: 400; color: var(--muted); white-space: nowrap; }
 /* メモの見出しのチケット: Redmine 欄と同じ色（tmux で作業中・今日作業した） */
 .mv-tk { margin: 0 -8px; padding: 2px 8px; }
 .mv-tk.active { background: color-mix(in srgb, var(--accent) 9%, var(--card)); }
 .mv-tk.today { background: color-mix(in srgb, var(--ok) 8%, var(--card)); }
 .mv-sec { margin: 2px 0 2px; }
+/* 並び替え: 取っ手と、落とす場所の線 */
+.mv-drag { flex: none; cursor: grab; color: var(--muted); font-weight: 400; padding: 0 2px; user-select: none; opacity: .45; }
+.mv-head:hover .mv-drag { opacity: 1; }
+.mv-dragging { opacity: .4; }
+.mv-drop-before { box-shadow: 0 -3px 0 var(--accent); }
+.mv-drop-after { box-shadow: 0 3px 0 var(--accent); }
 /* 開いたまとまりの枠: 見出しと中身をカードにまとめ、中身は左の線で見出しにぶら下げる */
 .mv-group { margin: 6px -6px; padding: 4px 6px 6px; border: 1px solid var(--line); border-radius: 10px;
   background: color-mix(in srgb, var(--accent) 3%, var(--card)); box-shadow: 0 1px 3px rgb(0 0 0 / 6%); }
@@ -96,13 +104,13 @@ h1 { font-size: 15px; margin: 0; }
 /* ステータスの下に担当者（2行） */
 .mv-meta { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; font-size: 11px; font-weight: 400; line-height: 1.3; }
 .mv-who { color: var(--muted); white-space: nowrap; }
-/* 見出しの「環境N / 状態」（2行）。押すと選ぶ欄に変わる */
-.mv-ws { flex: none; display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 400; }
-.mv-ws-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 1px 6px; font-size: 11px; line-height: 1.3; text-align: left; }
+/* 本文の「環境N 状態」の行。ふつうの文字のように見せ、押すと選ぶ欄に変わる */
+.mv-ws { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.mv-ws-btn { padding: 0; border: 0; border-bottom: 1px dashed var(--muted); border-radius: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.mv-ws-btn:hover { color: var(--accent); border-bottom-color: var(--accent); }
 .mv-ws-btn .none { color: var(--muted); }
-.mv-ws-st { max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mv-ws select, .mv-ws input { font: inherit; font-size: 11px; }
-.mv-ws input { width: 10em; }
+.mv-ws select, .mv-ws input { font: inherit; font-size: 12px; }
+.mv-ws input { width: 12em; }
 .mv-head:focus-visible { outline: 2px solid var(--ok); outline-offset: 1px; }
 .mv-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.6em; }
 /* メモの URL は折り返さず、入りきらない分を「…」にする（title で全体を出す） */
@@ -260,6 +268,14 @@ button.np-del:hover { color: var(--bad); border-color: var(--bad); }
 .np-row input.bad { border-color: var(--bad); }
 button.np-draft { font-size: 10px; padding: 0 4px; line-height: 18px; white-space: nowrap; color: var(--accent); }
 .np-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12px; }
+.np-slack { display: flex; flex-direction: column; gap: 4px; }
+.np-sl-title { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.np-sl-title input { flex: 1; max-width: 20em; font: inherit; }
+.np-sl-row { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; font-size: 13px; cursor: pointer; }
+.np-sl-sub { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.np-sl-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.np-sl-notes { color: var(--muted); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.np-sl-out { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; line-height: 1.6; resize: vertical; }
 .np-foot #np-total { font-variant-numeric: tabular-nums; font-weight: 600; }
 .np-msg { flex: 1; min-width: 120px; color: var(--muted); }
 .np-msg.ok { color: var(--ok); } .np-msg.err { color: var(--bad); }
@@ -424,6 +440,7 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
     <div class="np-foot">
       <span id="np-total"></span>
       <span class="np-msg" id="np-msg"></span>
+      <button id="np-slack" title="登録済みの行から、Slack に貼る報告の文を作る">slack報告</button>
       <button id="np-reload">取り直す</button>
       <button id="np-save" class="primary">HRMOS に登録する</button>
     </div>
@@ -913,30 +930,51 @@ $("modal").addEventListener("mousedown", (e) => { downOnOverlay = e.target.id ==
 $("modal").addEventListener("click", (e) => { if (e.target.id === "modal" && downOnOverlay) closePane(); downOnOverlay = false; });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePane(); });
 
-// メモ・リンク一覧の URL: 長いものは1行で切り、マウスを乗せるとページのタイトル（アーティファクトは題名と説明）と URL 全体を出す。
-// タイトルは初めて乗せたときにサーバーから取る（GitHub・Redmine は API、アーティファクトは公開したときの記録、それ以外はページの <title>）
+// メモ・リンク一覧の URL: ページのタイトルが取れたらタイトルをリンクの文字にし、マウスを乗せると（説明と）URL 全体を出す。
+// 取れないものは URL のまま1行で切る。タイトルは画面に見えたリンクの分だけサーバーから取る
+// （GitHub・Redmine は API、アーティファクトは公開したときの記録、それ以外はページの <title>）
 const linkTitles = new Map();  // URL -> {title, desc}（取得中は {loading: true}）
 const html2text = (h) => { const d = document.createElement("textarea"); d.innerHTML = h; return d.value; };
 function linkTip(url) {
   const t = linkTitles.get(url);
   if (t && t.loading) return `タイトルを取得中…\n${url}`;
-  return [t && t.title, t && t.desc, url].filter(Boolean).join("\n");
+  return [t && t.desc, url].filter(Boolean).join("\n");
 }
-document.addEventListener("mouseover", async (e) => {
-  const a = e.target.closest && e.target.closest("a.mv-url, a.link-url");
-  if (!a) return;
-  const url = a.getAttribute("href");  // 属性は読むと &amp; などが戻っている
-  if (linkTitles.has(url)) { a.title = linkTip(url); return; }
-  linkTitles.set(url, { loading: true });
+const linkLabel = (url) => { const t = linkTitles.get(url); return t && t.title ? t.title : url; };
+function linkPaint(a) {
+  const url = a.getAttribute("href"), t = linkTitles.get(url);
+  a.textContent = linkLabel(url);
   a.title = linkTip(url);
-  let d;
-  try { d = await (await fetch(`/api/link-title?u=${encodeURIComponent(url)}`)).json(); } catch (err) { d = {}; }
-  linkTitles.set(url, { title: d.title || "", desc: d.desc || "" });
-  document.querySelectorAll("a.mv-url, a.link-url").forEach((x) => { if (x.getAttribute("href") === url) x.title = linkTip(url); });
-});
+  a.classList.toggle("titled", !!(t && t.title));
+}
+const linkQueue = [];
+let linkRunning = 0;
+async function linkWork() {
+  while (linkQueue.length && linkRunning < 4) {
+    const url = linkQueue.shift();
+    linkRunning++;
+    (async () => {
+      let d;
+      try { d = await (await fetch(`/api/link-title?u=${encodeURIComponent(url)}`)).json(); } catch (err) { d = {}; }
+      linkTitles.set(url, { title: d.title || "", desc: d.desc || "" });
+      document.querySelectorAll("a.mv-url, a.link-url").forEach((x) => { if (x.getAttribute("href") === url) linkPaint(x); });
+      linkRunning--; linkWork();
+    })();
+  }
+}
+// 画面に見えたリンクだけタイトルを取りに行く（リンク一覧の「もっと見る」は数千件あるため）
+const linkSeen = new IntersectionObserver((ents) => ents.forEach((e) => {
+  if (!e.isIntersecting) return;
+  linkSeen.unobserve(e.target);
+  const url = e.target.getAttribute("href");
+  if (linkTitles.has(url)) return;
+  linkTitles.set(url, { loading: true });
+  linkQueue.push(url); linkWork();
+}), { rootMargin: "200px" });
+function linkFill(root) { root.querySelectorAll("a.mv-url, a.link-url").forEach((a) => { if (!linkTitles.has(a.getAttribute("href"))) linkSeen.observe(a); }); }
 // URL が書かれていた行を出し、その中の URL 部分をリンクにする（行が無ければ URL だけ）
 function linkedContext(v) {
-  const a = `<a class="link-url" href="${esc(v.url)}" target="_blank" rel="noopener noreferrer" title="${esc(linkTip(v.url))}">${esc(v.url)}</a>`;
+  const a = `<a class="link-url${(linkTitles.get(v.url) || {}).title ? " titled" : ""}" href="${esc(v.url)}" target="_blank" rel="noopener noreferrer" title="${esc(linkTip(v.url))}">${esc(linkLabel(v.url))}</a>`;
   const ctx = v.context || "";
   const i = ctx.indexOf(v.url);
   if (i < 0) return a;
@@ -961,7 +999,7 @@ async function fetchLinks(params) {
 async function loadLinks(rescan) {
   try {
     const d = await fetchLinks(rescan ? { limit: 10, rescan: 1 } : { limit: 10 });
-    $("links").innerHTML = linkRows(d.items, d.days);
+    $("links").innerHTML = linkRows(d.items, d.days); linkFill($("links"));
     $("link-count").textContent = `${d.total} 件（直近${d.days}日）`;
     $("link-more").style.display = d.total > 10 ? "" : "none";
   } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
@@ -977,7 +1015,7 @@ async function loadAllLinks() {
     if (cat && !d.cats.some(([c]) => c === cat)) opts.push(`<option value="${esc(cat)}" selected>${esc(cat)}（0）</option>`);
     $("link-cat").innerHTML = opts.join("");
     const body = $("links-all"), top = body.scrollTop;
-    body.innerHTML = linkRows(d.items, d.days);
+    body.innerHTML = linkRows(d.items, d.days); linkFill(body);
     body.scrollTop = top;  // 30 秒ごとの更新で読んでいる位置が戻らないように
     $("links-meta").textContent = `${d.total} 件（直近${d.days}日）`;
   } catch (e) { $("links-meta").textContent = "取得できませんでした"; }
@@ -1192,7 +1230,8 @@ function renderRmAll() {
 }
 
 // ---- 日報（HRMOS勤怠）: 今日の日報に不足分を足す・時間を入れる／次回（次の平日）の日報を今日の行と Redmine から作る ----
-const np = { open: false, mode: "today", date: "", data: null, rows: [], msg: "", msgCls: "", busy: false, q: "", target: "", memoOpen: false };
+const np = { open: false, mode: "today", date: "", data: null, rows: [], msg: "", msgCls: "", busy: false, q: "", target: "", memoOpen: false,
+  slack: null };  // slack: Slack 報告の文を作っているとき {title, project: 2行目の案件名, off: チェックを外した行の id の Set}
 const npMin = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "").trim()); return m && Number(m[2]) < 60 ? Number(m[1]) * 60 + Number(m[2]) : null; };
 const npFmt = (min) => `${Math.floor(min / 60)}:${String(Math.round(min) % 60).padStart(2, "0")}`;
 const npRound5 = (min) => Math.round(min / 5) * 5;
@@ -1228,7 +1267,7 @@ function npMemoTickets() {
 }
 function npBuild(data, src) {
   const ts = (data.timesheet || {}).tickets || {};
-  const rows = data.rows.map((r) => ({ kind: "cur", id: r.id, name: r.service_name, sub: [r.project, r.category].filter(Boolean).join("・"),
+  const rows = data.rows.map((r) => ({ kind: "cur", id: r.id, name: r.service_name, project: r.project || "", sub: [r.project, r.category].filter(Boolean).join("・"),
     plan: r.plan.replace(/^0(\d:)/, "$1"), result: r.result.replace(/^0(\d:)/, "$1"), notes: r.notes,
     orig: { plan: npMin(r.plan), result: npMin(r.result), notes: r.notes }, draft: ts[npTicket(r.service_name)] || 0 }));
   const have = new Set(data.rows.map((r) => npTicket(r.service_name)).filter(Boolean));
@@ -1296,6 +1335,9 @@ function npRender() {
   if (np.busy && !np.data) { body.innerHTML = `<div class="empty">HRMOS から読み込んでいます…</div>`; $("np-total").textContent = ""; return; }
   if (!np.data) { body.innerHTML = `<div class="err">${esc(np.msg || "読み込めませんでした")}</div>`; $("np-total").textContent = ""; return; }
   $("np-hrmos").href = np.data.url;
+  $("np-slack").textContent = np.slack ? "日報に戻る" : "slack報告";
+  $("np-save").hidden = !!np.slack;
+  if (np.slack) { npSlackRender(); return; }
   const idx = np.rows.map((r, i) => [r, i]);
   const rowsOf = (fn) => idx.filter(([r]) => fn(r)).map(([r, i]) => npRowHtml(r, i)).join("");
   const head = `<div class="np-row head"><span></span><span>業務</span><span>予定</span><span>実績</span><span>下書き</span><span>備考</span></div>`;
@@ -1359,8 +1401,52 @@ async function npLoad() {
   } catch (e) { np.msg = e.message || "Mac に接続できません"; np.msgCls = "err"; }
   np.busy = false; npRender();
 }
+// ---- Slack 報告: 登録済みの行のうちチェックしたものを、案件ごとにまとめた文にする（コピーは自分で） ----
+function npSlackRows() { return np.rows.filter((r) => r.kind === "cur"); }
+function npSlackText() {
+  const rows = npSlackRows().filter((r) => !np.slack.off.has(r.id));
+  const out = [`【${np.slack.title}】`];
+  if (np.slack.project.trim()) out.push(np.slack.project.trim());
+  rows.forEach((r) => out.push(`　${r.name.trim()}`));
+  return out.join("\n");
+}
+function npSlackRender() {
+  const rows = npSlackRows(), body = $("np-body");
+  $("np-total").textContent = "";
+  body.innerHTML = `<div class="np-slack">
+    <label class="np-sl-title">見出し <input type="text" id="np-sl-title" value="${esc(np.slack.title)}"></label>
+    <label class="np-sl-title">案件名 <input type="text" id="np-sl-project" value="${esc(np.slack.project)}" placeholder="空なら出さない"></label>
+    <div class="np-group">登録済みの行（${rows.length}）・チェックした行だけ出します <button id="np-sl-all">全部入れる</button><button id="np-sl-none">全部外す</button></div>
+    ${rows.length ? rows.map((r) => `<label class="np-sl-row"><input type="checkbox" data-sl="${esc(String(r.id))}" ${np.slack.off.has(r.id) ? "" : "checked"}><span class="np-sl-main"><span>${esc(r.name)}</span>${(r.notes || "").trim() ? `<span class="np-sl-notes">${esc(r.notes.trim())}</span>` : ""}</span>${r.project ? `<span class="np-sl-sub">${esc(r.project)}</span>` : ""}</label>`).join("")
+      : `<div class="empty">登録済みの行がありません</div>`}
+    <div class="np-group">出力 <button id="np-sl-copy">コピー</button><span id="np-sl-copied" class="np-sl-sub"></span></div>
+    <textarea id="np-sl-out" class="np-sl-out" readonly spellcheck="false"></textarea>
+  </div>`;
+  const out = $("np-sl-out");
+  const update = () => { out.value = npSlackText(); out.rows = Math.min(20, out.value.split("\n").length + 1); };
+  update();
+  $("np-sl-title").oninput = (e) => { np.slack.title = e.target.value; update(); };
+  $("np-sl-project").oninput = (e) => { np.slack.project = e.target.value; update(); };
+  body.querySelectorAll("input[data-sl]").forEach((c) => {
+    c.onchange = () => { const r = rows.find((x) => String(x.id) === c.dataset.sl); if (c.checked) np.slack.off.delete(r.id); else np.slack.off.add(r.id); update(); };
+  });
+  $("np-sl-all").onclick = () => { np.slack.off.clear(); npSlackRender(); };
+  $("np-sl-none").onclick = () => { rows.forEach((r) => np.slack.off.add(r.id)); npSlackRender(); };
+  out.onfocus = () => out.select();
+  $("np-sl-copy").onclick = async () => {
+    const ok = await copyText(out.value);
+    $("np-sl-copied").textContent = ok ? "コピーしました" : "コピーできませんでした（文字を選んで Ctrl+C）";
+    setTimeout(() => { const m = $("np-sl-copied"); if (m) m.textContent = ""; }, 2000);
+  };
+}
+// 最初にチェックを入れるのは、予定に時間が入っている行だけ（0:00・空の行は外しておく）
+$("np-slack").onclick = () => {
+  np.slack = np.slack ? null : { title: "明日の予定", project: "こりっちチケット！V2",
+    off: new Set(npSlackRows().filter((r) => !(npMin(r.plan) > 0)).map((r) => r.id)) };
+  npRender();
+};
 async function npOpen(mode) {
-  np.mode = mode; np.q = ""; np.pick = "";  // 開き直したら今日の日報は今日に戻す
+  np.mode = mode; np.q = ""; np.pick = ""; np.slack = null;  // 開き直したら今日の日報は今日に戻す
   if (mode === "next") {
     let today = np.data && np.data.today;
     if (!today) { try { today = (await (await fetch("/api/nippo?date=today")).json()).today; } catch (e) {} }
@@ -1745,7 +1831,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   // URL と「#番号」をリンクにする。#番号の行き先は Redmine 欄のチケットの URL から取る（Redmine 欄が読めるまではリンクにしない）
   const linkify = (line) => esc(line).split(/(https?:\/\/[^\s<>"']+)/).map((part, i) => {
     // 長い URL は1行で切り、マウスを乗せるとページのタイトルと URL 全体を出す（タイトルは初めて乗せたときにサーバーから取る）
-    if (i % 2) return `<a class="mv-url" href="${part}" target="_blank" rel="noopener" title="${esc(linkTip(html2text(part)))}">${part}</a>`;
+    if (i % 2) { const u = html2text(part), t = linkTitles.get(u); return `<a class="mv-url${t && t.title ? " titled" : ""}" href="${part}" target="_blank" rel="noopener" title="${esc(linkTip(u))}">${esc(linkLabel(u))}</a>`; }
     return part.replace(/#(\d{4,6})(?!\d)/g, (t, n) => {
       const u = npIssueUrl(t);
       return u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="${esc(npSubject(n))}">${t}</a>` : t;
@@ -1771,15 +1857,18 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     const all = rows(ta.value);
     const shown = allOpen ? all : all.slice(0, PREVIEW);
     // 開いた見出し（と直しているまとまり）は、見出しと中身を1つの枠（.mv-group）に入れて、どこまでがそのまとまりか分かるようにする
-    const els = [];
+    const els = [], srcLines = ta.value.split("\n");
     let grp = null;  // {row, body}
     shown.forEach((r) => {
       if (r.type === "head") {
         const el = headEl(r); el.mvRow = r;
+        // 並び替えの取っ手（ドラッグして、ほかの見出しの上・下に落とす）
+        (el.matches(".mv-head") ? el : el.querySelector(".mv-head")).insertAdjacentHTML("afterbegin",
+          `<span class="mv-drag" draggable="true" title="ドラッグでまとまりごと並び替え（ほかの見出しの上・下に落とす）">⠿</span>`);
         const editing = sec && r.start === sec.start;
-        if (!openSet.has(r.text) && !editing) { grp = null; els.push(el); return; }
+        if (!openSet.has(r.text) && !editing) { grp = null; el.dataset.mvHead = "1"; els.push(el); return; }
         const g = document.createElement("div");
-        g.className = "mv-group" + (editing ? " editing" : ""); g.mvRow = r;
+        g.className = "mv-group" + (editing ? " editing" : ""); g.mvRow = r; g.dataset.mvHead = "1";
         const body = document.createElement("div");
         body.className = "mv-body";
         g.append(el, body);
@@ -1791,7 +1880,10 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
       if (r.type === "line" && sec && r.owner && r.owner.start === sec.start) return;  // 直している最中のまとまりは、本文の代わりに入力欄を出す
       if (r.type === "sep") { grp = null; const hr = document.createElement("hr"); hr.className = "mv-sep"; els.push(hr); return; }
       const d = document.createElement("div");
-      d.className = "mv-line"; d.innerHTML = linkify(r.text); d.mvRow = r;
+      d.className = "mv-line"; d.mvRow = r;
+      // チケットの見出しの中の「環境N 状態」の行（最初の1行）は、押すと環境・状態を選べる
+      if (r.owner && ticketOf(r.owner.text) && WS_LINE.test(r.text) && wsOf(r.owner, srcLines).li === r.li) d.append(wsEl(r.owner));
+      else d.innerHTML = linkify(r.text);
       if (grp && r.owner === grp.row) grp.body.append(d); else { grp = null; els.push(d); }
     });
     // 中身が無い（見出しだけ・空行だけ）の枠は、本文の欄を出さない
@@ -1804,9 +1896,10 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
       els.push(m);
     }
     view.replaceChildren(...els);
+    linkFill(view);
     fitBr(view);  // ブランチの行が長いときの ▸ 全部
     const st2 = view.querySelector(".mv-sec textarea");
-    if (st2 && sec.focus) { sec.focus = false; st2.focus(); try { st2.setSelectionRange(sec.caret, sec.caret); } catch (err) {} }
+    if (st2 && sec.focus) { sec.focus = false; st2.focus({ preventScroll: true }); try { st2.setSelectionRange(sec.caret, sec.caret); } catch (err) {} st2.scrollTop = 0; }
   }
   function headEl(r) {
         const open = openSet.has(r.text);
@@ -1814,20 +1907,19 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
         const h = document.createElement("div");
         h.className = "mv-head" + (open ? " open" : "");
         h.setAttribute("role", "button"); h.tabIndex = 0;
-        h.innerHTML = `<span>${linkify(r.text)}</span>` + (!open && r.count ? `<span class="mv-count">（${r.count} 行）</span>` : "")
+        h.innerHTML = `<span class="mv-title" title="${esc(r.text)}">${linkify(r.text)}</span>` + (!open && r.count ? `<span class="mv-count">（${r.count} 行）</span>` : "")
           + `<span class="mv-btns"><button class="mv-edit" title="このまとまり（見出しの行から次の ----- の手前まで）だけを直す">✎</button><button class="mv-del" title="このまとまり（見出しの行から次の ----- の手前まで）を消す（確認が出ます）">🗑</button></span>`;
         h.querySelector(".mv-edit").onclick = () => secOpen(r);
         h.querySelector(".mv-del").onclick = () => secDelete(r);
         h.setAttribute("aria-expanded", String(open));
         const toggle = () => { open ? openSet.delete(r.text) : openSet.add(r.text); saveOpen(); renderView(); };
-        h.onclick = (e) => { if (!e.target.closest("a, button, select, input")) toggle(); };
+        h.onclick = (e) => { if (!e.target.closest("a, button, select, input, .mv-drag")) toggle(); };
         h.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && !e.target.closest("a, button, select, input")) { e.preventDefault(); toggle(); } };
         // 見出しの最初の #番号のチケットに、Redmine 欄と同じ進捗（ステータス・今日の作業・tmux のセッション・ブランチ・履歴・関連）と色を出す。
         // 担当外のチケットは、サーバーがメモの見出しから番号を拾って memo_extra で返す
         const tn = (/[#＃]([0-9０-９]{4,6})(?![0-9０-９])/.exec(r.text) || [])[1];
         const tid = tn && tn.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
         const iss = tid && [...npIssues(), ...((rmData && rmData.memo_extra) || [])].find((x) => String(x.id) === tid);
-        if (tid) h.firstChild.insertAdjacentElement("beforebegin", wsEl(r));
         if (!iss) { if (tid && rmData) memoAsk(tid); return h; }
         const { info, cls } = rmInfo(iss);
         // ステータスは Redmine 欄と同じ部品（押すと選べるステータスを出し、選ぶと変更する）。その右に担当者
@@ -1892,7 +1984,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     const box = document.createElement("span");
     box.className = "mv-ws";
     if (!wsEdit || wsEdit.text !== r.text) {
-      box.innerHTML = `<button class="mv-ws-btn" title="環境と状態（押すと選べます。メモを直して書き換えても構いません）"><span class="${cur.env ? "" : "none"}">環境${cur.env || " –"}</span><span class="mv-ws-st ${cur.state ? "" : "none"}" title="${esc(cur.state)}">${esc(cur.state) || "状態 –"}</span></button>`;
+      box.innerHTML = `<button class="mv-ws-btn" title="押すと環境と状態を選べます（メモを直して書き換えても構いません）"><span class="${cur.env ? "" : "none"}">環境${cur.env || " –"}</span> <span class="${cur.state ? "" : "none"}">${esc(cur.state) || "状態 –"}</span></button>`;
       box.querySelector("button").onclick = () => { wsEdit = { text: r.text, free: !!cur.state && !WS_STATES.includes(cur.state) }; renderView(); };
       return box;
     }
@@ -1931,16 +2023,74 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     renderView();
     if (!conflict) save(false);
   }
+  // ---- まとまり（見出しの行から次の ----- の手前まで）をドラッグで並び替える ----
+  let dragText = null;  // ドラッグしている見出し
+  const dropTarget = (e) => { const el = e.target.closest && e.target.closest("[data-mv-head]"); return el && el.mvRow && el.mvRow.text !== dragText ? el : null; };
+  const clearDrop = () => view.querySelectorAll(".mv-drop-before, .mv-drop-after, .mv-dragging").forEach((x) => x.classList.remove("mv-drop-before", "mv-drop-after", "mv-dragging"));
+  view.addEventListener("dragstart", (e) => {
+    const hd = e.target.closest && e.target.closest(".mv-drag"), top = hd && hd.closest("[data-mv-head]");
+    if (!top || sec || !ta.hidden) { if (hd) e.preventDefault(); return; }
+    dragText = top.mvRow.text;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", dragText);
+    e.dataTransfer.setDragImage(top, 16, 12);
+    setTimeout(() => top.classList.add("mv-dragging"), 0);
+  });
+  view.addEventListener("dragover", (e) => {
+    if (dragText == null) return;
+    const el = dropTarget(e);
+    view.querySelectorAll(".mv-drop-before, .mv-drop-after").forEach((x) => { if (x !== el) x.classList.remove("mv-drop-before", "mv-drop-after"); });
+    if (!el) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = "move";
+    const b = el.getBoundingClientRect(), after = e.clientY > b.top + b.height / 2;
+    el.classList.toggle("mv-drop-after", after); el.classList.toggle("mv-drop-before", !after);
+  });
+  view.addEventListener("drop", (e) => {
+    if (dragText == null) return;
+    const el = dropTarget(e);
+    if (!el) return;
+    e.preventDefault();
+    const src = dragText, after = el.classList.contains("mv-drop-after");
+    dragText = null; clearDrop();
+    memoMove(src, el.mvRow.text, after);
+  });
+  view.addEventListener("dragend", () => { dragText = null; clearDrop(); });
+  // 見出しのまとまり（見出しの行から次の ----- の行の手前まで）の行番号 [start, end)
+  function blockOf(lines, headText) {
+    const start = lines.findIndex((l) => { const m = l.match(DASHES); return m && m[1] === headText; });
+    if (start < 0) return null;
+    let end = start + 1;
+    while (end < lines.length && !DASHES.test(lines[end])) end++;
+    return [start, end];
+  }
+  async function memoMove(srcText, dstText, after) {
+    if (sec || !ta.hidden) return;
+    await load(false);  // 別の画面で書き足された分を先に取り込む
+    const lines = ta.value.split("\n"), sb = blockOf(lines, srcText);
+    if (!sb) { renderView(); return; }
+    let block = lines.splice(sb[0], sb[1] - sb[0]);
+    // 最後のまとまりは末尾の空行を落とし、どこへ動かしても間に空行が増えないようにする
+    while (block.length > 1 && !block[block.length - 1].trim()) block.pop();
+    const db = blockOf(lines, dstText);
+    if (!db) { renderView(); return; }
+    let at = after ? db[1] : db[0];
+    if (after) while (at > db[0] + 1 && !lines[at - 1].trim()) at--;  // 下に落としたときは、相手の末尾の空行より前に入れる
+    lines.splice(at, 0, ...block);
+    ta.value = lines.join("\n");
+    dirty = true; clearTimeout(timer);
+    renderView();
+    if (!conflict) save(false);
+  }
   // ---- まとまり（見出しの行から次の ----- の手前まで）だけを直す ----
   let sec = null;  // {start, end, orig, draft, caret, focus, err}
-  // at: カーソルを置く行番号（メモ全体の行番号）。省略するとまとまりの最後
-  function secOpen(r, at) {
+  // 開いたときのカーソルは、見出しのすぐ下の行の頭（見出しだけのまとまりなら見出しの行の末尾）
+  function secOpen(r) {
     if (sec && sec.start === r.start) return;
     if (sec && sec.draft !== sec.orig && !confirm("別のまとまりで直している内容を捨てて、こちらを直しますか？")) return;
     const lines = ta.value.split("\n");
     const orig = lines.slice(r.start, r.end).join("\n").replace(/\s+$/, "");
-    const caret = at == null ? orig.length : Math.min(orig.length, lines.slice(r.start, at).reduce((n, l) => n + l.length + 1, 0) + lines[at].length);
-    sec = { start: r.start, end: r.end, orig, draft: orig, caret, focus: true, err: "" };
+    const nl = orig.indexOf("\n");
+    sec = { start: r.start, end: r.end, orig, draft: orig, caret: nl < 0 ? orig.length : nl + 1, focus: true, err: "" };
     renderView();
   }
   function secEditor() {
@@ -2049,7 +2199,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     if (e.target.closest("a, button, select, input, .mv-sec")) return;
     const el = e.target.closest(".mv-line, .mv-tk, .mv-head, .mv-group"), r = el && (el.mvRow || (el.parentElement && el.parentElement.mvRow));
     if (r && r.type === "head") { getSelection().removeAllRanges(); secOpen(r); return; }
-    if (r && r.owner) { getSelection().removeAllRanges(); secOpen(r.owner, r.li); return; }
+    if (r && r.owner) { getSelection().removeAllRanges(); secOpen(r.owner); return; }
     setEditing(true);
   });
   // ---- # を打つとチケットの候補を出し、選ぶと日報と同じ「#番号: 件名」で入れる ----

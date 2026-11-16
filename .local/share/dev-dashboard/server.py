@@ -1358,62 +1358,77 @@ def artifact_title_of(path, fallback=""):
     return fallback or os.path.splitext(os.path.basename(path))[0]
 
 
-def scan_artifacts():
-    """アーティファクトを公開した記録を探して id -> 題名を作る。前回から大きくなった記録だけ読み直す。"""
+def load_artifacts():
+    """前回までに集めた題名を読む（起動直後の題名の問い合わせに、記録を探し終える前から答えられるように）。"""
     with artifact_lock:
-        if not artifacts["ids"]:
-            try:
-                with open(ARTIFACT_FILE, encoding="utf-8") as f:
-                    artifacts.update(json.load(f))
-            except (OSError, ValueError):
-                pass
-        try:  # 全部を Python で読むと遅いので、公開の結果を含む記録だけ grep で絞る
-            out = subprocess.run(["grep", "-rlE", "--include=*.jsonl", r"Published [^ ]+ at https://claude\.ai/", os.path.join(HOME, ".claude", "projects")],
-                                 capture_output=True, text=True, timeout=120).stdout.split("\n")
-        except (OSError, subprocess.TimeoutExpired):
-            return
-        changed = False
-        for path in filter(None, out):
-            try:
-                size = os.path.getsize(path)
-            except OSError:
-                continue
-            if artifacts["files"].get(path) == size:
-                continue
-            descs = {}  # 公開したファイル -> Artifact を呼んだときの説明
-            try:
-                with open(path, encoding="utf-8", errors="replace") as f:
-                    for line in f:
-                        if '"Artifact"' in line and '"description"' in line:
-                            try:
-                                for b in json.loads(line).get("message", {}).get("content") or []:
-                                    if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Artifact":
-                                        inp = b.get("input") or {}
-                                        if inp.get("file_path") and inp.get("description"):
-                                            descs[inp["file_path"]] = inp["description"]
-                            except ValueError:
-                                pass
-                        if "Published " not in line:
-                            continue
-                        for fp, aid in ARTIFACT_PUB.findall(line.replace("\\n", "\n")):
-                            fp = fp.replace("\\/", "/")
-                            # 同じ id を出し直したときは、あとのほうで上書きする（題名を変えて出し直すことがある）
-                            old = artifacts["ids"].get(aid) or {}
-                            artifacts["ids"][aid] = {"title": artifact_title_of(fp, old.get("title", "")),
-                                                     "desc": descs.get(fp) or old.get("desc", ""), "path": fp}
-                            changed = True
-            except OSError:
-                continue
-            artifacts["files"][path] = size
-            changed = True
-        if changed:
-            try:
-                os.makedirs(CACHE, exist_ok=True)
-                with open(ARTIFACT_FILE + ".tmp", "w", encoding="utf-8") as f:
-                    json.dump(artifacts, f, ensure_ascii=False)
-                os.replace(ARTIFACT_FILE + ".tmp", ARTIFACT_FILE)
-            except OSError:
-                pass
+        try:
+            with open(ARTIFACT_FILE, encoding="utf-8") as f:
+                artifacts.update(json.load(f))
+        except (OSError, ValueError):
+            pass
+
+
+def scan_artifacts():
+    """アーティファクトを公開した記録を探して id -> 題名を作る。記録は前回読んだところから先だけ読む。
+
+    読んでいる間は artifact_lock を持たない（題名の問い合わせを待たせない）。見つけた分だけ、最後にまとめて足す。
+    """
+    try:  # 全部を Python で読むと遅いので、公開の結果を含む記録だけ grep で絞る
+        out = subprocess.run(["grep", "-rlE", "--include=*.jsonl", r"Published [^ ]+ at https://claude\.ai/", os.path.join(HOME, ".claude", "projects")],
+                             capture_output=True, text=True, timeout=120).stdout.split("\n")
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    with artifact_lock:
+        seen = dict(artifacts["files"])
+    found, sizes = [], {}  # found: (id, 公開したファイル, 説明)
+    for path in filter(None, out):
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            continue
+        prev = seen.get(path, 0)
+        if prev == size:
+            continue
+        descs = {}  # 公開したファイル -> Artifact を呼んだときの説明
+        try:
+            with open(path, "rb") as f:
+                f.seek(prev if prev < size else 0)
+                for raw in f:
+                    line = raw.decode("utf-8", "replace")
+                    if '"Artifact"' in line and '"description"' in line:
+                        try:
+                            for b in json.loads(line).get("message", {}).get("content") or []:
+                                if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Artifact":
+                                    inp = b.get("input") or {}
+                                    if inp.get("file_path") and inp.get("description"):
+                                        descs[inp["file_path"]] = inp["description"]
+                        except ValueError:
+                            pass
+                    if "Published " not in line:
+                        continue
+                    for fp, aid in ARTIFACT_PUB.findall(line.replace("\\n", "\n")):
+                        fp = fp.replace("\\/", "/")
+                        found.append((aid, fp, descs.get(fp, "")))
+        except OSError:
+            continue
+        sizes[path] = size
+    if not sizes:
+        return
+    titles = {fp: artifact_title_of(fp, "") for _, fp, _ in found}  # ファイルを読むのも lock の外で
+    with artifact_lock:
+        for aid, fp, desc in found:  # 同じ id を出し直したときは、あとのほうで上書きする（題名を変えて出し直すことがある）
+            old = artifacts["ids"].get(aid) or {}
+            artifacts["ids"][aid] = {"title": titles[fp] if os.path.exists(fp) else (old.get("title") or titles[fp]),
+                                     "desc": desc or old.get("desc", ""), "path": fp}
+        artifacts["files"].update(sizes)
+        data = json.dumps(artifacts, ensure_ascii=False)
+    try:
+        os.makedirs(CACHE, exist_ok=True)
+        with open(ARTIFACT_FILE + ".tmp", "w", encoding="utf-8") as f:
+            f.write(data)
+        os.replace(ARTIFACT_FILE + ".tmp", ARTIFACT_FILE)
+    except OSError:
+        pass
 
 
 def artifacts_loop():
@@ -1426,7 +1441,7 @@ def artifacts_loop():
 
 
 def link_title(url):
-    """メモの URL のページのタイトル（マウスを乗せたときに出す）。
+    """メモ・リンク一覧の URL のページのタイトル（リンクの文字にし、マウスを乗せると説明と URL を出す）。
 
     メモ・リンク一覧にある URL だけを引く（ほかの URL をこの Mac から取りに行かせない）。
     GitHub の PR・issue は gh、Redmine のチケットは API、Redmine の Wiki は URL のページ名、それ以外はページの <title>。
@@ -1470,6 +1485,8 @@ def link_title(url):
                     if title == "Claude Artifact":  # アーティファクトはログインしないと本当の題名が出ない。どれも同じ題名なので出さない
                         title = ""
     except Exception as e:
+        # 取れなかった URL も 1 時間は覚える（画面に出ている URL はまとめて引くので、毎回取りに行かないように）
+        link_title_cache[url] = ("", time.time() - 86400 + 3600)
         return {"error": f"タイトルを取れませんでした: {e}"}, 200
     link_title_cache[url] = (title[:200], time.time())
     return {"title": title[:200]}, 200
@@ -2646,6 +2663,7 @@ def main():
         sys.exit("config.json に key（合言葉）を設定してください")
     threading.Thread(target=cpu_loop, daemon=True).start()
     threading.Thread(target=links_loop, daemon=True).start()
+    load_artifacts()
     threading.Thread(target=artifacts_loop, daemon=True).start()
     threading.Thread(target=history_loop, daemon=True).start()
     threading.Thread(target=today_loop, daemon=True).start()
