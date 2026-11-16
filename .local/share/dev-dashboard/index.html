@@ -83,9 +83,12 @@ h1 { font-size: 15px; margin: 0; }
 .mv-sec-foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
 .mv-edit, .mv-del { padding: 0 5px; font-size: 11px; line-height: 16px; }
 .mv-del:hover { border-color: var(--bad); color: var(--bad); }
-.mv-btns { order: 9; flex: none; display: flex; gap: 4px; font-weight: 400; }
+/* アイコンは2列で並べる（チケットの見出しは ⧉ ▶ / ✎ 🗑 の2行） */
+.mv-btns { order: 9; flex: none; display: grid; grid-template-columns: repeat(2, auto); gap: 2px 4px; font-weight: 400; }
 .mv-tk .rm-info { padding-left: calc(1em + 6px); font-weight: 400; }
-.mv-st { flex: none; font-size: 11px; font-weight: 400; }
+/* ステータスの下に担当者（2行） */
+.mv-meta { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; font-size: 11px; font-weight: 400; line-height: 1.3; }
+.mv-who { color: var(--muted); white-space: nowrap; }
 .mv-head:focus-visible { outline: 2px solid var(--ok); outline-offset: 1px; }
 .mv-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.6em; }
 .mv-more { padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
@@ -865,7 +868,7 @@ document.addEventListener("change", async (e) => {
   } catch (err) { d = { error: "Mac に接続できません" }; }
   if (d.error) { rmSt = { id, error: d.error }; rmRerender(); return; }
   // すぐ見た目に反映してから、Redmine を取り直す（完了などにすると一覧から消える）
-  [...rmData.issues, ...(rmData.today_extra || [])].filter((i) => i.id === id).forEach((i) => { i.status = d.status; });
+  [...rmData.issues, ...(rmData.today_extra || []), ...(rmData.memo_extra || [])].filter((i) => i.id === id).forEach((i) => { i.status = d.status; });
   rmSt = null; rmRerender();
   loadRedmine(true);
 });
@@ -1207,10 +1210,11 @@ function npBuild(data, src) {
   }
   if (np.mode === "today" && data.is_today) {
     // 今日作業したのに日報に無いチケット（作業の記録は今日の分しか取れないので、別の日を選んだときは出さない）（作業時間の多い順）
+    // 最初はチェック無し。日報に足すものだけ自分でチェックする
     const worked = new Set([...Object.keys(ts), ...Object.keys((rmData && rmData.today && rmData.today.tickets) || {})]);
     [...worked].filter((n) => !have.has(n)).sort((a, b) => (ts[b] || 0) - (ts[a] || 0)).forEach((n) => {
       have.add(n);
-      add({ group: "miss", checked: true, name: npSubject(n), draft: ts[n] || 0, result: npFmt(npRound5(ts[n] || 0)) });
+      add({ group: "miss", checked: false, name: npSubject(n), draft: ts[n] || 0, result: npFmt(npRound5(ts[n] || 0)) });
     });
   }
   // メモに書いてあるチケット（まだ無いものだけ・メモに出てくる順）。件名は Redmine 欄から、無ければメモの「#番号: 件名」から取る
@@ -1762,13 +1766,16 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
         const toggle = () => { open ? openSet.delete(r.text) : openSet.add(r.text); saveOpen(); renderView(); };
         h.onclick = (e) => { if (!e.target.closest("a, button, select")) toggle(); };
         h.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && !e.target.closest("a, button, select")) { e.preventDefault(); toggle(); } };
-        // 見出しの最初の #番号が Redmine 欄のチケットなら、Redmine 欄と同じ進捗（ステータス・今日の作業・tmux のセッション・ブランチ・履歴・関連）と色を出す
+        // 見出しの最初の #番号のチケットに、Redmine 欄と同じ進捗（ステータス・今日の作業・tmux のセッション・ブランチ・履歴・関連）と色を出す。
+        // 担当外のチケットは、サーバーがメモの見出しから番号を拾って memo_extra で返す
         const tn = (/[#＃]([0-9０-９]{4,6})(?![0-9０-９])/.exec(r.text) || [])[1];
-        const iss = tn && npIssues().find((x) => String(x.id) === tn.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)));
-        if (!iss) return h;
+        const tid = tn && tn.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+        const iss = tid && [...npIssues(), ...((rmData && rmData.memo_extra) || [])].find((x) => String(x.id) === tid);
+        if (!iss) { if (tid && rmData) memoAsk(tid); return h; }
         const { info, cls } = rmInfo(iss);
-        // ステータスは Redmine 欄と同じ部品（押すと選べるステータスを出し、選ぶと変更する）
-        h.firstChild.insertAdjacentHTML("beforebegin", `<span class="mv-st">${rmStatusHtml(iss)}</span>`);
+        // ステータスは Redmine 欄と同じ部品（押すと選べるステータスを出し、選ぶと変更する）。その右に担当者
+        h.firstChild.insertAdjacentHTML("beforebegin", `<span class="mv-meta"><span class="mv-st">${rmStatusHtml(iss)}</span>`
+          + (iss.assignee ? `<span class="mv-who" title="担当者">${esc(iss.assignee)}</span>` : "") + `</span>`);
         // Redmine 欄と同じ ⧉（「#番号: タイトル」をリンク付きでコピー）と ▶（tmux の枠に送る）
         h.querySelector(".mv-btns").insertAdjacentHTML("afterbegin", `<button class="rm-copy" data-copy="${esc(`#${iss.id}: ${iss.subject}`)}" data-url="${esc(iss.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button><button class="rm-send" data-ticket="${iss.id}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button>`);
         const box = document.createElement("div");
@@ -1777,6 +1784,15 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
         // 進捗の行は見出しを開いたときだけ（閉じているときはタイトルの行・ステータス・背景色だけ）
         if (open && info.length) box.insertAdjacentHTML("beforeend", `<div class="rm-info">${info.join("")}</div>`);
         return box;
+  }
+  // 見出しに足したばかりの番号は、次の取り直し（60 秒ごと）を待たずに一度だけ Redmine を取り直す（保存されてから引くので少し待つ）
+  const memoAsked = new Set();
+  let memoAskTimer = 0;
+  function memoAsk(id) {
+    if (memoAsked.has(id)) return;
+    memoAsked.add(id);
+    clearTimeout(memoAskTimer);
+    memoAskTimer = setTimeout(() => loadRedmine(), 3000);
   }
   // ---- まとまり（見出しの行から次の ----- の手前まで）だけを直す ----
   let sec = null;  // {start, end, orig, draft, caret, focus, err}

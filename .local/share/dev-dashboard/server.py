@@ -1398,6 +1398,7 @@ def redmine_issues():
     data = {"host": host, "fetched_at": time.time(), "issues": [
         {"id": i["id"], "subject": i.get("subject", ""), "status": (i.get("status") or {}).get("name", ""),
          "priority": (i.get("priority") or {}).get("name", ""), "updated_on": i.get("updated_on", ""),
+         "assignee": (i.get("assigned_to") or {}).get("name", ""),
          "relations": [{**x, **info.get(x["id"], {})} for x in rels[i["id"]]]}
         for i in issues]}
     redmine_cache.update(at=time.time(), data=data)
@@ -1559,8 +1560,12 @@ def redmine_view():
               if i["status"]]  # Redmine に無い番号（チケットではない数字）は出さない
     recent.sort(key=lambda x: -recent_last.get(str(x["id"]), 0))
     items += recent
+    # ⑤ メモの見出し（「#番号 … -----」）の番号で、ここまでに無いもの（担当外で最近触っていない等）。メモの見出しの進捗用で、一覧には出さない
+    listed = mine | {str(i["id"]) for i in extra + recent}
+    memo_ids = {str(int(n)) for n in MEMO_HEAD_TICKET.findall(memo_read()["text"])} - listed
+    memo_extra = [{**item(i), "extra": True} for i in today_extra_issues(memo_ids, host, key, memo_cache) if i["status"]]
     return {"fetched_at": data["fetched_at"], "issues": items, "mine_count": len(mine), "history_days": HIST_DAYS, "pr_at": pr_cache["at"],
-            "today": tv, "today_extra": extra}
+            "today": tv, "today_extra": extra, "memo_extra": memo_extra}
 
 
 HIST_DAYS = 30
@@ -1720,6 +1725,9 @@ today_lock = threading.Lock()
 today = {"start": 0, "files": {}, "work": {}, "commits": {}, "commits_at": 0, "mins": {}}
 TS_GAP_MIN = 5  # 記録の間隔がこの分数以内なら、その間も作業していたとみなす（ct-timesheet と同じ）
 extra_cache = {"at": 0, "ids": (), "issues": []}  # 今日作業した担当外・完了済みのチケット（5 分覚える）
+memo_cache = {"at": 0, "ids": (), "issues": []}  # メモの見出しにある、ほかで引いていないチケット（5 分覚える）
+# メモの見出しの行（「… -----」）の最初の #番号（画面と同じく ＃・全角数字も拾う。\d は全角数字にも当たるので int で半角にする）
+MEMO_HEAD_TICKET = re.compile(r"^[ \t]*[^#\n]*?[#＃](\d{4,6})(?!\d)[^\n]*?-{3,}[ \t]*$", re.M)
 recent_cache = {"at": 0, "ids": (), "issues": []}  # 直近 HIST_DAYS 日に扱った担当外・完了済みのチケット（5 分覚える）
 
 
