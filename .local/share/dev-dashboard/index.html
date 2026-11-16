@@ -91,6 +91,8 @@ h1 { font-size: 15px; margin: 0; }
 .mv-who { color: var(--muted); white-space: nowrap; }
 .mv-head:focus-visible { outline: 2px solid var(--ok); outline-offset: 1px; }
 .mv-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.6em; }
+/* メモの URL は折り返さず、入りきらない分を「…」にする（title で全体を出す） */
+.mv-url { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .mv-more { padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
 .mv-more:hover { text-decoration: underline; }
 .sec { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
@@ -171,7 +173,8 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 .link-ticket { font-weight: 700; }
 .link-meta { display: flex; gap: 8px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .link-cat { color: var(--accent); }
-.link-url { color: var(--accent); word-break: break-all; }
+/* リンク一覧の URL もメモと同じく1行で切る（全体はマウスを乗せて見る） */
+.link-url { color: var(--accent); display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .link-ctx { color: var(--muted); font-size: 12px; word-break: break-all; }
 .link-more { margin-top: 6px; display: flex; align-items: center; gap: 8px; }
 .link-more .label { color: var(--muted); font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -896,9 +899,30 @@ $("modal").addEventListener("mousedown", (e) => { downOnOverlay = e.target.id ==
 $("modal").addEventListener("click", (e) => { if (e.target.id === "modal" && downOnOverlay) closePane(); downOnOverlay = false; });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePane(); });
 
+// メモ・リンク一覧の URL: 長いものは1行で切り、マウスを乗せるとページのタイトル（アーティファクトは題名と説明）と URL 全体を出す。
+// タイトルは初めて乗せたときにサーバーから取る（GitHub・Redmine は API、アーティファクトは公開したときの記録、それ以外はページの <title>）
+const linkTitles = new Map();  // URL -> {title, desc}（取得中は {loading: true}）
+const html2text = (h) => { const d = document.createElement("textarea"); d.innerHTML = h; return d.value; };
+function linkTip(url) {
+  const t = linkTitles.get(url);
+  if (t && t.loading) return `タイトルを取得中…\n${url}`;
+  return [t && t.title, t && t.desc, url].filter(Boolean).join("\n");
+}
+document.addEventListener("mouseover", async (e) => {
+  const a = e.target.closest && e.target.closest("a.mv-url, a.link-url");
+  if (!a) return;
+  const url = a.getAttribute("href");  // 属性は読むと &amp; などが戻っている
+  if (linkTitles.has(url)) { a.title = linkTip(url); return; }
+  linkTitles.set(url, { loading: true });
+  a.title = linkTip(url);
+  let d;
+  try { d = await (await fetch(`/api/link-title?u=${encodeURIComponent(url)}`)).json(); } catch (err) { d = {}; }
+  linkTitles.set(url, { title: d.title || "", desc: d.desc || "" });
+  document.querySelectorAll("a.mv-url, a.link-url").forEach((x) => { if (x.getAttribute("href") === url) x.title = linkTip(url); });
+});
 // URL が書かれていた行を出し、その中の URL 部分をリンクにする（行が無ければ URL だけ）
 function linkedContext(v) {
-  const a = `<a class="link-url" href="${esc(v.url)}" target="_blank" rel="noopener noreferrer">${esc(v.url)}</a>`;
+  const a = `<a class="link-url" href="${esc(v.url)}" target="_blank" rel="noopener noreferrer" title="${esc(linkTip(v.url))}">${esc(v.url)}</a>`;
   const ctx = v.context || "";
   const i = ctx.indexOf(v.url);
   if (i < 0) return a;
@@ -1706,7 +1730,8 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   const saveOpen = () => { try { localStorage.setItem(OPEN_KEY, JSON.stringify([...openSet])); localStorage.setItem(ALL_KEY, allOpen ? "1" : "0"); } catch (e) {} };
   // URL と「#番号」をリンクにする。#番号の行き先は Redmine 欄のチケットの URL から取る（Redmine 欄が読めるまではリンクにしない）
   const linkify = (line) => esc(line).split(/(https?:\/\/[^\s<>"']+)/).map((part, i) => {
-    if (i % 2) return `<a href="${part}" target="_blank" rel="noopener">${part}</a>`;
+    // 長い URL は1行で切り、マウスを乗せるとページのタイトルと URL 全体を出す（タイトルは初めて乗せたときにサーバーから取る）
+    if (i % 2) return `<a class="mv-url" href="${part}" target="_blank" rel="noopener" title="${esc(linkTip(html2text(part)))}">${part}</a>`;
     return part.replace(/#(\d{4,6})(?!\d)/g, (t, n) => {
       const u = npIssueUrl(t);
       return u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="${esc(npSubject(n))}">${t}</a>` : t;
@@ -1722,7 +1747,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
       // start〜end（end は含まない）が、そのまとまりの行番号（見出しの行も含む）。まとまりだけ直すときに使う
       if (m && /[^\s-]/.test(m[1])) { head = { type: "head", text: m[1], count: 0, start: li, end: li + 1 }; out.push(head); }
       else if (m) { head = null; out.push({ type: "sep" }); }
-      else if (head) { head.count++; head.end = li + 1; if (openSet.has(head.text)) out.push({ type: "line", text: line, owner: head }); }
+      else if (head) { head.count++; head.end = li + 1; if (openSet.has(head.text)) out.push({ type: "line", text: line, owner: head, li }); }
       else out.push({ type: "line", text: line });
     });
     while (out.length && out[out.length - 1].type === "line" && !out[out.length - 1].text.trim()) out.pop();
@@ -1734,10 +1759,10 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     const els = shown.flatMap((r) => {
       if (r.type === "line" && sec && r.owner && r.owner.start === sec.start) return [];  // 直している最中のまとまりは、本文の代わりに入力欄を出す
       if (r.type === "head" && sec && r.start === sec.start) return [headEl(r), secEditor()];
-      if (r.type === "head") return [headEl(r)];
+      if (r.type === "head") { const el = headEl(r); el.mvRow = r; return [el]; }
       if (r.type === "sep") { const hr = document.createElement("hr"); hr.className = "mv-sep"; return hr; }
       const d = document.createElement("div");
-      d.className = "mv-line"; d.innerHTML = linkify(r.text);
+      d.className = "mv-line"; d.innerHTML = linkify(r.text); d.mvRow = r;
       return d;
     });
     if (all.length > PREVIEW) {
@@ -1796,10 +1821,14 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   }
   // ---- まとまり（見出しの行から次の ----- の手前まで）だけを直す ----
   let sec = null;  // {start, end, orig, draft, caret, focus, err}
-  function secOpen(r) {
+  // at: カーソルを置く行番号（メモ全体の行番号）。省略するとまとまりの最後
+  function secOpen(r, at) {
+    if (sec && sec.start === r.start) return;
+    if (sec && sec.draft !== sec.orig && !confirm("別のまとまりで直している内容を捨てて、こちらを直しますか？")) return;
     const lines = ta.value.split("\n");
     const orig = lines.slice(r.start, r.end).join("\n").replace(/\s+$/, "");
-    sec = { start: r.start, end: r.end, orig, draft: orig, caret: orig.length, focus: true, err: "" };
+    const caret = at == null ? orig.length : Math.min(orig.length, lines.slice(r.start, at).reduce((n, l) => n + l.length + 1, 0) + lines[at].length);
+    sec = { start: r.start, end: r.end, orig, draft: orig, caret, focus: true, err: "" };
     renderView();
   }
   function secEditor() {
@@ -1901,7 +1930,14 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     } else renderView();
   }
   editBtn.onclick = () => setEditing(ta.hidden);
-  view.addEventListener("dblclick", (e) => { if (!e.target.closest("a, button, select, .mv-sec")) setEditing(true); });
+  // ダブルクリック: 開閉のまとまり（見出しかその中の行）ならそのまとまりだけ、それ以外はメモ全体を直す
+  view.addEventListener("dblclick", (e) => {
+    if (e.target.closest("a, button, select, .mv-sec")) return;
+    const el = e.target.closest(".mv-line, .mv-tk, .mv-head"), r = el && (el.mvRow || (el.parentElement && el.parentElement.mvRow));
+    if (r && r.type === "head") { getSelection().removeAllRanges(); secOpen(r); return; }
+    if (r && r.owner) { getSelection().removeAllRanges(); secOpen(r.owner, r.li); return; }
+    setEditing(true);
+  });
   // ---- # を打つとチケットの候補を出し、選ぶと日報と同じ「#番号: 件名」で入れる ----
   const sg = $("memo-suggest");
   let sgItems = [], sgSel = 0, sgStart = -1;

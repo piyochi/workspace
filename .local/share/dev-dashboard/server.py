@@ -22,6 +22,9 @@
 設定は config.json（無ければ既定値）。
 """
 import glob
+import html
+import urllib.parse
+import urllib.request
 import hmac
 import json
 import sys
@@ -1329,6 +1332,149 @@ def redmine_set_status(issue_id, status_id):
     return {"ok": True, "status": now.get("name", "")}, 200
 
 
+link_title_cache = {}  # URL -> (タイトル, 取った時刻)。1 日覚える
+
+# ---- アーティファクトの題名 ----
+# claude.ai のアーティファクトはログインしないと題名が見えない。Claude の記録に残る公開の結果
+# （「Published <ファイル> at https://claude.ai/artifact/<id>」）から元のファイルを引き、その <title> と説明を使う
+ARTIFACT_FILE = os.path.join(CACHE, "artifact_titles.json")
+ARTIFACT_PUB = re.compile(r"Published (\S+?) at https://claude\.ai/(?:code/)?artifact/([\w-]+)")
+artifact_lock = threading.Lock()
+artifacts = {"files": {}, "ids": {}}  # files: 記録のパス -> 見終えた大きさ / ids: id -> {"title", "desc", "path"}
+
+
+def artifact_title_of(path, fallback=""):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            head = f.read(200_000)
+        t = re.search(r"<title[^>]*>(.*?)</title>", head, re.S | re.I)
+        if t and t.group(1).strip():
+            return html.unescape(re.sub(r"\s+", " ", t.group(1))).strip()
+        h = re.search(r"^#\s+(.+)$", head, re.M)  # Markdown なら最初の見出し
+        if h:
+            return h.group(1).strip()
+    except OSError:
+        pass
+    return fallback or os.path.splitext(os.path.basename(path))[0]
+
+
+def scan_artifacts():
+    """アーティファクトを公開した記録を探して id -> 題名を作る。前回から大きくなった記録だけ読み直す。"""
+    with artifact_lock:
+        if not artifacts["ids"]:
+            try:
+                with open(ARTIFACT_FILE, encoding="utf-8") as f:
+                    artifacts.update(json.load(f))
+            except (OSError, ValueError):
+                pass
+        try:  # 全部を Python で読むと遅いので、公開の結果を含む記録だけ grep で絞る
+            out = subprocess.run(["grep", "-rlE", "--include=*.jsonl", r"Published [^ ]+ at https://claude\.ai/", os.path.join(HOME, ".claude", "projects")],
+                                 capture_output=True, text=True, timeout=120).stdout.split("\n")
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        changed = False
+        for path in filter(None, out):
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                continue
+            if artifacts["files"].get(path) == size:
+                continue
+            descs = {}  # 公開したファイル -> Artifact を呼んだときの説明
+            try:
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        if '"Artifact"' in line and '"description"' in line:
+                            try:
+                                for b in json.loads(line).get("message", {}).get("content") or []:
+                                    if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Artifact":
+                                        inp = b.get("input") or {}
+                                        if inp.get("file_path") and inp.get("description"):
+                                            descs[inp["file_path"]] = inp["description"]
+                            except ValueError:
+                                pass
+                        if "Published " not in line:
+                            continue
+                        for fp, aid in ARTIFACT_PUB.findall(line.replace("\\n", "\n")):
+                            fp = fp.replace("\\/", "/")
+                            # 同じ id を出し直したときは、あとのほうで上書きする（題名を変えて出し直すことがある）
+                            old = artifacts["ids"].get(aid) or {}
+                            artifacts["ids"][aid] = {"title": artifact_title_of(fp, old.get("title", "")),
+                                                     "desc": descs.get(fp) or old.get("desc", ""), "path": fp}
+                            changed = True
+            except OSError:
+                continue
+            artifacts["files"][path] = size
+            changed = True
+        if changed:
+            try:
+                os.makedirs(CACHE, exist_ok=True)
+                with open(ARTIFACT_FILE + ".tmp", "w", encoding="utf-8") as f:
+                    json.dump(artifacts, f, ensure_ascii=False)
+                os.replace(ARTIFACT_FILE + ".tmp", ARTIFACT_FILE)
+            except OSError:
+                pass
+
+
+def artifacts_loop():
+    while True:
+        try:
+            scan_artifacts()
+        except Exception as e:
+            print(f"{time.strftime('%F %T')} アーティファクトの題名を集められませんでした: {e}", file=sys.stderr, flush=True)
+        time.sleep(300)
+
+
+def link_title(url):
+    """メモの URL のページのタイトル（マウスを乗せたときに出す）。
+
+    メモ・リンク一覧にある URL だけを引く（ほかの URL をこの Mac から取りに行かせない）。
+    GitHub の PR・issue は gh、Redmine のチケットは API、Redmine の Wiki は URL のページ名、それ以外はページの <title>。
+    """
+    with links_lock:
+        in_links = url in links
+    if not re.fullmatch(r"https?://\S+", url) or not (in_links or url in memo_read()["text"]):
+        return {"error": "メモ・リンク一覧に無い URL です"}, 403
+    a = re.match(r"https://claude\.ai/(?:code/)?artifact/([\w-]+)", url)
+    if a:  # アーティファクトは公開した記録から（見つからなければ題名なし）。記録は 5 分ごとに読み直すので覚えない
+        with artifact_lock:
+            hit = artifacts["ids"].get(a.group(1))
+        return {"title": hit["title"] if hit else "", "desc": hit["desc"] if hit else ""}, 200
+    hit = link_title_cache.get(url)
+    if hit and time.time() - hit[1] < 86400:
+        return {"title": hit[0]}, 200
+    title = ""
+    host, _ = redmine_creds()
+    try:
+        m = re.match(r"https://github\.com/([\w.-]+)/([\w.-]+)/(?:pull|issues)/(\d+)", url)
+        r = re.match(re.escape(host) + r"/issues/(\d+)", url) if host else None
+        w = re.match(re.escape(host) + r"/projects/[^/]+/wiki/([^?#]+)", url) if host else None
+        if m:
+            gh = shutil.which("gh") or "/opt/homebrew/bin/gh"
+            out = subprocess.run([gh, "api", f"repos/{m.group(1)}/{m.group(2)}/issues/{m.group(3)}", "--jq", ".title"],
+                                 capture_output=True, text=True, timeout=15)
+            if out.returncode == 0:
+                title = f"{m.group(2)}#{m.group(3)}: {out.stdout.strip()}"
+        elif r:
+            i = redmine_call(f"/issues/{r.group(1)}.json").get("issue", {})
+            title = f"#{r.group(1)}: {i.get('subject', '')}"
+        elif w:
+            title = "Wiki: " + urllib.parse.unquote(w.group(1)).replace("_", " ")
+        else:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (dev-dashboard)", "Accept-Language": "ja"})
+            with urllib.request.urlopen(req, timeout=8) as res:
+                if "html" in (res.headers.get("Content-Type") or ""):
+                    body = res.read(300_000).decode(res.headers.get_content_charset() or "utf-8", "replace")
+                    t = re.search(r"<title[^>]*>(.*?)</title>", body, re.S | re.I)
+                    title = html.unescape(re.sub(r"\s+", " ", t.group(1))).strip() if t else ""
+                    if title == "Claude Artifact":  # アーティファクトはログインしないと本当の題名が出ない。どれも同じ題名なので出さない
+                        title = ""
+    except Exception as e:
+        return {"error": f"タイトルを取れませんでした: {e}"}, 200
+    link_title_cache[url] = (title[:200], time.time())
+    return {"title": title[:200]}, 200
+
+
 def redmine_issues():
     """自分担当の未完了チケット（redmine.sh list と同じ条件）。5 分だけ覚えておく。"""
     if redmine_cache["data"] is not None and time.time() - redmine_cache["at"] < 300:
@@ -2361,6 +2507,8 @@ class Handler(BaseHTTPRequestHandler):
             if date != "today" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
                 return self.send_json({"error": "date が不正です"}, 400)
             self.send_json(*nippo_prev(date))
+        elif self.path == "/api/link-title":
+            self.send_json(*link_title(self.query.get("u", [""])[0]))
         elif self.path == "/api/redmine/issue":
             n = self.query.get("ticket", [""])[0]
             if not re.fullmatch(r"\d{4,6}", n):
@@ -2498,6 +2646,7 @@ def main():
         sys.exit("config.json に key（合言葉）を設定してください")
     threading.Thread(target=cpu_loop, daemon=True).start()
     threading.Thread(target=links_loop, daemon=True).start()
+    threading.Thread(target=artifacts_loop, daemon=True).start()
     threading.Thread(target=history_loop, daemon=True).start()
     threading.Thread(target=today_loop, daemon=True).start()
     threading.Thread(target=pr_loop, daemon=True).start()
