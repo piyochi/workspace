@@ -143,8 +143,18 @@ def sessionstart(inp):
              "git の状態を取り直してから作業を続けてください。")
 
 
+def ctx():
+    """スキルから呼ぶ: 今の会話の大きさ（トークン数）を出す。分からなければ 0。"""
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    paths = glob.glob(os.path.expanduser(f"~/.claude/projects/*/{sid}.jsonl")) if sid else []
+    print(context_tokens(paths[0]) if paths else 0)
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    if mode == "ctx":
+        ctx()
+        return
     try:
         inp = json.load(sys.stdin)
     except ValueError:
