@@ -78,6 +78,10 @@ h1 { font-size: 15px; margin: 0; }
 .mv-tk { margin: 0 -8px; padding: 2px 8px; }
 .mv-tk.active { background: color-mix(in srgb, var(--accent) 9%, var(--card)); }
 .mv-tk.today { background: color-mix(in srgb, var(--ok) 8%, var(--card)); }
+.mv-sec { margin: 4px 0 6px calc(1em + 6px); }
+.mv-sec textarea { width: 100%; box-sizing: border-box; min-height: 0; }
+.mv-sec-foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+.mv-edit { padding: 0 5px; font-size: 11px; line-height: 16px; }
 .mv-btns { order: 9; flex: none; display: flex; gap: 4px; font-weight: 400; }
 .mv-tk .rm-info { padding-left: calc(1em + 6px); font-weight: 400; }
 .mv-st { flex: none; font-size: 11px; font-weight: 400; }
@@ -208,6 +212,10 @@ button.rm-send { flex: none; font-size: 10px; padding: 0 5px; line-height: 16px;
 .np-group { margin: 10px 0 2px; font-size: 11px; font-weight: 600; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .np-group button, .np-group input { font-size: 11px; font-weight: 400; padding: 1px 6px; }
 .np-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 56px 56px 74px minmax(140px, 30%); gap: 4px 6px; align-items: start; padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px; }
+.np-row.sum { border-top: 2px solid var(--line); font-weight: 700; font-variant-numeric: tabular-nums; align-items: center; }
+.np-row.sum .np-sum-label { text-align: right; }
+.np-row.sum .np-sum-v { padding: 0 4px; }
+.np-row.sum .muted { color: var(--muted); font-weight: 400; }
 .np-row.head { border-top: 0; color: var(--muted); font-size: 11px; padding-bottom: 0; }
 .np-row.off .np-name, .np-row.off input[type=text], .np-row.off textarea { opacity: .45; }
 .np-row.del { background: color-mix(in srgb, var(--bad) 8%, var(--card)); }
@@ -388,7 +396,7 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
     </div>
     <div class="link-filter links-modal-filter np-bar">
       <button id="np-tab-today">今日</button><button id="np-tab-next">次回</button>
-      <input type="date" id="np-date" title="日報の日付（次回は次の平日が入ります。変えられます）">
+      <input type="date" id="np-date" title="日報の日付（今日の日報は今日、次回は次の平日が入ります。どちらも変えられます）">
       <a id="np-hrmos" href="#" target="_blank" rel="noopener noreferrer">HRMOS で開く ↗</a>
     </div>
     <div class="links-modal-body" id="np-body"></div>
@@ -1094,7 +1102,7 @@ function rmRows(items, opts = {}) {
         ${rmStatusHtml(i)}
         <span class="rm-subj" title="#${i.id}: ${esc(i.subject)}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${i.id}</a>: ${esc(i.subject)}</span>
         <button class="rm-copy" data-copy="${esc(`#${i.id}: ${i.subject}`)}" data-url="${esc(i.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button>
-        <button class="rm-memo" data-memo="${esc(`#${i.id}: ${i.subject}`)}" title="「#番号: タイトル -----」をメモの最後に見出しとして足す">✎</button>
+        <button class="rm-memo" data-memo="${esc(`#${i.id}: ${i.subject}`)}" title="「#番号: タイトル -----」をメモの一番上の ----- の真上に見出しとして足す">✎</button>
         <button class="rm-send" data-ticket="${i.id}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button>
         ${!i.history.length && !full ? `<button class="rm-full" data-ticket="${i.id}" title="直近${rmData ? rmData.history_days : 30}日に見つからなかったので、残っている Claude・Codex の記録全部と各環境の git のコミットから探す">全期間で調べる</button>` : ""}</div>
       ${info.length ? `<div class="rm-info">${info.join("")}</div>` : ""}
@@ -1196,8 +1204,8 @@ function npBuild(data, src) {
           service_medium_category_id: r.service_medium_category_id, service_category_id: r.service_category_id } });
     });
   }
-  if (np.mode === "today") {
-    // 今日作業したのに日報に無いチケット（作業時間の多い順）
+  if (np.mode === "today" && data.is_today) {
+    // 今日作業したのに日報に無いチケット（作業の記録は今日の分しか取れないので、別の日を選んだときは出さない）（作業時間の多い順）
     const worked = new Set([...Object.keys(ts), ...Object.keys((rmData && rmData.today && rmData.today.tickets) || {})]);
     [...worked].filter((n) => !have.has(n)).sort((a, b) => (ts[b] || 0) - (ts[a] || 0)).forEach((n) => {
       have.add(n);
@@ -1236,8 +1244,8 @@ function npRender() {
   $("np-tab-today").classList.toggle("on", np.mode === "today");
   $("np-tab-next").classList.toggle("on", np.mode === "next");
   $("np-date").value = np.date;
-  $("np-date").disabled = np.mode === "today";
-  $("np-title").textContent = np.mode === "today" ? "今日の日報" : "次回の日報";
+  const otherDay = np.mode === "today" && np.data && !np.data.is_today;
+  $("np-title").textContent = np.mode === "today" ? (otherDay ? `${np.date} の日報` : "今日の日報") : "次回の日報";
   $("np-meta").textContent = np.date;
   $("np-save").disabled = np.busy || !np.data;
   $("np-msg").textContent = np.msg; $("np-msg").className = `np-msg ${np.msgCls}`;
@@ -1255,11 +1263,12 @@ function npRender() {
   body.innerHTML = [
     ts ? `<div class="np-note">⏱ 下書き = 今日（朝4:00以降）Claude・Codex を動かしていた時間をチケットごとに分けたもの（並行は等分・5分単位に丸め）。計 ${npFmt(ts.total)}、うちチケット以外 ${npFmt(ts.other)}。ブラウザ確認や打ち合わせの時間は入りません。</div>` : "",
     `<div class="np-group">登録済みの行（${np.data.rows.length}）<button id="np-prev" ${np.busy || np.srcDate ? "disabled" : ""} title="${np.srcDate ? `${np.srcDate} の日報と突き合わせ済みです` : `この日より前で、行のある一番近い日の日報を読み、この日報に無い行だけを足します（最大2か月前まで。時間は 0:00、備考は引き継ぎ）`}">前回の日報から不足分を足す</button>${ts ?`<button id="np-apply">下書きを実績に入れる</button><input type="text" id="np-target" size="5" value="${esc(np.target)}" placeholder="8:00" title="実績の合計をこの時間に合わせて、下書きの割合で配る（空なら下書きのまま）"><span>に合わせて配る${np.data.work_total ? `（HRMOS の総労働時間 ${esc(np.data.work_total)}）` : "（総労働時間は退勤の打刻後に入ります）"}</span>` : ""}</div>`,
-    np.data.rows.length ? head + rowsOf((r) => r.kind === "cur") : `<div class="empty">まだ行がありません</div>`,
+    (np.data.rows.length ? head + rowsOf((r) => r.kind === "cur") : `<div class="empty">まだ行がありません</div>`)
+      + `<div class="np-row sum" id="np-sum"></div>`,  // 予定・実績の合計（npTotals で入れる）
     np.mode === "next" || npCopied()
       ? `<div class="np-group">${np.srcDate ? `${esc(np.srcDate)} の` : "今日の"}日報からコピーする行（${idx.filter(([r]) => r.group === "copy").length}）・時間は 0:00、備考は引き継ぎ</div>${rowsOf((r) => r.group === "copy") || `<div class="empty">コピーする行はありません</div>`}`
       : "",
-    np.mode === "today"
+    np.mode === "today" && np.data.is_today
       ? `<div class="np-group">今日作業したのに日報に無いもの（${idx.filter(([r]) => r.group === "miss").length}）</div>${rowsOf((r) => r.group === "miss") || `<div class="empty">不足はありません</div>`}`
       : "",
     // メモのチケットは既定で閉じる（閉じていても、チェックを入れた行は見せる＝登録される行を隠さない）
@@ -1280,6 +1289,14 @@ function npTotals() {
   const on = np.rows.filter((r) => r.kind === "cur" ? !r.del : r.checked);
   const sum = (f) => on.reduce((a, r) => a + (npMin(r[f]) || 0), 0);
   const adds = np.rows.filter((r) => r.kind === "add" && r.checked).length, dels = np.rows.filter((r) => r.del).length;
+  // 表の中の合計の行: 予定・実績の列の真下に、登録される行（削除する行を除き、チェックした追加の行を含む）の合計を出す
+  const sumEl = $("np-sum");
+  if (sumEl) {
+    const draft = on.reduce((a, r) => a + npRound5(r.draft || 0), 0);
+    sumEl.innerHTML = `<span></span><span class="np-sum-label" title="削除する行を除き、チェックを入れた追加の行を含む（登録したときの合計）">合計${adds || dels ? `（登録後・${[adds ? `+${adds}行` : "", dels ? `−${dels}行` : ""].filter(Boolean).join("・")}）` : ""}</span>`
+      + `<span class="np-sum-v">${npFmt(sum("plan"))}</span><span class="np-sum-v">${npFuture() ? "–" : npFmt(sum("result"))}</span>`
+      + `<span class="np-sum-v muted">${draft ? `⏱ ${npFmt(draft)}` : ""}</span><span></span>`;
+  }
   $("np-total").textContent = `予定 ${npFmt(sum("plan"))}${npFuture() ? "" : `・実績 ${npFmt(sum("result"))}`}${adds ? `・+${adds}` : ""}${dels ? `・−${dels}` : ""}`;
 }
 async function npLoad() {
@@ -1287,7 +1304,7 @@ async function npLoad() {
   try {
     if (!rmData) await loadRedmine();
     const get = async (d) => (await fetch(`/api/nippo?date=${d}`)).json();
-    const [data, src] = await Promise.all([get(np.mode === "today" ? "today" : np.date), np.mode === "next" ? get("today") : null]);
+    const [data, src] = await Promise.all([get(np.mode === "today" ? np.pick || "today" : np.date), np.mode === "next" ? get("today") : null]);
     if (data.error) throw new Error(data.error);
     if (src && src.error) throw new Error(src.error);
     if (np.mode === "today") np.date = data.date;
@@ -1300,7 +1317,7 @@ async function npLoad() {
   np.busy = false; npRender();
 }
 async function npOpen(mode) {
-  np.mode = mode; np.q = "";
+  np.mode = mode; np.q = ""; np.pick = "";  // 開き直したら今日の日報は今日に戻す
   if (mode === "next") {
     let today = np.data && np.data.today;
     if (!today) { try { today = (await (await fetch("/api/nippo?date=today")).json()).today; } catch (e) {} }
@@ -1319,7 +1336,12 @@ $("np-tab-today").onclick = () => npOpen("today");
 $("np-tab-next").onclick = () => npOpen("next");
 $("np-back").onclick = (e) => { e.preventDefault(); npClose(); };
 $("np-reload").onclick = () => npLoad();
-$("np-date").onchange = (e) => { if (np.mode === "next" && e.target.value) { np.date = e.target.value; npLoad(); } };
+// 今日の日報でも日付を選べる（選んだ日の日報を読む。下書き・「今日作業したのに日報に無いもの」は今日のときだけ）
+$("np-date").onchange = (e) => {
+  if (!e.target.value) return;
+  if (np.mode === "today") np.pick = e.target.value; else np.date = e.target.value;
+  npLoad();
+};
 $("np-body").addEventListener("input", (e) => {
   const t = e.target;
   if (t.id === "np-q") {  // 絞り込みは打つたびに描き直し、カーソルを戻す
@@ -1682,48 +1704,25 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   function rows(text) {
     const out = [];
     let head = null;  // 今いる見出しのまとまり（無ければ null）
-    for (const line of text.split("\n")) {
+    text.split("\n").forEach((line, li) => {
       const m = line.match(DASHES);
-      if (m && /[^\s-]/.test(m[1])) { head = { type: "head", text: m[1], count: 0 }; out.push(head); }
+      // start〜end（end は含まない）が、そのまとまりの行番号（見出しの行も含む）。まとまりだけ直すときに使う
+      if (m && /[^\s-]/.test(m[1])) { head = { type: "head", text: m[1], count: 0, start: li, end: li + 1 }; out.push(head); }
       else if (m) { head = null; out.push({ type: "sep" }); }
-      else if (head) { head.count++; if (openSet.has(head.text)) out.push({ type: "line", text: line }); }
+      else if (head) { head.count++; head.end = li + 1; if (openSet.has(head.text)) out.push({ type: "line", text: line, owner: head }); }
       else out.push({ type: "line", text: line });
-    }
+    });
     while (out.length && out[out.length - 1].type === "line" && !out[out.length - 1].text.trim()) out.pop();
     return out;
   }
   function renderView() {
     const all = rows(ta.value);
     const shown = allOpen ? all : all.slice(0, PREVIEW);
-    const els = shown.map((r) => {
+    const els = shown.flatMap((r) => {
+      if (r.type === "line" && sec && r.owner && r.owner.start === sec.start) return [];  // 直している最中のまとまりは、本文の代わりに入力欄を出す
+      if (r.type === "head" && sec && r.start === sec.start) return [headEl(r), secEditor()];
+      if (r.type === "head") return [headEl(r)];
       if (r.type === "sep") { const hr = document.createElement("hr"); hr.className = "mv-sep"; return hr; }
-      if (r.type === "head") {
-        const open = openSet.has(r.text);
-        // 見出しの中の #番号・URL もリンクにするので、button ではなく div を押せるようにする（リンクを押したときは開け閉めしない）
-        const h = document.createElement("div");
-        h.className = "mv-head" + (open ? " open" : "");
-        h.setAttribute("role", "button"); h.tabIndex = 0;
-        h.innerHTML = `<span>${linkify(r.text)}</span>` + (!open && r.count ? `<span class="mv-count">（${r.count} 行）</span>` : "");
-        h.setAttribute("aria-expanded", String(open));
-        const toggle = () => { open ? openSet.delete(r.text) : openSet.add(r.text); saveOpen(); renderView(); };
-        h.onclick = (e) => { if (!e.target.closest("a, button, select")) toggle(); };
-        h.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && !e.target.closest("a, button, select")) { e.preventDefault(); toggle(); } };
-        // 見出しの最初の #番号が Redmine 欄のチケットなら、Redmine 欄と同じ進捗（ステータス・今日の作業・tmux のセッション・ブランチ・履歴・関連）と色を出す
-        const tn = (/[#＃]([0-9０-９]{4,6})(?![0-9０-９])/.exec(r.text) || [])[1];
-        const iss = tn && npIssues().find((x) => String(x.id) === tn.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)));
-        if (!iss) return h;
-        const { info, cls } = rmInfo(iss);
-        // ステータスは Redmine 欄と同じ部品（押すと選べるステータスを出し、選ぶと変更する）
-        h.firstChild.insertAdjacentHTML("beforebegin", `<span class="mv-st">${rmStatusHtml(iss)}</span>`);
-        // Redmine 欄と同じ ⧉（「#番号: タイトル」をリンク付きでコピー）と ▶（tmux の枠に送る）
-        h.insertAdjacentHTML("beforeend", `<span class="mv-btns"><button class="rm-copy" data-copy="${esc(`#${iss.id}: ${iss.subject}`)}" data-url="${esc(iss.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button><button class="rm-send" data-ticket="${iss.id}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button></span>`);
-        const box = document.createElement("div");
-        box.className = "mv-tk" + cls;
-        box.append(h);
-        // 進捗の行は見出しを開いたときだけ（閉じているときはタイトルの行・ステータス・背景色だけ）
-        if (open && info.length) box.insertAdjacentHTML("beforeend", `<div class="rm-info">${info.join("")}</div>`);
-        return box;
-      }
       const d = document.createElement("div");
       d.className = "mv-line"; d.innerHTML = linkify(r.text);
       return d;
@@ -1737,20 +1736,110 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     }
     view.replaceChildren(...els);
     fitBr(view);  // ブランチの行が長いときの ▸ 全部
+    const st2 = view.querySelector(".mv-sec textarea");
+    if (st2 && sec.focus) { sec.focus = false; st2.focus(); try { st2.setSelectionRange(sec.caret, sec.caret); } catch (err) {} }
   }
-  window.__memoRender = () => { if (ta.hidden) renderView(); };  // Redmine 欄を読んだあとに #番号をリンクにし直す
-  // Redmine 欄の ✎ から呼ぶ。メモの最後に1行足して、待たずに保存する
+  function headEl(r) {
+        const open = openSet.has(r.text);
+        // 見出しの中の #番号・URL もリンクにするので、button ではなく div を押せるようにする（リンクを押したときは開け閉めしない）
+        const h = document.createElement("div");
+        h.className = "mv-head" + (open ? " open" : "");
+        h.setAttribute("role", "button"); h.tabIndex = 0;
+        h.innerHTML = `<span>${linkify(r.text)}</span>` + (!open && r.count ? `<span class="mv-count">（${r.count} 行）</span>` : "")
+          + `<span class="mv-btns"><button class="mv-edit" title="このまとまり（見出しの行から次の ----- の手前まで）だけを直す">✎</button></span>`;
+        h.querySelector(".mv-edit").onclick = () => secOpen(r);
+        h.setAttribute("aria-expanded", String(open));
+        const toggle = () => { open ? openSet.delete(r.text) : openSet.add(r.text); saveOpen(); renderView(); };
+        h.onclick = (e) => { if (!e.target.closest("a, button, select")) toggle(); };
+        h.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && !e.target.closest("a, button, select")) { e.preventDefault(); toggle(); } };
+        // 見出しの最初の #番号が Redmine 欄のチケットなら、Redmine 欄と同じ進捗（ステータス・今日の作業・tmux のセッション・ブランチ・履歴・関連）と色を出す
+        const tn = (/[#＃]([0-9０-９]{4,6})(?![0-9０-９])/.exec(r.text) || [])[1];
+        const iss = tn && npIssues().find((x) => String(x.id) === tn.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)));
+        if (!iss) return h;
+        const { info, cls } = rmInfo(iss);
+        // ステータスは Redmine 欄と同じ部品（押すと選べるステータスを出し、選ぶと変更する）
+        h.firstChild.insertAdjacentHTML("beforebegin", `<span class="mv-st">${rmStatusHtml(iss)}</span>`);
+        // Redmine 欄と同じ ⧉（「#番号: タイトル」をリンク付きでコピー）と ▶（tmux の枠に送る）
+        h.querySelector(".mv-btns").insertAdjacentHTML("afterbegin", `<button class="rm-copy" data-copy="${esc(`#${iss.id}: ${iss.subject}`)}" data-url="${esc(iss.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button><button class="rm-send" data-ticket="${iss.id}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button>`);
+        const box = document.createElement("div");
+        box.className = "mv-tk" + cls;
+        box.append(h);
+        // 進捗の行は見出しを開いたときだけ（閉じているときはタイトルの行・ステータス・背景色だけ）
+        if (open && info.length) box.insertAdjacentHTML("beforeend", `<div class="rm-info">${info.join("")}</div>`);
+        return box;
+  }
+  // ---- まとまり（見出しの行から次の ----- の手前まで）だけを直す ----
+  let sec = null;  // {start, end, orig, draft, caret, focus, err}
+  function secOpen(r) {
+    const lines = ta.value.split("\n");
+    const orig = lines.slice(r.start, r.end).join("\n").replace(/\s+$/, "");
+    sec = { start: r.start, end: r.end, orig, draft: orig, caret: orig.length, focus: true, err: "" };
+    renderView();
+  }
+  function secEditor() {
+    const box = document.createElement("div");
+    box.className = "mv-sec";
+    box.innerHTML = `<textarea class="memo" spellcheck="false"></textarea>
+      <div class="mv-sec-foot"><button class="mv-sec-save">保存</button><button class="mv-sec-cancel">やめる</button>
+      <span class="label">${sec.err ? `<span class="err">${esc(sec.err)}</span>` : "Ctrl+Enter で保存・Esc でやめる。見出しの行も直せます"}</span></div>`;
+    const t = box.querySelector("textarea");
+    t.value = sec.draft;
+    t.rows = Math.min(24, Math.max(4, sec.draft.split("\n").length + 1));
+    t.oninput = () => { sec.draft = t.value; sec.caret = t.selectionStart; };
+    t.onkeydown = (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); secSave(); }
+      else if (e.key === "Escape" && !e.isComposing) { e.preventDefault(); secCancel(); }
+    };
+    box.querySelector(".mv-sec-save").onclick = secSave;
+    box.querySelector(".mv-sec-cancel").onclick = secCancel;
+    return box;
+  }
+  function secCancel() {
+    if (sec && sec.draft !== sec.orig && !confirm("直した内容を捨てますか？")) return;
+    sec = null; renderView();
+  }
+  async function secSave() {
+    if (!sec) return;
+    if (sec.draft === sec.orig) { sec = null; renderView(); return; }
+    const keep = sec; sec = null;  // load は直している最中は何もしないので、いったん外して呼ぶ
+    await load(false);  // 別の画面で書き足された分を先に取り込み、その上に重ねる
+    sec = keep;
+    const lines = ta.value.split("\n");
+    let start = sec.start;
+    // 行の位置がずれていたら（別の画面で上の行が増えた等）、元の内容を探し直す
+    if (lines.slice(start, start + sec.orig.split("\n").length).join("\n").replace(/\s+$/, "") !== sec.orig) {
+      const at = ta.value.indexOf(sec.orig);
+      if (at < 0) { sec.err = "このまとまりが別の画面で変わっています。内容をコピーしてから「やめる」で読み直してください"; renderView(); return; }
+      start = ta.value.slice(0, at).split("\n").length - 1;
+    }
+    const n = sec.orig.split("\n").length;
+    const oldHead = (lines[start].match(DASHES) || [])[1], newHead = (sec.draft.split("\n")[0].match(DASHES) || [])[1];
+    lines.splice(start, n, ...sec.draft.replace(/\s+$/, "").split("\n"));
+    ta.value = lines.join("\n");
+    // 見出しの名前を変えても、開いた状態を引き継ぐ
+    if (oldHead && newHead && oldHead !== newHead && openSet.has(oldHead)) { openSet.delete(oldHead); openSet.add(newHead); saveOpen(); }
+    sec = null;
+    dirty = true; clearTimeout(timer);
+    renderView();
+    if (!conflict) save(false);
+  }
+  window.__memoRender = () => { if (ta.hidden && !sec) renderView(); };  // まとまりを直している最中は描き直さない（入力が消えるため）  // Redmine 欄を読んだあとに #番号をリンクにし直す
+  // Redmine 欄の ✎ から呼ぶ。メモの一番上の ----- の真上に1行足して、待たずに保存する
   window.__memoAppend = (line) => {
     const n = (line.match(/#(\d{4,6})/) || [])[1];
     const norm = ta.value.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
     if (n && new RegExp(`[#＃]${n}(?!\\d)`).test(norm)) return "exists";
-    ta.value = ta.value.replace(/\s*$/, "") + (ta.value.trim() ? "\n" : "") + line;
+    // 一番上の ----- の行（見出しでも区切りでも）の真上に入れる。----- が無ければ最後に足す
+    const lines = ta.value.split("\n"), at = lines.findIndex((l) => DASHES.test(l));
+    if (at >= 0) { lines.splice(at, 0, line); ta.value = lines.join("\n"); }
+    else ta.value = ta.value.replace(/\s*$/, "") + (ta.value.trim() ? "\n" : "") + line;
     dirty = true; clearTimeout(timer);
     if (ta.hidden) renderView();
     if (!conflict) save(false);
     return "added";
   };
   function setEditing(on) {
+    if (on && sec) { if (sec.draft !== sec.orig && !confirm("まとまりで直している内容を捨てて、全体の編集に切り替えますか？")) return; sec = null; }
     ta.hidden = !on; view.hidden = on;
     editBtn.textContent = on ? "表示に戻る" : "編集";
     if (on) {  // 編集に入るときは、前回のカーソル位置ではなく必ず先頭から
@@ -1760,7 +1849,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     } else renderView();
   }
   editBtn.onclick = () => setEditing(ta.hidden);
-  view.addEventListener("dblclick", (e) => { if (!e.target.closest("a, button")) setEditing(true); });
+  view.addEventListener("dblclick", (e) => { if (!e.target.closest("a, button, select, .mv-sec")) setEditing(true); });
   // ---- # を打つとチケットの候補を出し、選ぶと日報と同じ「#番号: 件名」で入れる ----
   const sg = $("memo-suggest");
   let sgItems = [], sgSel = 0, sgStart = -1;
@@ -1776,7 +1865,43 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     // 今日作業したものを先に、あとは Redmine 欄の並び（更新の新しい順）
     list.sort((a, b) => b.today - a.today);
     const k = q.toLowerCase();
-    return list.filter((c) => !k || c.id.startsWith(k) || c.subject.toLowerCase().includes(k)).slice(0, 10);
+    const out = list.filter((c) => !k || c.id.startsWith(k) || c.subject.toLowerCase().includes(k)).slice(0, 10);
+    // Redmine 欄に無い番号（担当外・古いもの）は、番号を4〜6桁打ったら Redmine から1件引いて先頭に出す
+    if (/^\d{4,6}$/.test(k) && !seen.has(k)) {
+      const f = sgFetched.get(k);
+      if (f && f.id) out.unshift({ id: k, subject: f.subject, today: false, tag: f.status });
+      else if (!f) sgLookup(k);
+    }
+    return out;
+  }
+  const sgFetched = new Map();  // 番号 → {id, subject, status} / {loading} / {error}
+  async function sgLookup(n) {
+    sgFetched.set(n, { loading: true });
+    let d;
+    try { d = await (await fetch(`/api/redmine/issue?ticket=${n}`)).json(); } catch (e) { d = { error: "Mac に接続できません" }; }
+    sgFetched.set(n, d.error ? { error: d.error } : d);
+    if (!sg.hidden || document.activeElement === ta) sgUpdate();
+  }
+  // カーソル（文字の位置）の座標を、同じ書式の見えない div に写して測る
+  function caretXY(pos) {
+    const cs = getComputedStyle(ta), d = document.createElement("div");
+    for (const p of ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+      "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "boxSizing", "tabSize"]) d.style[p] = cs[p];
+    Object.assign(d.style, { position: "absolute", visibility: "hidden", whiteSpace: "pre-wrap", overflowWrap: "break-word", width: `${ta.clientWidth + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth)}px`, top: "0", left: "0" });
+    d.textContent = ta.value.slice(0, pos);
+    const mark = document.createElement("span"); mark.textContent = "\u200b"; d.append(mark);
+    ta.parentNode.append(d);
+    const r = { top: mark.offsetTop, h: mark.offsetHeight || parseFloat(cs.lineHeight) || 20 };
+    d.remove();
+    return r;
+  }
+  // 候補は打っている行のすぐ下に出す（画面の下にはみ出すなら、行の上に出す）
+  function sgPlace() {
+    const c = caretXY(ta.selectionStart);
+    const lineTop = ta.offsetTop + c.top - ta.scrollTop, lineBottom = lineTop + c.h;
+    sg.style.top = `${lineBottom + 2}px`;
+    const wrapTop = ta.offsetParent ? ta.offsetParent.getBoundingClientRect().top : 0, h = sg.offsetHeight;
+    if (wrapTop + lineBottom + h + 8 > window.innerHeight && wrapTop + lineTop - h - 2 > 0) sg.style.top = `${lineTop - h - 2}px`;
   }
   function sgUpdate() {
     const pos = ta.selectionStart, before = ta.value.slice(0, pos);
@@ -1786,13 +1911,14 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     sgStart = pos - m[2].length - 1;
     sgItems = sgCandidates(m[2].replace(/[０-９Ａ-Ｚａ-ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)));
     if (!sgItems.length) {  // 何も出ないと原因が分からないので、理由を1行だけ出す（選べない）
-      sg.innerHTML = `<li class="ms-none">${rmData ? "当てはまるチケットがありません" : "Redmine 欄を読み込んでいます…"}</li>`;
-      sg.hidden = false;
+      const q = ta.value.slice(sgStart + 1, pos).replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)), f = sgFetched.get(q);
+      sg.innerHTML = `<li class="ms-none">${!rmData ? "Redmine 欄を読み込んでいます…" : f && f.loading ? `#${esc(q)} を Redmine で探しています…` : f && f.error ? esc(f.error) : "当てはまるチケットがありません"}</li>`;
+      sg.hidden = false; sgPlace();
       return;
     }
     sgSel = Math.min(sgSel, sgItems.length - 1);
     sg.innerHTML = sgItems.map((c, i) => `<li role="option" data-i="${i}" class="${i === sgSel ? "sel" : ""}"><span class="ms-id">#${esc(c.id)}</span><span class="ms-sub">${esc(c.subject)}</span><span class="ms-tag">${c.today ? "今日 " : ""}${esc(c.tag)}</span></li>`).join("");
-    sg.hidden = false;
+    sg.hidden = false; sgPlace();
     sg.querySelector("li.sel")?.scrollIntoView({ block: "nearest" });
   }
   function sgPick(i) {
@@ -1807,6 +1933,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   ta.addEventListener("click", sgUpdate);
   ta.addEventListener("compositionend", () => setTimeout(sgUpdate, 0));  // 変換を確定したとき（確定前は文字が入りきっていない）
   ta.addEventListener("blur", () => setTimeout(sgClose, 150));
+  ta.addEventListener("scroll", () => { if (!sg.hidden) sgPlace(); });
   sg.addEventListener("mousedown", (e) => { const li = e.target.closest("li"); if (li) { e.preventDefault(); sgPick(+li.dataset.i); } });
   ta.addEventListener("keydown", (e) => {
     if (!sg.hidden) {
@@ -1821,10 +1948,10 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   const show = (text) => { st.textContent = text; };
   const setConflict = (on) => { conflict = on; reloadBtn.hidden = forceBtn.hidden = !on; };
   async function load(force) {
-    if (!force && (dirty || saving || document.activeElement === ta)) return;
+    if (!force && (dirty || saving || document.activeElement === ta || sec)) return;
     try {
       const d = await (await fetch("/api/memo")).json();
-      if (d.updated !== base || force) { ta.value = d.text; base = d.updated; if (ta.hidden) renderView(); }
+      if (d.updated !== base || force) { ta.value = d.text; base = d.updated; if (ta.hidden && !sec) renderView(); }
       dirty = false; setConflict(false);
       show(base ? `保存済み（${hm2(base)}）` : "");
     } catch (e) { show("読み込めませんでした"); }

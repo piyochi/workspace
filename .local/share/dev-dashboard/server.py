@@ -1306,6 +1306,16 @@ def redmine_statuses(issue_id):
         return {"error": f"ステータスの一覧を取れませんでした: {e}"}, 502
 
 
+def redmine_issue(issue_id):
+    """チケット1件の番号・件名・ステータス。メモの # の候補で、Redmine 欄に無い番号を引くときに使う。"""
+    try:
+        i = redmine_call(f"/issues/{issue_id}.json").get("issue", {})
+    except Exception as e:
+        return {"error": f"#{issue_id} を取れませんでした: {e}"}, 404 if "404" in str(e) else 502
+    return {"id": i.get("id"), "subject": i.get("subject", ""), "status": (i.get("status") or {}).get("name", ""),
+            "closed": bool((i.get("status") or {}).get("is_closed"))}, 200
+
+
 def redmine_set_status(issue_id, status_id):
     """ステータスを変える。Redmine は許されていない変更を黙って無視するので、変えたあとに読み直して確かめる。"""
     try:
@@ -2343,6 +2353,11 @@ class Handler(BaseHTTPRequestHandler):
             if date != "today" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
                 return self.send_json({"error": "date が不正です"}, 400)
             self.send_json(*nippo_prev(date))
+        elif self.path == "/api/redmine/issue":
+            n = self.query.get("ticket", [""])[0]
+            if not re.fullmatch(r"\d{4,6}", n):
+                return self.send_json({"error": "ticket が不正です"}, 400)
+            self.send_json(*redmine_issue(n))
         elif self.path == "/api/redmine/statuses":
             n = self.query.get("ticket", [""])[0]
             if not re.fullmatch(r"\d{1,7}", n):
