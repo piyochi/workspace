@@ -1724,7 +1724,11 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   function setEditing(on) {
     ta.hidden = !on; view.hidden = on;
     editBtn.textContent = on ? "表示に戻る" : "編集";
-    if (on) ta.focus(); else renderView();
+    if (on) {  // 編集に入るときは、前回のカーソル位置ではなく必ず先頭から
+      ta.focus({ preventScroll: true });
+      try { ta.setSelectionRange(0, 0); } catch (err) {}
+      ta.scrollTop = 0;
+    } else renderView();
   }
   editBtn.onclick = () => setEditing(ta.hidden);
   view.addEventListener("dblclick", (e) => { if (!e.target.closest("a, button")) setEditing(true); });
