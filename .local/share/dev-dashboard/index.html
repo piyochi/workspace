@@ -78,7 +78,14 @@ h1 { font-size: 15px; margin: 0; }
 .mv-tk { margin: 0 -8px; padding: 2px 8px; }
 .mv-tk.active { background: color-mix(in srgb, var(--accent) 9%, var(--card)); }
 .mv-tk.today { background: color-mix(in srgb, var(--ok) 8%, var(--card)); }
-.mv-sec { margin: 4px 0 6px calc(1em + 6px); }
+.mv-sec { margin: 2px 0 2px; }
+/* 開いたまとまりの枠: 見出しと中身をカードにまとめ、中身は左の線で見出しにぶら下げる */
+.mv-group { margin: 6px -6px; padding: 4px 6px 6px; border: 1px solid var(--line); border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 3%, var(--card)); box-shadow: 0 1px 3px rgb(0 0 0 / 6%); }
+.mv-group.editing { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.mv-group > .mv-tk { margin: -4px -6px 0; padding: 4px 6px 2px; border-radius: 9px 9px 0 0; }
+.mv-group > .mv-head::after, .mv-group > .mv-tk .mv-head::after { border-bottom-color: transparent; }
+.mv-body { margin: 6px 0 0 calc(0.5em - 1px); padding: 2px 0 2px 12px; border-left: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); }
 .mv-sec textarea { width: 100%; box-sizing: border-box; min-height: 0; }
 .mv-sec-foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
 .mv-edit, .mv-del { padding: 0 5px; font-size: 11px; line-height: 16px; }
@@ -89,6 +96,13 @@ h1 { font-size: 15px; margin: 0; }
 /* ステータスの下に担当者（2行） */
 .mv-meta { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; font-size: 11px; font-weight: 400; line-height: 1.3; }
 .mv-who { color: var(--muted); white-space: nowrap; }
+/* 見出しの「環境N / 状態」（2行）。押すと選ぶ欄に変わる */
+.mv-ws { flex: none; display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 400; }
+.mv-ws-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 1px 6px; font-size: 11px; line-height: 1.3; text-align: left; }
+.mv-ws-btn .none { color: var(--muted); }
+.mv-ws-st { max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mv-ws select, .mv-ws input { font: inherit; font-size: 11px; }
+.mv-ws input { width: 10em; }
 .mv-head:focus-visible { outline: 2px solid var(--ok); outline-offset: 1px; }
 .mv-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.6em; }
 /* メモの URL は折り返さず、入りきらない分を「…」にする（title で全体を出す） */
@@ -1756,15 +1770,32 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   function renderView() {
     const all = rows(ta.value);
     const shown = allOpen ? all : all.slice(0, PREVIEW);
-    const els = shown.flatMap((r) => {
-      if (r.type === "line" && sec && r.owner && r.owner.start === sec.start) return [];  // 直している最中のまとまりは、本文の代わりに入力欄を出す
-      if (r.type === "head" && sec && r.start === sec.start) return [headEl(r), secEditor()];
-      if (r.type === "head") { const el = headEl(r); el.mvRow = r; return [el]; }
-      if (r.type === "sep") { const hr = document.createElement("hr"); hr.className = "mv-sep"; return hr; }
+    // 開いた見出し（と直しているまとまり）は、見出しと中身を1つの枠（.mv-group）に入れて、どこまでがそのまとまりか分かるようにする
+    const els = [];
+    let grp = null;  // {row, body}
+    shown.forEach((r) => {
+      if (r.type === "head") {
+        const el = headEl(r); el.mvRow = r;
+        const editing = sec && r.start === sec.start;
+        if (!openSet.has(r.text) && !editing) { grp = null; els.push(el); return; }
+        const g = document.createElement("div");
+        g.className = "mv-group" + (editing ? " editing" : ""); g.mvRow = r;
+        const body = document.createElement("div");
+        body.className = "mv-body";
+        g.append(el, body);
+        if (editing) body.append(secEditor());
+        grp = { row: r, body };
+        els.push(g);
+        return;
+      }
+      if (r.type === "line" && sec && r.owner && r.owner.start === sec.start) return;  // 直している最中のまとまりは、本文の代わりに入力欄を出す
+      if (r.type === "sep") { grp = null; const hr = document.createElement("hr"); hr.className = "mv-sep"; els.push(hr); return; }
       const d = document.createElement("div");
       d.className = "mv-line"; d.innerHTML = linkify(r.text); d.mvRow = r;
-      return d;
+      if (grp && r.owner === grp.row) grp.body.append(d); else { grp = null; els.push(d); }
     });
+    // 中身が無い（見出しだけ・空行だけ）の枠は、本文の欄を出さない
+    els.forEach((g) => { const b = g.classList && g.classList.contains("mv-group") && g.querySelector(":scope > .mv-body"); if (b && !b.children.length) b.remove(); });
     if (all.length > PREVIEW) {
       const m = document.createElement("button");
       m.type = "button"; m.className = "mv-more";
@@ -1789,13 +1820,14 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
         h.querySelector(".mv-del").onclick = () => secDelete(r);
         h.setAttribute("aria-expanded", String(open));
         const toggle = () => { open ? openSet.delete(r.text) : openSet.add(r.text); saveOpen(); renderView(); };
-        h.onclick = (e) => { if (!e.target.closest("a, button, select")) toggle(); };
-        h.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && !e.target.closest("a, button, select")) { e.preventDefault(); toggle(); } };
+        h.onclick = (e) => { if (!e.target.closest("a, button, select, input")) toggle(); };
+        h.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && !e.target.closest("a, button, select, input")) { e.preventDefault(); toggle(); } };
         // 見出しの最初の #番号のチケットに、Redmine 欄と同じ進捗（ステータス・今日の作業・tmux のセッション・ブランチ・履歴・関連）と色を出す。
         // 担当外のチケットは、サーバーがメモの見出しから番号を拾って memo_extra で返す
         const tn = (/[#＃]([0-9０-９]{4,6})(?![0-9０-９])/.exec(r.text) || [])[1];
         const tid = tn && tn.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
         const iss = tid && [...npIssues(), ...((rmData && rmData.memo_extra) || [])].find((x) => String(x.id) === tid);
+        if (tid) h.firstChild.insertAdjacentElement("beforebegin", wsEl(r));
         if (!iss) { if (tid && rmData) memoAsk(tid); return h; }
         const { info, cls } = rmInfo(iss);
         // ステータスは Redmine 欄と同じ部品（押すと選べるステータスを出し、選ぶと変更する）。その右に担当者
@@ -1818,6 +1850,86 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     memoAsked.add(id);
     clearTimeout(memoAskTimer);
     memoAskTimer = setTimeout(() => loadRedmine(), 3000);
+  }
+  // ---- チケットの見出しのすぐ下の「環境N 状態」と「ブランチ：…」 ----
+  // 見出しを作ったら（Redmine 欄の ✎・メモで見出しの行を打って Enter）2行を入れる。環境と状態は最初は空で、見出しのボタンで選ぶ。
+  // ふつうの文字なので、メモの編集で自由に直してよい（ボタンは「環境」で始まる最初の行を読み書きする）
+  const WS_STATES = ["ci対応中", "ci完了", "レビュー依頼中", "レビュー中", "テスティングまで済", "ステージングまで済", "確認中"];
+  const WS_LINE = /^(\s*)環境(?=[\s1-4]|$)\s*([1-4]?)\s*(.*?)\s*$/;  // 「環境構築…」のような行は拾わない
+  const ticketOf = (text) => { const t = (/[#＃]([0-9０-９]{4,6})(?![0-9０-９])/.exec(text) || [])[1]; return t && t.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)); };
+  // ブランチ名: ローカルにある feature/番号 → 番号を含むほかのブランチ（退避用の backup/ 以外）→ feature/番号
+  function memoBranch(id) {
+    const i = [...npIssues(), ...((rmData && rmData.memo_extra) || [])].find((x) => String(x.id) === id);
+    const names = ((i && i.branches) || []).map((b) => b.branch);
+    return names.find((b) => b === `feature/${id}`) || names.find((b) => !b.startsWith("backup/")) || `feature/${id}`;
+  }
+  const memoTpl = (id) => ["環境", `ブランチ：${memoBranch(id)}`];
+  // 入力欄で、チケットの見出しの行の末尾で Enter を押したら、すぐ下に2行を入れる（もう「環境」「ブランチ：」の行があれば入れない）
+  function tplOnEnter(t, e) {
+    if (e.key !== "Enter" || e.isComposing || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    const v = t.value, pos = t.selectionStart;
+    if (pos !== t.selectionEnd) return;
+    const ls = v.lastIndexOf("\n", pos - 1) + 1, le = v.indexOf("\n", pos), end = le < 0 ? v.length : le;
+    if (v.slice(pos, end).trim()) return;  // 行の途中で Enter したとき
+    const m = v.slice(ls, end).match(DASHES), id = m && /[^\s-]/.test(m[1]) && ticketOf(m[1]);
+    if (!id) return;
+    if (/^\s*(環境|ブランチ[：:])/.test(v.slice(end + 1).split("\n")[0] || "")) return;
+    e.preventDefault();
+    t.setRangeText("\n" + memoTpl(id).join("\n") + "\n", end, end, "end");
+    t.dispatchEvent(new Event("input"));  // いつもの自動保存（まとまりの編集なら下書き）に乗せる
+  }
+  // 見出しのまとまりの中の「環境N 状態」の行
+  function wsOf(r, lines) {
+    for (let i = r.start + 1; i < lines.length && !DASHES.test(lines[i]); i++) {
+      const m = lines[i].match(WS_LINE);
+      if (m) return { li: i, env: m[2], state: m[3] };
+    }
+    return { li: -1, env: "", state: "" };
+  }
+  let wsEdit = null;  // 環境・状態を選んでいる見出し: {text, free}
+  function wsEl(r) {
+    const cur = wsOf(r, ta.value.split("\n"));
+    const box = document.createElement("span");
+    box.className = "mv-ws";
+    if (!wsEdit || wsEdit.text !== r.text) {
+      box.innerHTML = `<button class="mv-ws-btn" title="環境と状態（押すと選べます。メモを直して書き換えても構いません）"><span class="${cur.env ? "" : "none"}">環境${cur.env || " –"}</span><span class="mv-ws-st ${cur.state ? "" : "none"}" title="${esc(cur.state)}">${esc(cur.state) || "状態 –"}</span></button>`;
+      box.querySelector("button").onclick = () => { wsEdit = { text: r.text, free: !!cur.state && !WS_STATES.includes(cur.state) }; renderView(); };
+      return box;
+    }
+    const free = wsEdit.free;
+    box.innerHTML = `<select class="mv-ws-env" title="環境">${["", "1", "2", "3", "4"].map((v) => `<option value="${v}" ${v === cur.env ? "selected" : ""}>${v ? `環境${v}` : "環境 –"}</option>`).join("")}</select>`
+      + `<select class="mv-ws-sel" title="状態"><option value="" ${!cur.state ? "selected" : ""}>状態 –</option>${WS_STATES.map((v) => `<option ${v === cur.state ? "selected" : ""}>${v}</option>`).join("")}<option value="__free__" ${free ? "selected" : ""}>自由入力…</option></select>`
+      + (free ? `<input class="mv-ws-in" placeholder="Enter で決定" value="${esc(cur.state)}">` : "")
+      + `<button class="mv-ws-x" title="やめる">×</button>`;
+    const envSel = box.querySelector(".mv-ws-env"), stSel = box.querySelector(".mv-ws-sel"), inp = box.querySelector(".mv-ws-in");
+    envSel.onchange = () => wsApply(r.text, envSel.value, cur.state);
+    stSel.onchange = () => {
+      if (stSel.value === "__free__") { wsEdit.free = true; renderView(); return; }
+      wsApply(r.text, envSel.value, stSel.value);
+    };
+    if (inp) {
+      inp.onkeydown = (e) => {
+        if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); wsApply(r.text, envSel.value, inp.value.trim()); }
+        if (e.key === "Escape") { wsEdit = null; renderView(); }
+      };
+      setTimeout(() => { inp.focus(); inp.select(); }, 0);
+    }
+    box.querySelector(".mv-ws-x").onclick = () => { wsEdit = null; renderView(); };
+    return box;
+  }
+  async function wsApply(headText, env, state) {
+    wsEdit = null;
+    if (sec || !ta.hidden) { renderView(); return; }  // 直している最中は書き換えない
+    await load(false);  // 別の画面で書き足された分を先に取り込む
+    const lines = ta.value.split("\n");
+    const start = lines.findIndex((l) => { const m = l.match(DASHES); return m && m[1] === headText; });
+    if (start < 0) { renderView(); return; }
+    const cur = wsOf({ start }, lines), text = `環境${env}${state ? ` ${state}` : ""}`;
+    if (cur.li >= 0) lines[cur.li] = lines[cur.li].match(/^\s*/)[0] + text; else lines.splice(start + 1, 0, text);
+    ta.value = lines.join("\n");
+    dirty = true; clearTimeout(timer);
+    renderView();
+    if (!conflict) save(false);
   }
   // ---- まとまり（見出しの行から次の ----- の手前まで）だけを直す ----
   let sec = null;  // {start, end, orig, draft, caret, focus, err}
@@ -1843,6 +1955,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     t.oninput = () => { sec.draft = t.value; sec.caret = t.selectionStart; };
     t.onkeydown = (e) => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); secSave(); }
+      tplOnEnter(t, e);
       if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") { e.preventDefault(); secSave(); }  // Ctrl+S でも保存
       else if (e.key === "Escape" && !e.isComposing) { e.preventDefault(); secCancel(); }
     };
@@ -1911,9 +2024,10 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     const norm = ta.value.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
     if (n && new RegExp(`[#＃]${n}(?!\\d)`).test(norm)) return "exists";
     // 一番上の ----- の行（見出しでも区切りでも）の真上に入れる。----- が無ければ最後に足す
+    const add = n ? [line, ...memoTpl(n)] : [line];  // 見出しのすぐ下に「環境」「ブランチ：…」の2行
     const lines = ta.value.split("\n"), at = lines.findIndex((l) => DASHES.test(l));
-    if (at >= 0) { lines.splice(at, 0, line); ta.value = lines.join("\n"); }
-    else ta.value = ta.value.replace(/\s*$/, "") + (ta.value.trim() ? "\n" : "") + line;
+    if (at >= 0) { lines.splice(at, 0, ...add); ta.value = lines.join("\n"); }
+    else ta.value = ta.value.replace(/\s*$/, "") + (ta.value.trim() ? "\n" : "") + add.join("\n");
     dirty = true; clearTimeout(timer);
     if (ta.hidden) renderView();
     if (!conflict) save(false);
@@ -1932,8 +2046,8 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   editBtn.onclick = () => setEditing(ta.hidden);
   // ダブルクリック: 開閉のまとまり（見出しかその中の行）ならそのまとまりだけ、それ以外はメモ全体を直す
   view.addEventListener("dblclick", (e) => {
-    if (e.target.closest("a, button, select, .mv-sec")) return;
-    const el = e.target.closest(".mv-line, .mv-tk, .mv-head"), r = el && (el.mvRow || (el.parentElement && el.parentElement.mvRow));
+    if (e.target.closest("a, button, select, input, .mv-sec")) return;
+    const el = e.target.closest(".mv-line, .mv-tk, .mv-head, .mv-group"), r = el && (el.mvRow || (el.parentElement && el.parentElement.mvRow));
     if (r && r.type === "head") { getSelection().removeAllRanges(); secOpen(r); return; }
     if (r && r.owner) { getSelection().removeAllRanges(); secOpen(r.owner, r.li); return; }
     setEditing(true);
@@ -2030,6 +2144,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
       if (e.key === "Escape") { e.preventDefault(); sgClose(); return; }
     }
     if (e.key === "Escape") setEditing(false);
+    if (sg.hidden) tplOnEnter(ta, e);
     // Ctrl+S（Mac は ⌘S）: 1 秒待たずにすぐ保存する（ブラウザの「ページを保存」は出さない）。別の画面と食い違っているときは上書きしない
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") {
       e.preventDefault();
