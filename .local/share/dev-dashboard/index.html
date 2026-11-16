@@ -48,6 +48,34 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -1
 .mini-pane.wait { border-color: var(--bad); color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--bg)); font-weight: 700; }
 h1 { font-size: 15px; margin: 0; }
 .updated { color: var(--muted); font-size: 12px; }
+.memo { width: 100%; box-sizing: border-box; margin-top: 6px; min-height: 96px; resize: vertical; font: inherit; font-size: 13px; line-height: 1.6;
+  color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.memo:focus { outline: 2px solid var(--ok); outline-offset: 0; }
+.memo-foot button.danger { border-color: var(--bad); color: var(--bad); }
+.memo-foot { display: flex; align-items: center; gap: 8px; min-height: 22px; margin-top: 4px; flex-wrap: wrap; }
+/* メモの表示: 「見出し------」の行で区切り、閉じているときは各まとまりの上 3 行だけ見せる */
+.memo-view { margin-top: 6px; font-size: 13px; line-height: 1.6; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-height: 2em; cursor: text; }
+.memo-view:empty::before { content: "メモはまだありません。「編集」で書けます"; color: var(--muted); }
+.memo-wrap { position: relative; }
+.memo-suggest { position: absolute; left: 0; right: 0; z-index: 4; margin: 2px 0 0; padding: 4px 0; list-style: none; max-height: 260px; overflow: auto;
+  background: var(--card); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 18px rgb(0 0 0 / .15); font-size: 13px; }
+.memo-suggest li { padding: 4px 10px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+.memo-suggest li.sel { background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.memo-suggest .ms-id { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+.memo-suggest .ms-sub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memo-suggest li.ms-none { color: var(--muted); cursor: default; }
+.memo-suggest .ms-tag { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.mv-sep { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
+.mv-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 700; text-align: left; cursor: pointer; }
+.mv-head::before { content: "▸"; color: var(--muted); width: 1em; }
+.mv-head.open::before { content: "▾"; }
+.mv-head::after { content: ""; flex: 1; border-bottom: 1px dashed var(--line); }
+.mv-more { margin-top: 2px; }
+.mv-count { font-weight: 400; color: var(--muted); }
+.mv-head:focus-visible { outline: 2px solid var(--ok); outline-offset: 1px; }
+.mv-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.6em; }
+.mv-more { padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.mv-more:hover { text-decoration: underline; }
 .sec { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
 .sec > summary { list-style: none; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
 .sec > summary::-webkit-details-marker { display: none; }
@@ -295,6 +323,16 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
     <summary><h2>開発サーバー</h2></summary>
     <div id="servers"></div>
     <div id="job"></div>
+  </details>
+
+  <details class="sec" data-key="memo" open>
+    <summary><h2>メモ</h2></summary>
+    <div id="memo-view" class="memo-view" title="ダブルクリックで編集"></div>
+    <div class="memo-wrap">
+      <textarea id="memo-text" class="memo" rows="6" spellcheck="false" hidden placeholder="自由に書けます。入力をやめて1秒ほどで保存します（電源を落としても残ります）。「見出し------」の行は、表示のときに開け閉めできるまとまりになります。# を打つとチケットの候補が出ます"></textarea>
+      <ul id="memo-suggest" class="memo-suggest" role="listbox" hidden></ul>
+    </div>
+    <div class="memo-foot"><button id="memo-edit">編集</button><span class="label" id="memo-status"></span><button id="memo-reload" hidden>読み込み直す</button><button id="memo-force" class="danger" hidden>この内容で上書き</button></div>
   </details>
 
   <details class="sec" data-key="nippo" open>
@@ -1508,6 +1546,7 @@ async function loadRedmine(force) {
     const d = await (await fetch(`/api/redmine${force ? "?refresh=1" : ""}`)).json();
     if (d.error) { $("redmine").innerHTML = `<div class="err">${esc(d.error)}</div>`; return; }
     rmData = d;
+    if (window.__memoRender) window.__memoRender();
     $("redmine").innerHTML = rmRows(d.issues.slice(0, 10)); fitBr($("redmine"));
     // 10 件以下でも、今日作業したもの（担当外・完了済みを含む）があれば詳細画面を開けるようにする
     $("redmine-more").style.display = d.issues.length > 10 || Object.keys((d.today || {}).tickets || {}).length ? "" : "none";
@@ -1572,6 +1611,170 @@ setInterval(loadLinks, 30000);
 refreshPanes();
 setInterval(refreshPanes, 5000);
 fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.running && !jobPolling) jobPolling = setInterval(pollJob, 1500); });
+
+// ---- メモ（サーバーの memo.json に保存。電源を落としても・別の端末から開いても同じ内容）----
+(() => {
+  const ta = $("memo-text"), st = $("memo-status"), reloadBtn = $("memo-reload"), forceBtn = $("memo-force");
+  const view = $("memo-view"), editBtn = $("memo-edit");
+  const PREVIEW = 3;  // メモ欄を閉じているときに見せる行数
+  const DASHES = /^\s*(.*?)\s*-{3,}\s*$/;  // 「見出し------」と「------」だけの行
+  const OPEN_KEY = "memo-open", ALL_KEY = "memo-all";
+  let openSet = new Set(), allOpen = false;
+  try { openSet = new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || "[]")); allOpen = localStorage.getItem(ALL_KEY) === "1"; } catch (e) {}
+  const saveOpen = () => { try { localStorage.setItem(OPEN_KEY, JSON.stringify([...openSet])); localStorage.setItem(ALL_KEY, allOpen ? "1" : "0"); } catch (e) {} };
+  // URL と「#番号」をリンクにする。#番号の行き先は Redmine 欄のチケットの URL から取る（Redmine 欄が読めるまではリンクにしない）
+  const linkify = (line) => esc(line).split(/(https?:\/\/[^\s<>"']+)/).map((part, i) => {
+    if (i % 2) return `<a href="${part}" target="_blank" rel="noopener">${part}</a>`;
+    return part.replace(/#(\d{4,6})(?!\d)/g, (t, n) => {
+      const u = npIssueUrl(t);
+      return u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="${esc(npSubject(n))}">${t}</a>` : t;
+    });
+  }).join("");
+  // 行を「見出し」「区切り（------ だけ）」「ふつうの行」に分ける。
+  // 見出しの開け閉めは、その下から次の ----- の行（見出しでも区切りでも）の手前までを全部隠す・全部見せる
+  function rows(text) {
+    const out = [];
+    let head = null;  // 今いる見出しのまとまり（無ければ null）
+    for (const line of text.split("\n")) {
+      const m = line.match(DASHES);
+      if (m && /[^\s-]/.test(m[1])) { head = { type: "head", text: m[1], count: 0 }; out.push(head); }
+      else if (m) { head = null; out.push({ type: "sep" }); }
+      else if (head) { head.count++; if (openSet.has(head.text)) out.push({ type: "line", text: line }); }
+      else out.push({ type: "line", text: line });
+    }
+    while (out.length && out[out.length - 1].type === "line" && !out[out.length - 1].text.trim()) out.pop();
+    return out;
+  }
+  function renderView() {
+    const all = rows(ta.value);
+    const shown = allOpen ? all : all.slice(0, PREVIEW);
+    const els = shown.map((r) => {
+      if (r.type === "sep") { const hr = document.createElement("hr"); hr.className = "mv-sep"; return hr; }
+      if (r.type === "head") {
+        const open = openSet.has(r.text);
+        // 見出しの中の #番号・URL もリンクにするので、button ではなく div を押せるようにする（リンクを押したときは開け閉めしない）
+        const h = document.createElement("div");
+        h.className = "mv-head" + (open ? " open" : "");
+        h.setAttribute("role", "button"); h.tabIndex = 0;
+        h.innerHTML = `<span>${linkify(r.text)}</span>` + (!open && r.count ? `<span class="mv-count">（${r.count} 行）</span>` : "");
+        h.setAttribute("aria-expanded", String(open));
+        const toggle = () => { open ? openSet.delete(r.text) : openSet.add(r.text); saveOpen(); renderView(); };
+        h.onclick = (e) => { if (!e.target.closest("a")) toggle(); };
+        h.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && !e.target.closest("a")) { e.preventDefault(); toggle(); } };
+        return h;
+      }
+      const d = document.createElement("div");
+      d.className = "mv-line"; d.innerHTML = linkify(r.text);
+      return d;
+    });
+    if (all.length > PREVIEW) {
+      const m = document.createElement("button");
+      m.type = "button"; m.className = "mv-more";
+      m.textContent = allOpen ? "閉じる（上の 3 行だけ見せる）" : `…残り ${all.length - PREVIEW} 行を表示`;
+      m.onclick = () => { allOpen = !allOpen; saveOpen(); renderView(); };
+      els.push(m);
+    }
+    view.replaceChildren(...els);
+  }
+  window.__memoRender = () => { if (ta.hidden) renderView(); };  // Redmine 欄を読んだあとに #番号をリンクにし直す
+  function setEditing(on) {
+    ta.hidden = !on; view.hidden = on;
+    editBtn.textContent = on ? "表示に戻る" : "編集";
+    if (on) ta.focus(); else renderView();
+  }
+  editBtn.onclick = () => setEditing(ta.hidden);
+  view.addEventListener("dblclick", (e) => { if (!e.target.closest("a, button")) setEditing(true); });
+  // ---- # を打つとチケットの候補を出し、選ぶと日報と同じ「#番号: 件名」で入れる ----
+  const sg = $("memo-suggest");
+  let sgItems = [], sgSel = 0, sgStart = -1;
+  const sgClose = () => { sg.hidden = true; sgItems = []; sgStart = -1; };
+  function sgCandidates(q) {
+    const today = (rmData && rmData.today && rmData.today.tickets) || {};
+    const seen = new Set(), list = [];
+    for (const i of npIssues()) {
+      if (seen.has(String(i.id))) continue;
+      seen.add(String(i.id));
+      list.push({ id: String(i.id), subject: i.subject || "", today: String(i.id) in today, tag: i.extra ? (i.closed ? "完了" : "担当外") : (i.status || "") });
+    }
+    // 今日作業したものを先に、あとは Redmine 欄の並び（更新の新しい順）
+    list.sort((a, b) => b.today - a.today);
+    const k = q.toLowerCase();
+    return list.filter((c) => !k || c.id.startsWith(k) || c.subject.toLowerCase().includes(k)).slice(0, 10);
+  }
+  function sgUpdate() {
+    const pos = ta.selectionStart, before = ta.value.slice(0, pos);
+    // 日本語入力のままだと全角の「＃」・全角の数字になるので、どちらも受ける（入れるときは半角の # にそろえる）
+    const m = before.match(/(^|[\s\u3000])[#＃]([^\s\u3000#＃]*)$/);
+    if (!m || ta.selectionEnd !== pos) return sgClose();
+    sgStart = pos - m[2].length - 1;
+    sgItems = sgCandidates(m[2].replace(/[０-９Ａ-Ｚａ-ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)));
+    if (!sgItems.length) {  // 何も出ないと原因が分からないので、理由を1行だけ出す（選べない）
+      sg.innerHTML = `<li class="ms-none">${rmData ? "当てはまるチケットがありません" : "Redmine 欄を読み込んでいます…"}</li>`;
+      sg.hidden = false;
+      return;
+    }
+    sgSel = Math.min(sgSel, sgItems.length - 1);
+    sg.innerHTML = sgItems.map((c, i) => `<li role="option" data-i="${i}" class="${i === sgSel ? "sel" : ""}"><span class="ms-id">#${esc(c.id)}</span><span class="ms-sub">${esc(c.subject)}</span><span class="ms-tag">${c.today ? "今日 " : ""}${esc(c.tag)}</span></li>`).join("");
+    sg.hidden = false;
+    sg.querySelector("li.sel")?.scrollIntoView({ block: "nearest" });
+  }
+  function sgPick(i) {
+    const c = sgItems[i]; if (!c) return;
+    const text = `#${c.id}: ${c.subject}`, end = ta.selectionStart;
+    ta.setRangeText(text, sgStart, end, "end");
+    sgClose();
+    ta.dispatchEvent(new Event("input"));  // いつもの自動保存に乗せる
+    ta.focus();
+  }
+  ta.addEventListener("input", () => { if (sgStart < 0) sgSel = 0; sgUpdate(); });
+  ta.addEventListener("click", sgUpdate);
+  ta.addEventListener("compositionend", () => setTimeout(sgUpdate, 0));  // 変換を確定したとき（確定前は文字が入りきっていない）
+  ta.addEventListener("blur", () => setTimeout(sgClose, 150));
+  sg.addEventListener("mousedown", (e) => { const li = e.target.closest("li"); if (li) { e.preventDefault(); sgPick(+li.dataset.i); } });
+  ta.addEventListener("keydown", (e) => {
+    if (!sg.hidden) {
+      if ((e.key === "ArrowDown" || e.key === "ArrowUp") && sgItems.length) { e.preventDefault(); sgSel = (sgSel + (e.key === "ArrowDown" ? 1 : -1) + sgItems.length) % sgItems.length; sgUpdate(); return; }
+      if ((e.key === "Enter" || e.key === "Tab") && !e.isComposing && sgItems.length) { e.preventDefault(); sgPick(sgSel); return; }
+      if (e.key === "Escape") { e.preventDefault(); sgClose(); return; }
+    }
+    if (e.key === "Escape") setEditing(false);
+  });
+  let base = 0, dirty = false, saving = false, timer = null, conflict = false;
+  const hm2 = (t) => { const d = new Date(t * 1000); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+  const show = (text) => { st.textContent = text; };
+  const setConflict = (on) => { conflict = on; reloadBtn.hidden = forceBtn.hidden = !on; };
+  async function load(force) {
+    if (!force && (dirty || saving || document.activeElement === ta)) return;
+    try {
+      const d = await (await fetch("/api/memo")).json();
+      if (d.updated !== base || force) { ta.value = d.text; base = d.updated; if (ta.hidden) renderView(); }
+      dirty = false; setConflict(false);
+      show(base ? `保存済み（${hm2(base)}）` : "");
+    } catch (e) { show("読み込めませんでした"); }
+  }
+  async function save(force) {
+    if (saving || (!dirty && !force)) return;
+    saving = true; show("保存中…");
+    const text = ta.value;
+    try {
+      const res = await fetch("/api/memo", { method: "POST", keepalive: text.length < 60000,
+        headers: { "Content-Type": "application/json", "X-Dashboard": "1" }, body: JSON.stringify({ text, base, force: !!force }) });
+      const d = await res.json();
+      if (res.status === 409) { setConflict(true); show(`別の画面で ${hm2(d.updated)} に更新されています。読み込み直すか、この内容で上書きしてください`); }
+      else if (!res.ok) show(d.error || "保存できませんでした");
+      else { base = d.updated; if (ta.value === text) dirty = false; setConflict(false); show(`保存済み（${hm2(base)}）`); }
+    } catch (e) { show("保存できませんでした（入力した内容はこの画面に残っています）"); }
+    finally { saving = false; if (dirty && !conflict) schedule(); }
+  }
+  function schedule() { clearTimeout(timer); timer = setTimeout(() => save(false), 1000); }
+  ta.addEventListener("input", () => { dirty = true; if (!conflict) { show("入力中…"); schedule(); } });
+  ta.addEventListener("blur", () => { if (dirty && !conflict) { clearTimeout(timer); save(false); } });
+  reloadBtn.onclick = () => load(true);
+  forceBtn.onclick = () => save(true);
+  window.addEventListener("pagehide", () => { if (dirty && !conflict) save(false); });
+  load(true);
+  setInterval(() => load(false), 30000);  // 別の端末で書いた内容を、入力していないときだけ取り込む
+})();
 </script>
 </body>
 </html>

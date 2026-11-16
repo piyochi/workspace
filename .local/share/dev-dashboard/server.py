@@ -6,6 +6,7 @@
   GET  /api/sys      … Mac 本体の CPU 使用率・メモリ使用量（ヘッダーのゲージ）
   POST /api/run      … ~/bin/local-server <up|down|restart> <env> <comp> を裏で実行
   GET  /api/pane     … [n] の枠の画面の文字と、起動できるモード
+  GET  /api/memo     … 自由メモ（memo.json）。POST /api/memo {text, base} で保存（base が古ければ 409）
   GET  /api/links    … AI（Claude / Codex）が出した文章の URL（直近7日・新しい順。cat=種類・q=フリーワード）
   GET  /api/redmine  … 自分担当の未完了チケット（5分キャッシュ、refresh=1 で取り直し）と、各チケットの枠・ブランチ・issue docs、
                        今日（朝 4:00 以降）の作業（today）と、今日作業した担当外・完了済みのチケット（today_extra）
@@ -128,6 +129,43 @@ def sys_usage():
     except (OSError, ValueError, KeyError, AttributeError, subprocess.SubprocessError) as e:
         print(f"{time.strftime('%F %T')} メモリ使用量を取れませんでした: {e}", file=sys.stderr, flush=True)
     return {"cpu": cpu, "mem": mem}
+
+
+MEMO_FILE = os.path.join(BASE, "memo.json")  # 自由メモ（ダッシュボードの「メモ」欄）。cache/ と分けて、消してよいものと混ぜない
+MEMO_MAX = 100_000
+memo_lock = threading.Lock()
+
+
+def memo_read():
+    try:
+        with open(MEMO_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        return {"text": str(d.get("text", "")), "updated": float(d.get("updated") or 0)}
+    except (OSError, ValueError):
+        return {"text": "", "updated": 0}
+
+
+def memo_write(text, base):
+    """base: 画面が読み込んだときの updated。別の画面が先に保存していたら上書きせず 409 で今の内容を返す。
+    電源断で壊れないよう、一時ファイルに書いて fsync してから置き換える。"""
+    with memo_lock:
+        cur = memo_read()
+        if base is not None and abs(float(base) - cur["updated"]) > 1e-6:
+            return {"error": "別の画面でメモが更新されています", **cur}, 409
+        new = {"text": text, "updated": time.time()}
+        tmp = MEMO_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(new, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, MEMO_FILE)
+        try:
+            fd = os.open(BASE, os.O_RDONLY)
+            os.fsync(fd)
+            os.close(fd)
+        except OSError:
+            pass
+        return new, 200
 
 
 def server_status():
@@ -2266,6 +2304,8 @@ class Handler(BaseHTTPRequestHandler):
             })
         elif self.path == "/api/sys":
             self.send_json(sys_usage())
+        elif self.path == "/api/memo":
+            self.send_json(memo_read())
         elif self.path == "/api/pane":
             try:
                 n = int(self.query.get("slot", ["0"])[0])
@@ -2332,6 +2372,17 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(n) or b"{}")
         except ValueError:
             return self.send_json({"error": "bad request"}, 400)
+        if self.path == "/api/memo":
+            text = req.get("text")
+            if not isinstance(text, str) or len(text) > MEMO_MAX:
+                return self.send_json({"error": f"メモは {MEMO_MAX:,} 文字までです"}, 400)
+            base = req.get("base")
+            try:
+                base = None if req.get("force") else float(base or 0)
+            except (TypeError, ValueError):
+                return self.send_json({"error": "base が不正です"}, 400)
+            body, code = memo_write(text, base)
+            return self.send_json(body, code)
         if self.path == "/api/link":
             try:
                 slot = int(req.get("slot"))
