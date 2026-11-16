@@ -26,7 +26,7 @@ import os
 import sys
 import time
 
-NUDGE_TOKENS = int(os.environ.get("HANDOFF_NUDGE_TOKENS", "180000"))
+NUDGE_TOKENS = int(os.environ.get("HANDOFF_NUDGE_TOKENS", "330000"))
 STATE_DIR = os.path.expanduser("~/.claude/tmp/handoff-auto")
 TAIL_BYTES = 2_000_000
 RESTORE_WINDOW_SEC = 6 * 3600  # これより古い引き継ぎファイルは今の作業のものとみなさない
