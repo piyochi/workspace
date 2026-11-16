@@ -73,7 +73,14 @@ h1 { font-size: 15px; margin: 0; }
 .mv-head.open::before { content: "▾"; }
 .mv-head::after { content: ""; flex: 1; border-bottom: 1px dashed var(--line); }
 .mv-more { margin-top: 2px; }
-.mv-count { font-weight: 400; color: var(--muted); }
+.mv-count { font-weight: 400; color: var(--muted); white-space: nowrap; }
+/* メモの見出しのチケット: Redmine 欄と同じ色（tmux で作業中・今日作業した） */
+.mv-tk { margin: 0 -8px; padding: 2px 8px; }
+.mv-tk.active { background: color-mix(in srgb, var(--accent) 9%, var(--card)); }
+.mv-tk.today { background: color-mix(in srgb, var(--ok) 8%, var(--card)); }
+.mv-btns { order: 9; flex: none; display: flex; gap: 4px; font-weight: 400; }
+.mv-tk .rm-info { padding-left: calc(1em + 6px); font-weight: 400; }
+.mv-st { flex: none; font-size: 11px; font-weight: 400; }
 .mv-head:focus-visible { outline: 2px solid var(--ok); outline-offset: 1px; }
 .mv-line { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.6em; }
 .mv-more { padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
@@ -982,6 +989,7 @@ function rmRerender() {
   if (!rmData) return;
   $("redmine").innerHTML = rmRows(rmData.issues.slice(0, 10)); fitBr($("redmine"));
   if (rmOpen) renderRmAll();
+  if (window.__memoRender) window.__memoRender();  // メモの見出しのステータスも同じ表示にする
 }
 document.addEventListener("click", (e) => { const b = e.target.closest("button.rm-full"); if (b) rmFullSearch(Number(b.dataset.ticket)); });
 
@@ -1045,12 +1053,10 @@ document.addEventListener("toggle", (e) => {
   if (!(d instanceof HTMLElement) || !d.classList.contains("rm-log-wrap")) return;
   if (d.open) rmLogOpen.add(d.dataset.id); else rmLogOpen.delete(d.dataset.id);
 }, true);
-function rmRows(items, opts = {}) {
-  return items.length ? items.map((i, idx) => {
+// チケット1件の「今日の作業・待ち・tmux のセッション・ブランチ・履歴・関連」の並びと、行の色（active / today）。
+// Redmine 欄とメモの見出しで同じものを出す
+function rmInfo(i) {
     const td = todayOf(i);
-    // 担当外・完了済み（直近に作業したもの）の先頭に区切りを入れる
-    const sep = i.recent && !(idx && items[idx - 1].recent)
-      ? `<div class="rm-sep">担当外・完了済み（直近${rmData ? rmData.history_days : 30}日に作業したもの・新しい順）</div>` : "";
     const sess = i.sessions.map((x) => `<span class="rm-sess ${x.state}">▶ [${x.slot}] ${esc(x.env)} ${esc(x.kind)} ${PANE_STATES[x.state] || ""}${x.skill ? ` <span class="${x.skill_done ? "skill-done" : ""}">${skillText(x)}</span>` : ""}</span>`);
     // ブランチは環境ごとにまとめる。checkout 中のものは太字
     const byEnv = {};
@@ -1074,7 +1080,15 @@ function rmRows(items, opts = {}) {
     const full = rmFull[i.id];
     const fullInfo = full ? [full.loading ? `<span>全期間を調べています…</span>` : fullHtml(full)] : [];
     const info = [...(td ? [todayHtml(td)] : []), ...rmRelHtml(i).filter((h) => h.includes("rm-wait")), ...sess, ...br, ...hist, ...fullInfo, ...rmRelHtml(i).filter((h) => !h.includes("rm-wait"))];
-    return `${sep}<div class="rm-row${i.sessions.length ? " active" : td ? " today" : ""}">
+    return { td, info, cls: i.sessions.length ? " active" : td ? " today" : "" };
+}
+function rmRows(items, opts = {}) {
+  return items.length ? items.map((i, idx) => {
+    const { td, info, cls } = rmInfo(i), full = rmFull[i.id];
+    // 担当外・完了済み（直近に作業したもの）の先頭に区切りを入れる
+    const sep = i.recent && !(idx && items[idx - 1].recent)
+      ? `<div class="rm-sep">担当外・完了済み（直近${rmData ? rmData.history_days : 30}日に作業したもの・新しい順）</div>` : "";
+    return `${sep}<div class="rm-row${cls}">
       <div class="rm-head">${i.priority ? `<span class="rm-tag ${RM_PRI[i.priority] || ""}">${esc(i.priority)}</span>` : ""}
         ${i.extra ? `<span class="rm-tag extra" title="今日作業したが、自分担当の未完了チケットではないもの">${i.closed ? "完了" : `担当外${i.assignee ? `: ${esc(i.assignee)}` : ""}`}</span>` : ""}
         ${rmStatusHtml(i)}
@@ -1692,9 +1706,23 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
         h.innerHTML = `<span>${linkify(r.text)}</span>` + (!open && r.count ? `<span class="mv-count">（${r.count} 行）</span>` : "");
         h.setAttribute("aria-expanded", String(open));
         const toggle = () => { open ? openSet.delete(r.text) : openSet.add(r.text); saveOpen(); renderView(); };
-        h.onclick = (e) => { if (!e.target.closest("a")) toggle(); };
-        h.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && !e.target.closest("a")) { e.preventDefault(); toggle(); } };
-        return h;
+        h.onclick = (e) => { if (!e.target.closest("a, button, select")) toggle(); };
+        h.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && !e.target.closest("a, button, select")) { e.preventDefault(); toggle(); } };
+        // 見出しの最初の #番号が Redmine 欄のチケットなら、Redmine 欄と同じ進捗（ステータス・今日の作業・tmux のセッション・ブランチ・履歴・関連）と色を出す
+        const tn = (/[#＃]([0-9０-９]{4,6})(?![0-9０-９])/.exec(r.text) || [])[1];
+        const iss = tn && npIssues().find((x) => String(x.id) === tn.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)));
+        if (!iss) return h;
+        const { info, cls } = rmInfo(iss);
+        // ステータスは Redmine 欄と同じ部品（押すと選べるステータスを出し、選ぶと変更する）
+        h.firstChild.insertAdjacentHTML("beforebegin", `<span class="mv-st">${rmStatusHtml(iss)}</span>`);
+        // Redmine 欄と同じ ⧉（「#番号: タイトル」をリンク付きでコピー）と ▶（tmux の枠に送る）
+        h.insertAdjacentHTML("beforeend", `<span class="mv-btns"><button class="rm-copy" data-copy="${esc(`#${iss.id}: ${iss.subject}`)}" data-url="${esc(iss.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button><button class="rm-send" data-ticket="${iss.id}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button></span>`);
+        const box = document.createElement("div");
+        box.className = "mv-tk" + cls;
+        box.append(h);
+        // 進捗の行は見出しを開いたときだけ（閉じているときはタイトルの行・ステータス・背景色だけ）
+        if (open && info.length) box.insertAdjacentHTML("beforeend", `<div class="rm-info">${info.join("")}</div>`);
+        return box;
       }
       const d = document.createElement("div");
       d.className = "mv-line"; d.innerHTML = linkify(r.text);
@@ -1708,6 +1736,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
       els.push(m);
     }
     view.replaceChildren(...els);
+    fitBr(view);  // ブランチの行が長いときの ▸ 全部
   }
   window.__memoRender = () => { if (ta.hidden) renderView(); };  // Redmine 欄を読んだあとに #番号をリンクにし直す
   // Redmine 欄の ✎ から呼ぶ。メモの最後に1行足して、待たずに保存する
