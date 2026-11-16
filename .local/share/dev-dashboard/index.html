@@ -1807,13 +1807,14 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     box.className = "mv-sec";
     box.innerHTML = `<textarea class="memo" spellcheck="false"></textarea>
       <div class="mv-sec-foot"><button class="mv-sec-save">保存</button><button class="mv-sec-cancel">やめる</button>
-      <span class="label">${sec.err ? `<span class="err">${esc(sec.err)}</span>` : "Ctrl+Enter で保存・Esc でやめる。見出しの行も直せます"}</span></div>`;
+      <span class="label">${sec.err ? `<span class="err">${esc(sec.err)}</span>` : "Ctrl+S・Ctrl+Enter で保存・Esc でやめる。見出しの行も直せます"}</span></div>`;
     const t = box.querySelector("textarea");
     t.value = sec.draft;
     t.rows = Math.min(24, Math.max(4, sec.draft.split("\n").length + 1));
     t.oninput = () => { sec.draft = t.value; sec.caret = t.selectionStart; };
     t.onkeydown = (e) => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); secSave(); }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") { e.preventDefault(); secSave(); }  // Ctrl+S でも保存
       else if (e.key === "Escape" && !e.isComposing) { e.preventDefault(); secCancel(); }
     };
     box.querySelector(".mv-sec-save").onclick = secSave;
@@ -1993,6 +1994,13 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
       if (e.key === "Escape") { e.preventDefault(); sgClose(); return; }
     }
     if (e.key === "Escape") setEditing(false);
+    // Ctrl+S（Mac は ⌘S）: 1 秒待たずにすぐ保存する（ブラウザの「ページを保存」は出さない）。別の画面と食い違っているときは上書きしない
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      if (conflict) return;
+      clearTimeout(timer);
+      if (dirty) save(false); else show(base ? `保存済み（${hm2(base)}）` : "変更はありません");
+    }
   });
   let base = 0, dirty = false, saving = false, timer = null, conflict = false;
   const hm2 = (t) => { const d = new Date(t * 1000); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
