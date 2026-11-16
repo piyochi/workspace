@@ -661,7 +661,7 @@ def ai_panes():
         if tmux("has-session", "-t", TMUX_SESSION).returncode != 0:
             return {"running": False, "slots": []}
         out = tmux("list-panes", "-s", "-t", TMUX_SESSION, "-F",
-                   "#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{@ai_state}\t#{@cm_title}\t#{pane_tty}\t#{@link_slot}\t#{pane_title}").stdout
+                   "#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{@ai_state}\t#{@cm_title}\t#{pane_tty}\t#{@link_slot}\t#{@ai_label}\t#{pane_title}").stdout
         kinds = running_kinds()
         env_slots = codex_slots(kinds)
     except (OSError, subprocess.TimeoutExpired):
@@ -669,10 +669,10 @@ def ai_panes():
     slots = {}
     for line in out.splitlines():
         parts = line.split("\t")
-        if len(parts) < 8 or parts[0] != "monitor":
+        if len(parts) < 9 or parts[0] != "monitor":
             continue
-        _, pane_id, cmd, ai_state, cm_title, tty, link_slot = parts[:7]
-        pane_title = "\t".join(parts[7:])
+        _, pane_id, cmd, ai_state, cm_title, tty, link_slot, label = parts[:8]
+        pane_title = "\t".join(parts[8:])
         m = SLOT_TITLE.search(cm_title)
         if not m or "→ left" in cm_title:
             continue
@@ -696,6 +696,11 @@ def ai_panes():
         session_ticket = ticket
         if m and not ticket:  # タイトルは最初の入力で付いたまま変わらないので、セッションから取れなかったときだけ使う
             ticket = m.group(1)
+        # tmux-title・ダッシュボードで付けた文字が「#番号」で始まれば、その番号をいちばん優先する（手で付けたものなので）
+        lm = re.match(r"\s*[#＃](\d{4,6})(?!\d)", label)
+        label_ticket = lm.group(1) if lm else ""
+        if label_ticket:
+            ticket = label_ticket
         # 連動先: ダッシュボードで付けた印（@link_slot）を優先し、無ければ Claude の起動時の CODEX_SLOT
         link = None
         marked = parse_link_slots(link_slot)
@@ -704,11 +709,92 @@ def ai_panes():
         elif state != "stopped" and env_slots.get(tty.removeprefix("/dev/")):
             link = {"slots": [int(env_slots[tty.removeprefix("/dev/")])], "from": "codex_slot"}
         subagents = running_subagents(pane_id) if kind == "claude" and state != "stopped" else 0
-        slots[n] = {"slot": n, "env": env, "kind": kind, "slot_kind": slot_kind, "state": state, "task": task, "ticket": ticket,
+        slots[n] = {"slot": n, "pane": pane_id, "env": env, "kind": kind, "slot_kind": slot_kind, "state": state, "task": task, "ticket": ticket,
+                    "label": label,
                     "subagents": subagents,
                     "skill": skill, "skill_done": skill_done, "link": link,
-                    "ticket_from": "title" if m and ticket == m.group(1) and not session_ticket else ("session" if ticket else "")}
+                    "ticket_from": "label" if label_ticket else ("title" if m and ticket == m.group(1) and not session_ticket else ("session" if ticket else ""))}
     return {"running": True, "slots": [slots[k] for k in sorted(slots)]}
+
+
+# ---- tmux の枠のタイトルの文字（@ai_label） ----
+# ~/bin/tmux-title・スキル ct-tmux-title・ダッシュボードの tmux 欄で付ける。枠のタイトルには claude-monitor の pane-border-format が出す。
+# Claude・Codex を閉じた枠（stopped）からは外して、タイトルを元に戻す
+LABEL_MAX = 200
+
+
+def set_pane_label(pane, label):
+    if label:
+        tmux("set-option", "-p", "-t", pane, "@ai_label", label[:LABEL_MAX])
+    else:
+        tmux("set-option", "-p", "-u", "-t", pane, "@ai_label")
+    for c in tmux("list-clients", "-F", "#{client_name}").stdout.split():
+        tmux("refresh-client", "-t", c)
+
+
+pane_was_running = {}  # 枠 -> 前に見たとき Claude・Codex が動いていたか
+pane_last_label = {}  # 枠 -> 前に見たときのタイトル
+LABEL_HIST_FILE = os.path.join(CACHE, "pane_label_history.json")
+LABEL_HIST_MAX = 10
+label_hist_lock = threading.Lock()
+
+
+def label_histories():
+    """枠の番号（"1"〜"12"）-> 付けたタイトル（新しい順）。"""
+    try:
+        with open(LABEL_HIST_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(d, dict):  # 枠ごとに分ける前の形（全部まとめた一覧）は捨てる
+        return {}
+    return {str(k): [x for x in v if isinstance(x, str)][:LABEL_HIST_MAX] for k, v in d.items() if isinstance(v, list)}
+
+
+def label_history(slot):
+    return label_histories().get(str(slot), [])
+
+
+def remember_label(slot, label):
+    """付けたタイトルを枠（[1]〜[12]）ごとに新しい順で 10 件覚える（詳細画面の入力欄で選べるように）。
+    tmux-title・スキルで付けたものも 10 秒ごとに拾う。"""
+    if not label:
+        return
+    with label_hist_lock:
+        d = label_histories()
+        h = d.get(str(slot), [])
+        if h and h[0] == label:
+            return
+        d[str(slot)] = ([label] + [x for x in h if x != label])[:LABEL_HIST_MAX]
+        try:
+            os.makedirs(CACHE, exist_ok=True)
+            with open(LABEL_HIST_FILE + ".tmp", "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False)
+            os.replace(LABEL_HIST_FILE + ".tmp", LABEL_HIST_FILE)
+        except OSError:
+            pass
+
+
+def clear_stopped_labels():
+    """Claude・Codex が「動いている → 止まった」に変わった枠だけ外す（止まっている枠に手で付けたものは残す）。"""
+    for sl in ai_panes().get("slots", []):
+        if sl.get("label") and pane_last_label.get(sl["pane"]) != sl["label"]:  # 付け替わったときだけ覚える
+            remember_label(sl["slot"], sl["label"])
+        pane_last_label[sl["pane"]] = sl.get("label", "")
+        running = sl["state"] != "stopped"
+        if not running and pane_was_running.get(sl["pane"]) and sl.get("label"):
+            set_pane_label(sl["pane"], "")
+        pane_was_running[sl["pane"]] = running
+
+
+def pane_label_loop():
+    while True:
+        try:
+            if tmux("has-session", "-t", TMUX_SESSION).returncode == 0:
+                clear_stopped_labels()
+        except Exception as e:
+            print(f"{time.strftime('%F %T')} 枠のタイトルの文字を外せませんでした: {e}", file=sys.stderr, flush=True)
+        time.sleep(10)
 
 
 MONITOR_TXT = os.path.join(HOME, ".tmuxp", "ticket_v2_project", "monitor.txt")
@@ -882,8 +968,9 @@ def skill_list():
     if skills_cache["rows"] and time.time() - skills_cache["at"] < 600:
         return skills_cache["rows"]
     roots = [os.path.join(HOME, ".claude")] + [os.path.join(HOME, "www", d, ".claude") for d in ENV_DIRS]
-    found = {}
+    found, where = {}, {}
     for root in roots:
+        place = "home" if root == roots[0] else "project"
         files = glob.glob(os.path.join(root, "skills", "*", "SKILL.md")) + glob.glob(os.path.join(root, "commands", "*.md"))
         for path in files:
             name = os.path.basename(os.path.dirname(path)) if path.endswith("SKILL.md") else os.path.basename(path)[:-3]
@@ -894,12 +981,75 @@ def skill_list():
                 continue
             m = re.search(r"^name:\s*(.+)$", head, re.M)
             name = (m.group(1).strip().strip("'\"") if m else name)
-            d = re.search(r"^description:\s*(.+)$", head, re.M)
-            if SEND_CMD.fullmatch("/" + name) and name not in found:
-                found[name] = (d.group(1).strip().strip("'\"") if d else "")[:160]
-    rows = [{"cmd": "/" + n, "desc": found[n]} for n in sorted(found)]
+            d = re.search(r"^description:[ \t]*(.*)$", head, re.M)
+            desc = d.group(1).strip() if d else ""
+            if desc in ("|", ">", "|-", ">-"):  # 複数行の書き方（description: |）は、次の字下げした行をつなぐ
+                block = re.match(r"((?:[ \t]+.*\n?)+)", head[d.end() + 1:])
+                desc = " ".join(l.strip() for l in (block.group(1) if block else "").splitlines() if l.strip())
+            if SEND_CMD.fullmatch("/" + name):
+                where.setdefault(name, set()).add(place)
+                if name not in found:
+                    found[name] = desc.strip("'\"")[:160]
+    # where: スキルの置き場所（home = ~/.claude・project = 各環境の .claude・both = 両方にある）
+    rows = [{"cmd": "/" + n, "desc": found[n], "where": "both" if len(where[n]) > 1 else next(iter(where[n]))} for n in sorted(found)]
     skills_cache.update(at=time.time(), rows=rows)
     return rows
+
+
+# ---- コマンド一覧（ダッシュボードの「コマンド」欄） ----
+# 説明が英語のスキルは日本語に置き換える
+SKILL_DESC_JA = {
+    "continuous-learning-v2": "フックでセッションを観察し、確信度つきの「直感（instinct）」を学習して、スキル・コマンド・エージェントに育てていく仕組み。",
+    "strategic-compact": "作業のフェーズの区切りで、手動でコンテキストを圧縮（/compact）するよう提案する。自動圧縮で途中の文脈が切れるのを避ける。",
+}
+# Claude Code の組み込みコマンド（よく使うもの）
+BUILTIN_COMMANDS = [
+    ("/compact", "会話を要約して圧縮する（続きの作業の文脈を残したまま、使っているトークンを減らす）。後ろに要約の指示を書ける"),
+    ("/clear", "会話を消して新しく始める（今までのやり取りは引き継がない）"),
+    ("/resume", "前のセッションを選んで続きから再開する"),
+    ("/rewind", "会話（とコードの変更）を前の時点に巻き戻す"),
+    ("/context", "今のコンテキストの使い方（何にどれだけトークンを使っているか）を見る"),
+    ("/usage", "プランの利用枠（5時間・週）の使用状況を見る"),
+    ("/cost", "このセッションで使ったトークンと費用を見る"),
+    ("/model", "使うモデルを切り替える"),
+    ("/fast", "高速モードを切り替える"),
+    ("/status", "バージョン・モデル・アカウント・接続状況を見る"),
+    ("/config", "設定画面を開く（テーマ・モデル・通知など）"),
+    ("/permissions", "道具の許可・拒否のルールを見る・変える"),
+    ("/memory", "CLAUDE.md（記憶のファイル）を開いて直す"),
+    ("/init", "このプロジェクトの CLAUDE.md を作る"),
+    ("/agents", "サブエージェントの定義を見る・作る"),
+    ("/mcp", "MCP サーバーの接続状況を見る・認証する"),
+    ("/hooks", "フックの設定を見る"),
+    ("/review", "プルリクエストをレビューする"),
+    ("/export", "会話をファイルやクリップボードに書き出す"),
+    ("/doctor", "Claude Code のインストール・設定の不具合を調べる"),
+    ("/help", "使い方とコマンドの一覧を出す"),
+    ("/exit", "Claude Code を終える"),
+]
+# カテゴリ: 上から順に名前で当てはめる（当たらなければ「その他」）
+COMMAND_CATS = [
+    ("Redmine・チケット", r"ct-(redmine|issue-(auto|docs|read|sync)|branch|resume|handoff|wrap-branch|commit)$|ct-redmine-"),
+    ("実装・テスト", r"ct-(tdd|rspec|vitest|e2e|ci-|ship|finish|eslint|rubocop|migration|method-comments|refactor|db-snapshot|lottery-repro|event-setup|seat-extract|operation-history)|refactor-clean|test-coverage"),
+    ("レビュー・検証", r"ct-(verify|review|code-review|security-review|pr-|browser-verify|mobile-verify|sheet-browser-test|issue-reconcile|ticket-login|test-site)"),
+    ("調査・設計", r"ct-(analyze|architect|planner|bug-|sweep|scope|grill|paltera|tag-|slack-|slides-review)|update-codemaps|screenshot-analyzer"),
+    ("サーバー・ログ・リリース", r"ct-(deploy|local-|start-server|stop-server|restart-server|co-server|ssh-|log-|mail-check|app-|flutter-build|open-consol)"),
+    ("資料・共有", r"ct-(artifact|screen-walkthrough|screenshot|html-mockup|memory-share|skill-share)"),
+    ("tmux・連携", r"ct-(tmux-|link)"),
+]
+COMMAND_BUILTIN_CAT = "Claude Code の組み込み"
+
+
+def command_list():
+    rows = []
+    for r in skill_list():
+        name = r["cmd"][1:]
+        cat = next((c for c, pat in COMMAND_CATS if re.search(pat, name)), "その他")
+        rows.append({"cmd": r["cmd"], "desc": SKILL_DESC_JA.get(name, r["desc"]), "cat": cat, "where": r["where"]})
+    rows += [{"cmd": c, "desc": d, "cat": COMMAND_BUILTIN_CAT, "where": "builtin"} for c, d in BUILTIN_COMMANDS]
+    cats = [c for c, _ in COMMAND_CATS] + ["その他", COMMAND_BUILTIN_CAT]
+    counts = {c: sum(1 for r in rows if r["cat"] == c) for c in cats}
+    return {"rows": rows, "cats": [[c, counts[c]] for c in cats if counts[c]]}
 
 
 def wait_ready(pane_id, timeout=60):
@@ -2512,6 +2662,8 @@ class Handler(BaseHTTPRequestHandler):
                 redmine_cache["at"] = 0
                 refresh_prs()
             self.send_json(redmine_view())
+        elif self.path == "/api/commands":
+            self.send_json(command_list())
         elif self.path == "/api/skills":
             self.send_json({"skills": skill_list()})
         elif self.path == "/api/nippo":
@@ -2524,6 +2676,11 @@ class Handler(BaseHTTPRequestHandler):
             if date != "today" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
                 return self.send_json({"error": "date が不正です"}, 400)
             self.send_json(*nippo_prev(date))
+        elif self.path == "/api/pane-label/history":
+            n = self.query.get("slot", [""])[0]
+            if not re.fullmatch(r"\d{1,2}", n):
+                return self.send_json({"error": "slot が不正です"}, 400)
+            self.send_json({"items": label_history(n)})
         elif self.path == "/api/link-title":
             self.send_json(*link_title(self.query.get("u", [""])[0]))
         elif self.path == "/api/redmine/issue":
@@ -2571,6 +2728,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "base が不正です"}, 400)
             body, code = memo_write(text, base)
             return self.send_json(body, code)
+        if self.path == "/api/pane-label":
+            try:
+                slot = int(req.get("slot"))
+            except (TypeError, ValueError):
+                return self.send_json({"error": "slot が不正です"}, 400)
+            label = re.sub(r"\s+", " ", str(req.get("label") or "")).strip()
+            p = slot_pane(slot) if 1 <= slot <= 12 else None
+            if not p:
+                return self.send_json({"error": f"[{slot}] の枠が見つかりません"}, 404)
+            set_pane_label(p["id"], label)
+            remember_label(slot, label[:LABEL_MAX])
+            return self.send_json({"ok": True, "label": label[:LABEL_MAX]})
         if self.path == "/api/link":
             try:
                 slot = int(req.get("slot"))
@@ -2666,6 +2835,7 @@ def main():
     load_artifacts()
     threading.Thread(target=artifacts_loop, daemon=True).start()
     threading.Thread(target=history_loop, daemon=True).start()
+    threading.Thread(target=pane_label_loop, daemon=True).start()
     threading.Thread(target=today_loop, daemon=True).start()
     threading.Thread(target=pr_loop, daemon=True).start()
     httpd = ThreadingHTTPServer((cfg["bind"], cfg["port"]), Handler)

@@ -182,6 +182,15 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 .cell-head .cell-link { flex-shrink: 0; }
 .cell-state { font-weight: 700; font-size: 12px; }
 .cell-task { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell-task a.ticket { color: var(--accent); }
+.modal-label .label-wrap { position: relative; flex: 1; min-width: 12em; display: flex; }
+.modal-label input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 3px 8px; }
+.label-sg { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin: 2px 0 0; padding: 4px 0; list-style: none; max-height: 320px; overflow-y: auto;
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 16px rgb(0 0 0 / 15%); font-size: 12px; }
+.label-sg-head { padding: 4px 10px 2px; color: var(--muted); font-size: 11px; }
+.label-sg-item { padding: 4px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.label-sg-item:hover, .label-sg-item.on { background: color-mix(in srgb, var(--accent) 14%, var(--card)); }
+.label-sg-st { color: var(--muted); font-size: 11px; }
 .cell-skill.done, .skill-done { color: var(--muted); }
 .cell-skill { font-size: 11px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cell-link { color: var(--accent); font-weight: 700; }
@@ -189,6 +198,17 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 .modal-link { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
 .modal-link .label { color: var(--muted); }
 .link-filter { display: flex; gap: 6px; margin-bottom: 6px; }
+/* コマンド一覧: 8 行ぶんの高さで、それより多いときはスクロール */
+.cmd-list { max-height: calc(8 * 30px); overflow-y: auto; border-top: 1px solid var(--line); }
+.cmd-row { display: flex; align-items: center; gap: 8px; height: 30px; box-sizing: border-box; border-bottom: 1px solid var(--line); font-size: 12px; }
+.cmd-name { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
+.cmd-cat { flex: none; color: var(--accent); font-size: 11px; white-space: nowrap; }
+.cmd-where { flex: none; font-size: 10px; line-height: 16px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.cmd-where.w-home { color: #fff; background: #2f7d5b; border-color: #2f7d5b; }
+.cmd-where.w-project { color: #fff; background: #3a6ea5; border-color: #3a6ea5; }
+.cmd-where.w-both { color: #fff; background: #7a5aa6; border-color: #7a5aa6; }
+.cmd-desc { flex: 1; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cmd-row button { flex: none; padding: 0 6px; font-size: 11px; line-height: 18px; }
 .link-filter input { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; }
 .link-row { padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px; }
 .link-row:first-child { border-top: 0; }
@@ -402,6 +422,13 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
     <div class="link-more"><button id="redmine-more">もっと見る</button><button id="redmine-reload">取り直す</button><button id="send-open" title="チケット番号を選んで、tmux の枠の Claude / Codex に /ct-redmine などを送る">tmux に送る</button> <span class="label" id="redmine-meta"></span></div>
   </details>
 
+  <details class="sec" data-key="cmds" open>
+    <summary><h2>コマンド</h2></summary>
+    <div class="link-filter"><select id="cmd-cat" title="カテゴリで絞る"></select><select id="cmd-where" title="置き場所で絞る（ホーム = ~/.claude/skills・プロジェクト = 各環境の .claude/skills）"></select><input type="search" id="cmd-q" placeholder="名前・説明で絞る（スペース区切りで AND）" autocomplete="off"></div>
+    <div id="cmds" class="cmd-list"></div>
+    <div class="link-more"><span class="label" id="cmd-count"></span></div>
+  </details>
+
   <details class="sec" data-key="links" open>
     <summary><h2>リンク</h2></summary>
     <div id="links"></div>
@@ -502,6 +529,7 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
     </div>
     <div class="modal-actions" id="modal-actions"></div>
     <div class="modal-link" id="modal-link"></div>
+    <div class="modal-link modal-label" id="modal-label"></div>
     <pre class="modal-body" id="modal-body"></pre>
   </div>
 </div>
@@ -624,17 +652,15 @@ async function run(action, env) {
   pollJob();
 }
 
-// チケット番号（タイトル優先、無ければそのセッションのやり取り）を先頭に出し、作業名を後ろに続ける。
-// タイトルに番号があればタイトルからは番号を抜いて重複させない
+// 一覧の2行目は、付けたタイトル（tmux の枠と同じ文字。~/bin/tmux-title・スキル ct-tmux-title・詳細画面で付ける）だけを出す。
+// 自動で拾ったチケット番号・作業名は出さない（クリアしたら空になる）
 function taskHtml(s) {
-  let task = s.task || "";
-  if (s.ticket_from === "title") {
-    task = task.replace(new RegExp(`#?${s.ticket}`), "").replace(/^[\s:：\-|]+|[\s:：\-|]+$/g, "").replace(/\s{2,}/g, " ");
-  }
-  if (!s.ticket) return task ? esc(task) : "&nbsp;";
-  const from = s.ticket_from === "session" ? ' title="セッションのやり取りから"' : "";
-  return `<span class="ticket"${from}>#${s.ticket}</span> ${esc(task)}`;
+  return s.label ? paneTicketLink(esc(s.label)) : "&nbsp;";
 }
+// 文字の中の「#番号」を Redmine のリンクにする（html は esc 済みのもの）
+const paneTicketLink = (html) => html.replace(/#(\d{4,6})(?!\d)/g, (t) => { const u = npIssueUrl(t); return u ? `<a class="ticket" href="${esc(u)}" target="_blank" rel="noopener noreferrer">${t}</a>` : t; });
+// 一覧のリンク（「#番号」）を押したときは、枠の画面を開かずにリンクだけ開く
+$("panes").addEventListener("click", (e) => { if (e.target.closest("a")) e.stopPropagation(); }, true);
 
 let prevStates = null;
 // スキル: 使っている最中は ⚙、最後の返答が質問でなく区切りがついたら灰色の ✓（次のスキルまで残す）
@@ -652,7 +678,7 @@ async function refreshPanes() {
     window.__slots = bySlot;
     mini.slots = d.slots;
     renderMini();
-    if (modalSlot) renderLink();
+    if (modalSlot) { renderLink(); renderLabel(); }
     $("panes").innerHTML = `<div class="grid">${Array.from({ length: 12 }, (_, i) => {
       const s = bySlot[i + 1];
       if (!s) return `<div class="cell stopped"><div class="cell-head">[${i + 1}]</div><div class="cell-state">なし</div></div>`;
@@ -737,9 +763,9 @@ async function loadPane() {
 function openPane(slot) {
   // ブラウザの「戻る」でも閉じられるよう、開いたときに履歴を1つ積む
   if (!modalSlot) { try { history.pushState({ pane: slot }, ""); } catch (e) {} }
-  modalSlot = slot; actionsKey = ""; linkKey = "";
+  modalSlot = slot; actionsKey = ""; linkKey = ""; labelKey = "";
   $("modal-actions").innerHTML = "";
-  renderLink();
+  renderLink(); renderLabel();
   $("modal-title").textContent = `[${slot}]`;
   $("modal-body").textContent = "読み込み中…";
   $("modal").classList.add("open");
@@ -754,9 +780,10 @@ window.addEventListener("popstate", hidePane);
 $("panes").addEventListener("click", (e) => { const c = e.target.closest(".cell[data-slot]"); if (c) openPane(Number(c.dataset.slot)); });
 // 全部コピー。http（LAN の IP）では navigator.clipboard が使えないことがあるので、textarea 経由の方法も用意する
 // マウスを乗せたときの説明: 1行目に「[9] env3 claude -> [3][10]」、2行目以降に作業名・スキル
+// 2行目は、付けたタイトル（tmux の枠と同じ文字）。付けていなければ出さない
 function cellTip(s) {
   const head = `[${s.slot}] ${s.env} ${s.kind}${s.link ? ` -> ${s.link.slots.map((n) => `[${n}]`).join("")}` : ""}`;
-  return [head, s.task, s.skill ? skillTip(s) : ""].filter(Boolean).join("\n");
+  return [head, s.label ? `タイトル: ${s.label}` : "", s.skill ? skillTip(s) : ""].filter(Boolean).join("\n");
 }
 
 // 連動先の表示。ダッシュボードで付けたものは太字、起動時の CODEX_SLOT のものは細字
@@ -794,6 +821,85 @@ function renderLink() {
   };
   $("link-set").onclick = () => save([...document.querySelectorAll(".link-cb:checked")].map((c) => Number(c.value)));
   $("link-clear").onclick = () => save([]);
+}
+
+// tmux の枠のタイトルに出す文字（~/bin/tmux-title・スキル ct-tmux-title と同じもの）。「保存」で反映、「クリア」か空で保存すると元に戻る
+let labelKey = "";
+function renderLabel() {
+  const s = (window.__slots || {})[modalSlot], box = $("modal-label");
+  if (!s) { box.innerHTML = ""; labelKey = ""; return; }
+  const key = `${modalSlot}|${s.label}`;
+  if (key === labelKey || box.contains(document.activeElement)) return;  // 入力中・変わっていないときは描き直さない
+  labelKey = key;
+  const init = s.label || "";
+  box.innerHTML = `<span class="label">タイトル:</span><span class="label-wrap"><input type="text" id="label-in" maxlength="200" autocomplete="off" value="${esc(init)}" placeholder="番号を打つと Redmine から、空なら過去に付けたものから選べます（36文字まで出ます）"><ul class="label-sg" id="label-sg" hidden></ul></span>
+    <button id="label-set" title="入力した文字を tmux の枠のタイトルにする">保存</button><button id="label-clear" ${!s.label ? "disabled" : ""} title="入力した文字を消して、tmux の枠のタイトルを元（envN claude(continue) など）に戻す">クリア</button>
+    <span class="label">（今: ${s.label ? paneTicketLink(esc(s.label)) : "なし"}）</span>`;
+  const save = async (label) => {
+    try {
+      const r = await fetch("/api/pane-label", { method: "POST", headers: { "Content-Type": "application/json", "X-Dashboard": "1" }, body: JSON.stringify({ slot: modalSlot, label }) });
+      const d = await r.json();
+      $("modal-meta").textContent = d.error || (label ? "タイトルを保存しました" : "タイトルを元に戻しました");
+    } catch (e) { $("modal-meta").textContent = "送れませんでした"; }
+    document.activeElement && document.activeElement.blur();
+    labelKey = ""; await refreshPanes();
+  };
+  $("label-set").onclick = () => save($("label-in").value.trim());
+  $("label-clear").onclick = () => save("");
+  const inp = $("label-in"), sg = $("label-sg");
+  let items = [], sel = -1;
+  const show = () => {
+    items = labelCands(inp.value);
+    sel = -1;
+    sg.innerHTML = items.map((c, i) => `${c.head ? `<li class="label-sg-head">${esc(c.head)}</li>` : ""}<li class="label-sg-item" data-i="${i}">${c.kind === "rm" ? `<b>#${c.id}</b> ${esc(c.subject)}${c.status ? ` <span class="label-sg-st">${esc(c.status)}</span>` : ""}` : esc(c.text)}</li>`).join("")
+      || (labelLookupNote(inp.value) ? `<li class="label-sg-head">${esc(labelLookupNote(inp.value))}</li>` : "");
+    sg.hidden = !sg.innerHTML;
+  };
+  const pick = (i) => { const c = items[i]; if (!c) return; inp.value = c.text; sg.hidden = true; inp.focus(); };
+  const mark = () => sg.querySelectorAll(".label-sg-item").forEach((li) => li.classList.toggle("on", Number(li.dataset.i) === sel));
+  inp.onfocus = async () => { await loadLabelHist(); show(); };
+  inp.oninput = () => { show(); labelLookup(inp.value).then(() => { if (document.activeElement === inp) show(); }); };
+  inp.onblur = () => setTimeout(() => { sg.hidden = true; }, 150);
+  sg.onmousedown = (e) => { const li = e.target.closest(".label-sg-item"); if (li) { e.preventDefault(); pick(Number(li.dataset.i)); } };
+  inp.onkeydown = (e) => {
+    if (e.isComposing) return;
+    if (!sg.hidden && items.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length; mark(); return; }
+    if (e.key === "Escape" && !sg.hidden) { e.preventDefault(); sg.hidden = true; return; }
+    if (e.key === "Enter") { e.preventDefault(); if (!sg.hidden && sel >= 0) pick(sel); else save(inp.value.trim()); }
+  };
+}
+// タイトルの候補: 番号を打つと Redmine のチケット（Redmine 欄にある分＋無ければ番号で引く）、それ以外はその枠に過去に付けたタイトル（枠ごと・新しい順に 10 件）
+let labelHist = [];
+async function loadLabelHist() { try { labelHist = (await (await fetch(`/api/pane-label/history?slot=${modalSlot}`)).json()).items || []; } catch (e) { labelHist = []; } }
+const labelFetched = new Map();  // 番号 -> {id, subject, status} / {loading} / {error}
+async function labelLookup(q) {
+  const n = (/^\s*[#＃]?(\d{4,6})\s*$/.exec(q) || [])[1];
+  if (!n || labelFetched.has(n) || npIssues().some((i) => String(i.id) === n)) return;
+  labelFetched.set(n, { loading: true });
+  let d;
+  try { d = await (await fetch(`/api/redmine/issue?ticket=${n}`)).json(); } catch (e) { d = { error: "Mac に接続できません" }; }
+  labelFetched.set(n, d.error ? { error: d.error } : d);
+}
+function labelLookupNote(q) {
+  const n = (/^\s*[#＃]?(\d{4,6})\s*$/.exec(q) || [])[1], f = n && labelFetched.get(n);
+  return f ? (f.loading ? `#${n} を Redmine で探しています…` : f.error ? f.error : "") : "";
+}
+function labelCands(q) {
+  const t = q.trim(), num = (/^[#＃]?(\d{1,6})/.exec(t) || [])[1];
+  const out = [];
+  if (num) {
+    const seen = new Set(), list = [];
+    [...npIssues(), ...((rmData && rmData.memo_extra) || [])].forEach((i) => {
+      if (!seen.has(i.id) && String(i.id).startsWith(num)) { seen.add(i.id); list.push(i); }
+    });
+    const f = labelFetched.get(num);
+    if (f && f.id && !seen.has(f.id)) list.unshift(f);
+    list.slice(0, 10).forEach((i, k) => out.push({ kind: "rm", id: i.id, subject: i.subject, status: i.status, text: `#${i.id}: ${i.subject}`, head: k ? "" : "Redmine" }));
+  }
+  const words = t.toLowerCase().split(/\s+/).filter(Boolean);
+  labelHist.filter((h) => !words.length || words.every((w) => h.toLowerCase().includes(w))).slice(0, 10)
+    .forEach((h, k) => out.push({ kind: "hist", text: h, head: k ? "" : `[${modalSlot}] に過去に付けたタイトル` }));
+  return out;
 }
 
 // 起動・停止ボタン。起動は止まっている枠だけ、停止は入力待ちの枠だけ押せる
@@ -1814,6 +1920,41 @@ loadRedmine();
 setInterval(loadRedmine, 60000);
 loadLinks();
 setInterval(loadLinks, 30000);
+// ---- コマンド一覧: スキル（ct- など）と Claude Code の組み込みコマンド。カテゴリ・フリーワードで絞る ----
+let cmdData = null;
+async function loadCmds() {
+  try { cmdData = await (await fetch("/api/commands")).json(); } catch (e) { $("cmds").innerHTML = `<div class="empty">取得できませんでした</div>`; return; }
+  const sel = $("cmd-cat"), cur = sel.value;
+  sel.innerHTML = `<option value="">すべて（${cmdData.rows.length}）</option>` + cmdData.cats.map(([c, n]) => `<option value="${esc(c)}" ${c === cur ? "selected" : ""}>${esc(c)}（${n}）</option>`).join("");
+  const wsel = $("cmd-where"), wcur = wsel.value;
+  wsel.innerHTML = `<option value="">置き場所: すべて</option>` + Object.entries(CMD_WHERE).map(([k, v]) => [k, v, cmdData.rows.filter((r) => r.where === k).length]).filter(([, , n]) => n)
+    .map(([k, v, n]) => `<option value="${k}" ${k === wcur ? "selected" : ""}>${v}（${n}）</option>`).join("");
+  renderCmds();
+}
+// 置き場所: home = ~/.claude/skills（全環境で使える）・project = 各環境の .claude/skills（その workspace だけ）
+const CMD_WHERE = { home: "ホーム", project: "プロジェクト", both: "両方", builtin: "組み込み" };
+const CMD_WHERE_TIP = { home: "~/.claude/skills（どの環境でも使える）", project: "各環境の .claude/skills（workspace の中だけで使える）", both: "ホームとプロジェクトの両方にある", builtin: "Claude Code の組み込みコマンド" };
+function renderCmds() {
+  if (!cmdData) return;
+  const where = $("cmd-where").value;
+  const cat = $("cmd-cat").value, words = $("cmd-q").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const rows = cmdData.rows.filter((r) => (!cat || r.cat === cat) && (!where || r.where === where) && words.every((w) => `${r.cmd} ${r.desc} ${r.cat} ${CMD_WHERE[r.where] || ""}`.toLowerCase().includes(w)));
+  $("cmds").innerHTML = rows.map((r) => `<div class="cmd-row" title="${esc(`${r.cmd}（${CMD_WHERE[r.where] || ""}: ${CMD_WHERE_TIP[r.where] || ""}）\n${r.desc}`)}">
+      <span class="cmd-name">${esc(r.cmd)}</span><span class="cmd-where w-${esc(r.where || "")}">${esc(CMD_WHERE[r.where] || "")}</span><span class="cmd-cat">${esc(r.cat)}</span><span class="cmd-desc">${esc(r.desc)}</span>
+      <button class="cmd-copy" data-cmd="${esc(r.cmd)}" title="コマンド名をコピー">⧉</button><button class="cmd-send" data-cmd="${esc(r.cmd)}" title="このコマンドを tmux の枠の Claude / Codex に送る（送り先とチケット番号を選ぶ画面が開きます）">▶</button></div>`).join("")
+    || `<div class="empty">該当するコマンドはありません</div>`;
+  $("cmd-count").textContent = `${rows.length} 件${rows.length > 8 ? "（スクロールで全部見られます）" : ""}`;
+}
+$("cmd-cat").onchange = renderCmds;
+$("cmd-where").onchange = renderCmds;
+$("cmd-q").oninput = renderCmds;
+$("cmds").addEventListener("click", async (e) => {
+  const c = e.target.closest(".cmd-copy"), s = e.target.closest(".cmd-send");
+  if (c) { const ok = await copyText(c.dataset.cmd); c.textContent = ok ? "✓" : "✗"; setTimeout(() => { c.textContent = "⧉"; }, 1200); }
+  if (s) sndOpen(null, null, s.dataset.cmd + " ");
+});
+loadCmds();
+setInterval(loadCmds, 600000);  // スキルを足したときのために 10 分ごとに取り直す
 refreshPanes();
 setInterval(refreshPanes, 5000);
 fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.running && !jobPolling) jobPolling = setInterval(pollJob, 1500); });

@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""tmux-title — 今の tmux の枠のタイトルに出す文字（@ai_label）を付け替える。
+
+使い方:
+  tmux-title ticket <番号>     Redmine から件名を引いて「#番号: 件名」にする
+  tmux-title set <文字>        好きな文字にする（「#番号: …」で始めると開発ダッシュボードもその番号として扱う）
+  tmux-title clear             外す（元のタイトルに戻る）
+  tmux-title show              今の文字を出す
+  --pane %ID                   枠を指定する（省略すると、このコマンドを動かした枠）
+
+表示: 枠のタイトルは「[n] <文字>」（長いと「…」で切る）。タイトルの行を押すと全部出る（~/bin/claude-monitor の設定）。
+Claude・Codex を閉じると、開発ダッシュボードが10秒以内に外す。開発ダッシュボードの tmux 欄にも同じ文字が出る。
+
+枠の決め方は ~/bin/tmux-ai-state と同じ: 環境変数 TMUX_PANE → 無ければ親プロセスをたどって tmux の枠と同じ端末の枠。
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.request
+
+MAX = 200  # 保存する最大文字数（表示はさらに短く切る）
+
+
+def tmux(*args):
+    return subprocess.run(["tmux", *args], capture_output=True, text=True, timeout=5)
+
+
+def find_pane():
+    pane = os.environ.get("TMUX_PANE", "")
+    if pane:
+        return pane
+    ttys = {}
+    for line in tmux("list-panes", "-a", "-F", "#{pane_tty} #{pane_id}").stdout.splitlines():
+        t, _, p = line.partition(" ")
+        ttys[t] = p
+    pid = os.getppid()
+    for _ in range(12):
+        out = subprocess.run(["ps", "-o", "tty=,ppid=", "-p", str(pid)], capture_output=True, text=True).stdout.split()
+        if not out:
+            break
+        tty, ppid = (out + ["", ""])[:2]
+        if tty and tty != "??" and ttys.get(f"/dev/{tty}"):
+            return ttys[f"/dev/{tty}"]
+        if not ppid.isdigit() or int(ppid) <= 1:
+            break
+        pid = int(ppid)
+    return ""
+
+
+def redmine_creds():
+    """launchd 等で環境変数が無いときは ~/.zshrc の export を読む（開発ダッシュボードと同じ）。"""
+    vals = {k: os.environ.get(k, "") for k in ("REDMINE_HOST", "REDMINE_API_KEY")}
+    if not all(vals.values()):
+        try:
+            with open(os.path.expanduser("~/.zshrc")) as f:
+                for line in f:
+                    m = re.match(r"\s*export\s+(REDMINE_HOST|REDMINE_API_KEY)=(.*)$", line)
+                    if m and not vals[m.group(1)]:
+                        vals[m.group(1)] = m.group(2).strip().strip("'\"")
+        except OSError:
+            pass
+    return vals["REDMINE_HOST"].rstrip("/"), vals["REDMINE_API_KEY"]
+
+
+def subject_of(n):
+    host, key = redmine_creds()
+    if not host or not key:
+        raise SystemExit("REDMINE_HOST / REDMINE_API_KEY が見つかりません")
+    req = urllib.request.Request(f"{host}/issues/{n}.json", headers={"X-Redmine-API-Key": key})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.load(r)["issue"]["subject"]
+    except Exception as e:
+        raise SystemExit(f"#{n} を Redmine から取れませんでした: {e}")
+
+
+def refresh():
+    for c in tmux("list-clients", "-F", "#{client_name}").stdout.split():
+        tmux("refresh-client", "-t", c)
+
+
+def main(argv):
+    pane = ""
+    if len(argv) >= 2 and argv[0] == "--pane":
+        pane, argv = argv[1], argv[2:]
+    if not argv or argv[0] not in ("ticket", "set", "clear", "show"):
+        print(__doc__.strip())
+        return 2
+    pane = pane or find_pane()
+    if not re.fullmatch(r"%\d+", pane or ""):
+        print("tmux の枠が分かりませんでした（tmux の中で動かすか、--pane %ID を付けてください）", file=sys.stderr)
+        return 1
+    cmd, rest = argv[0], " ".join(argv[1:]).strip()
+    if cmd == "show":
+        print(tmux("show-options", "-pqv", "-t", pane, "@ai_label").stdout.strip())
+        return 0
+    if cmd == "clear":
+        tmux("set-option", "-p", "-u", "-t", pane, "@ai_label")
+        refresh()
+        print(f"{pane} のタイトルを元に戻しました")
+        return 0
+    if cmd == "ticket":
+        n = rest.lstrip("#＃")
+        if not re.fullmatch(r"\d{4,6}", n):
+            print("番号を 4〜6 桁で指定してください（例: tmux-title ticket 14892）", file=sys.stderr)
+            return 2
+        label = f"#{n}: {subject_of(n)}"
+    else:
+        label = re.sub(r"\s+", " ", rest)
+        if not label:
+            print("付ける文字を指定してください（外すときは clear）", file=sys.stderr)
+            return 2
+    label = label[:MAX]
+    tmux("set-option", "-p", "-t", pane, "@ai_label", label)
+    refresh()
+    print(f"{pane} のタイトルを「{label}」にしました")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
