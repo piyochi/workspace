@@ -56,6 +56,26 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -1
 .fc.b-review_in { background: color-mix(in srgb, var(--bad) 10%, var(--card)); }
 .fc.b-done { opacity: .6; }
 .fc.closed { background: var(--bg); }  /* tmux の枠を閉じた、今日作業したチケット */
+/* 対応中のチップにマウスを乗せたときの吹き出し */
+.fc-pop { position: fixed; z-index: 40; width: min(460px, calc(100vw - 24px)); background: var(--card); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 10px 12px; font-size: 12px; line-height: 1.5; }
+.fc-pop[hidden] { display: none; }
+.fc-pop-title { font-weight: 700; margin-bottom: 6px; word-break: break-all; }
+.fc-pop-title { display: flex; gap: 6px; align-items: flex-start; }
+.fc-pop-title > span { flex: 1; min-width: 0; }
+.fc-pop-title a { color: var(--accent); text-decoration: none; margin-right: 4px; }
+.fc-pop-re { flex: none; font-size: 11px; padding: 0 6px; line-height: 18px; font-weight: 400; }
+.fc-pop-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; align-items: center; }
+.fc-pop-tags .who { color: var(--muted); font-size: 11px; }
+.fc-pop dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 0; }
+.fc-pop dt { color: var(--muted); font-size: 11px; white-space: nowrap; padding-top: 1px; }
+.fc-pop dd { margin: 0; min-width: 0; word-break: break-all; }
+.fc-pop .why { display: block; color: var(--muted); font-size: 11px; }
+.fc-pop .note { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted); font-size: 11px; }
+.fc-pop a { color: var(--accent); }
+.fc-pop .st-busy { color: #ea580c; font-weight: 700; } .fc-pop .st-wait { color: var(--bad); font-weight: 700; } .fc-pop .st-idle { color: var(--ok); }
+.fc-pop .ok { color: var(--ok); font-weight: 600; } .fc-pop .ng { color: var(--bad); font-weight: 600; }
+.fc-pop-foot { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
 .mini-wrap { position: absolute; left: 0; right: 0; top: 100%; background: var(--bg); padding: 0 16px 5px; border-bottom: 1px solid var(--line); }
 .mini { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 4px; font-size: 11px; }
 .mini-src { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
@@ -419,6 +439,8 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
       <div class="mini" id="mini-panes" hidden></div>
     </div>
   </header>
+  <!-- 吹き出しはヘッダーの外に置く（ヘッダーの中だと、モーダル（日報など）の下に隠れる） -->
+  <div class="fc-pop" id="fc-pop" hidden></div>
 
   <details class="sec" data-key="claude" open>
     <summary><h2>Claude</h2></summary>
@@ -746,24 +768,97 @@ async function refreshPanes() {
 // ---- ヘッダーの「対応中」 ----
 const FC_DOT = { wait: 3, busy: 2, idle: 1 };
 let focusItems = [];
-function focusTip(i) {
-  const L = [`#${i.id}: ${i.subject || "（件名なし）"}`];
-  L.push(`Redmine: ${i.status || "?"}${i.priority ? `・${i.priority}` : ""}${i.assignee ? `・担当 ${i.assignee}` : ""}`);
-  L.push(`段階: ${i.stage_label || "–"}${i.phase ? `（フェーズ ${i.phase.done}/${i.phase.total}）` : ""}${i.stage_why ? `  ← ${i.stage_why}` : ""}`);
-  L.push(`担当: ${i.ball.label}  ← ${i.ball.why}`);
-  if (i.last_note) L.push(`最新コメント: ${i.last_note.who}（${new Date(i.last_note.at).toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}）${i.last_note.text}`);
-  if (i.last) L.push(`今日の最後の作業: ${hm(i.last)}`);
-  if (!i.sessions.length && i.today) L.push("tmux の枠は閉じています（今日作業した分として表示）");
-  i.sessions.forEach((x) => L.push(`枠: [${x.slot}] ${x.env} ${x.kind} ${PANE_STATES[x.state] || x.state}${x.skill ? ` ${x.skill_done ? "✓" : "⚙"} ${x.skill}` : ""}`));
-  i.branches.forEach((b) => L.push(`ブランチ: ${b.env} ${b.branch}${b.repo === "ticket_v2" ? "(front)" : "(api)"}`));
-  i.prs.forEach((p) => {
-    const rv = (p.reviews || []).map((r) => `${r.who}=${r.state}`).join(", ");
-    L.push(`PR: ${p.repo}#${p.number} ${p.draft ? "下書き" : p.state}${p.decision ? `・${p.decision}` : ""}${(p.requests || []).length ? `・依頼中 ${p.requests.join(", ")}` : ""}${rv ? `・${rv}` : ""}`);
-  });
-  i.review_requested.forEach((r) => L.push(`レビュー依頼: ${r.repo}#${r.number}（${r.author}）${r.title}`));
-  L.push("", "押すと Redmine 欄のその行を開きます");
-  return L.join("\n");
+const fcDate = (iso) => new Date(iso).toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+const FC_DECISION = { APPROVED: ["承認", "ok"], CHANGES_REQUESTED: ["変更を求める", "ng"], REVIEW_REQUIRED: ["レビュー待ち", ""] };
+const FC_REVIEW = { APPROVED: "承認", CHANGES_REQUESTED: "変更を求める", COMMENTED: "コメント", DISMISSED: "取り消し" };
+function focusPopHtml(i, here) {
+  const row = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : "";
+  const ext = (url, text) => `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>`;
+  const tags = [i.status ? `<span class="rm-tag">${esc(i.status)}</span>` : "",
+    i.priority ? `<span class="rm-tag ${RM_PRI[i.priority] || ""}">${esc(i.priority)}</span>` : "",
+    i.assignee ? `<span class="who">担当 ${esc(i.assignee)}</span>` : ""].join("");
+  const stage = i.stage_label ? `${esc(i.stage_label)}${i.phase ? `（フェーズ ${i.phase.done}/${i.phase.total}）` : ""}${i.stage_why ? `<span class="why">${esc(i.stage_why)}</span>` : ""}` : "";
+  const ball = `${esc(i.ball.label)}<span class="why">${esc(i.ball.why)}</span>`;
+  const note = i.last_note ? `${esc(i.last_note.who)}・${fcDate(i.last_note.at)}<span class="note">${esc(i.last_note.text)}</span>` : "";
+  const work = [i.env ? `env${esc(i.env)}` : "", i.last ? `最後の作業 ${hm(i.last)}` : "", !i.sessions.length && i.today ? "tmux の枠は閉じています" : ""].filter(Boolean).join("・");
+  const slots = i.sessions.map((x) => `[${x.slot}] ${esc(x.env)} ${esc(x.kind)} <span class="st-${x.state}">${PANE_STATES[x.state] || esc(x.state)}</span>${x.skill ? ` ${x.skill_done ? "✓" : "⚙"} ${esc(x.skill)}` : ""}`).join("<br>");
+  const brs = i.branches.map((b) => `env${esc(b.env.replace("env", ""))} ${esc(b.branch)}${b.repo === "ticket_v2" ? "(front)" : "(api)"}`).join("<br>");
+  const prs = i.prs.map((p) => {
+    const d = FC_DECISION[p.decision];
+    const rv = (p.reviews || []).map((r) => `${esc(r.who)} ${FC_REVIEW[r.state] || esc(r.state)}`).join("、");
+    return `<div>${ext(p.url, `${p.repo === "ticket_v2" ? "front" : "api"}#${p.number}`)} ${p.draft ? "下書き" : esc(p.state)}`
+      + `${d ? `・<span class="${d[1]}">${d[0]}</span>` : ""}${(p.requests || []).length ? `・依頼中 ${esc(p.requests.join("、"))}` : ""}${rv ? `<span class="why">${rv}</span>` : ""}</div>`;
+  }).join("");
+  const req = i.review_requested.map((r) => `<div>${ext(r.url, `${r.repo === "ticket_v2" ? "front" : "api"}#${r.number}`)} ${esc(r.author)}<span class="why">${esc(r.title)}</span></div>`).join("");
+  return `<div class="fc-pop-title"><span>${i.url ? ext(i.url, `#${i.id}`) : `#${i.id}`}${esc(i.subject || "（件名なし）")}</span>`
+      + `<button type="button" class="fc-pop-re" data-re="${esc(i.id)}" title="覚えている分を使わずに、Redmine・GitHub・git から取り直す">↻</button></div>`
+    + (tags ? `<div class="fc-pop-tags">${tags}</div>` : "")
+    + `<dl>${row("tmux", slots)}${row("段階", stage)}${row("担当", ball)}${row("最新コメント", note)}${row("作業", work)}${row("ブランチ", brs)}${row("PR", prs)}${row("レビュー依頼", req)}</dl>`
+    + (here ? "" : `<div class="fc-pop-foot">押すと Redmine 欄のその行を開きます（無ければ Redmine を開きます）</div>`);
 }
+// チップに乗せたら吹き出しを出す。吹き出しの上にマウスを移しても消さない（中のリンクを押せるように）
+let fcPopTimer = 0, fcPopFor = null;
+// Redmine 欄・メモの見出しの分は、乗せたチケットだけサーバーに聞く（サーバーが Redmine 3 分・git 10 分覚える）。ここでも 1 分覚える
+const fcCache = {};
+function placeFocusPop(el) {
+  const pop = $("fc-pop");
+  const r = el.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  const left = Math.max(12, Math.min(r.left, window.innerWidth - w - 12));
+  const top = r.bottom + 6 + h > window.innerHeight - 8 ? Math.max(8, r.top - h - 6) : r.bottom + 6;
+  pop.style.left = `${left}px`; pop.style.top = `${top}px`;
+}
+function showFocusPop(el) {
+  const id = el.dataset.id || el.dataset.fc; if (!id) return;
+  clearTimeout(fcPopTimer);
+  fcPopFor = el;
+  const pop = $("fc-pop");
+  const i = el.dataset.id ? focusItems.find((x) => x.id === id) : (fcCache[id] && Date.now() - fcCache[id].at < 60000 ? fcCache[id].item : null);
+  if (i) {
+    pop.innerHTML = focusPopHtml(i, !el.dataset.id);
+  } else {
+    const base = [...((rmData && rmData.issues) || []), ...((rmData && rmData.memo_extra) || [])].find((x) => String(x.id) === id);
+    pop.innerHTML = `<div class="fc-pop-title">#${esc(id)} ${esc(base ? base.subject : npSubject(id).replace(/^#\d+:?\s*/, ""))}</div><div class="fc-pop-foot">読み込み中…</div>`;
+    fetch(`/api/focus?ticket=${encodeURIComponent(id)}`).then((r) => r.json()).then((d) => {
+      const it = d.items && d.items[0]; if (!it) return;
+      fcCache[id] = { at: Date.now(), item: it };
+      if (fcPopFor === el && !pop.hidden) { pop.innerHTML = focusPopHtml(it, true); placeFocusPop(el); }
+    }).catch(() => {});
+  }
+  pop.hidden = false;
+  placeFocusPop(el);
+}
+// ↻: そのチケットだけ取り直す。対応中のチップなら一覧の中身も差し替える
+async function refetchFocus(id, btn) {
+  btn.disabled = true; btn.textContent = "取り直し中…";
+  try {
+    const d = await (await fetch(`/api/focus?ticket=${encodeURIComponent(id)}&fresh=1`)).json();
+    const it = d.items && d.items[0];
+    if (it) {
+      fcCache[id] = { at: Date.now(), item: it };
+      const k = focusItems.findIndex((x) => x.id === id);
+      if (k >= 0) { focusItems[k] = { ...it, last: focusItems[k].last || it.last }; renderFocus(); }
+      const el = fcPopFor && document.contains(fcPopFor) ? fcPopFor : document.querySelector(`#focus-list .fc[data-id="${id}"]`);
+      if (el && !$("fc-pop").hidden) { $("fc-pop").innerHTML = focusPopHtml(it, !el.dataset.id); placeFocusPop(el); fcPopFor = el; }
+    }
+  } catch (e) { btn.disabled = false; btn.textContent = "↻ 失敗"; }
+}
+$("fc-pop").addEventListener("click", (e) => { const b = e.target.closest("button.fc-pop-re"); if (b) refetchFocus(b.dataset.re, b); });
+const hideFocusPop = () => { clearTimeout(fcPopTimer); fcPopTimer = setTimeout(() => { $("fc-pop").hidden = true; }, 150); };
+// 対応中のチップ（.fc）と、Redmine 欄の件名・メモの見出し（[data-fc]）。少し止めてから出す（通り過ぎただけで取りに行かない）
+let fcHoverTimer = 0;
+document.addEventListener("mouseover", (e) => {
+  const c = e.target.closest && e.target.closest("#focus-list .fc, [data-fc]"); if (!c) return;
+  if (c === fcPopFor && !$("fc-pop").hidden) { clearTimeout(fcPopTimer); return; }
+  clearTimeout(fcHoverTimer);
+  fcHoverTimer = setTimeout(() => showFocusPop(c), c.dataset.fc ? 300 : 0);
+});
+document.addEventListener("mouseout", (e) => {
+  const c = e.target.closest && e.target.closest("#focus-list .fc, [data-fc]");
+  if (c && !c.contains(e.relatedTarget)) { clearTimeout(fcHoverTimer); hideFocusPop(); }
+});
+$("fc-pop").addEventListener("mouseenter", () => clearTimeout(fcPopTimer));
+$("fc-pop").addEventListener("mouseleave", hideFocusPop);
+window.addEventListener("scroll", () => { $("fc-pop").hidden = true; }, { passive: true });
 let focusOpen = (() => { try { return localStorage.getItem("dd_focus_open") === "1"; } catch (e) { return false; } })();
 // 1 行目に収まらないチップの数を数えて ▸ を出す（開いているときは ▴ たたむ）
 function fitFocus() {
@@ -773,7 +868,7 @@ function fitFocus() {
   const hidden = chips.filter((c) => c.offsetTop > top + 2).length;
   tg.hidden = !hidden;
   tg.textContent = focusOpen ? "▴ たたむ" : `▸ 他 ${hidden} 件`;
-  tg.title = focusOpen ? "2 行目以降を隠す" : chips.filter((c) => c.offsetTop > top + 2).map((c) => c.title.split("\n")[0]).join("\n");
+  tg.title = focusOpen ? "2 行目以降を隠す" : chips.filter((c) => c.offsetTop > top + 2).map((c) => c.dataset.tip).join("\n");
 }
 $("focus-tg").addEventListener("click", () => {
   focusOpen = !focusOpen;
@@ -787,8 +882,8 @@ function renderFocus() {
   $("focus-list").innerHTML = focusItems.map((i) => {
     const st = i.sessions.reduce((a, x) => (FC_DOT[x.state] || 0) > (FC_DOT[a] || 0) ? x.state : a, "");
     const stage = i.stage_label ? `${i.stage_label}${i.phase && i.stage <= 3 ? ` ${i.phase.done}/${i.phase.total}` : ""}` : "";
-    return `<button type="button" class="fc b-${i.ball.kind}${i.sessions.length ? "" : " closed"}" data-id="${i.id}" data-url="${esc(i.url)}" title="${esc(focusTip(i))}">`
-      + `<span class="fc-dot ${st || "none"}"></span><b>#${i.id}</b>${i.env ? `<span class="fc-env" title="最後に作業した環境">${esc(i.env)}</span>` : ""}${stage ? `<span class="fc-stage">${esc(stage)}</span>` : ""}<span>${esc(i.ball.label.split(" ")[0])}</span></button>`;
+    return `<button type="button" class="fc b-${i.ball.kind}${i.sessions.length ? "" : " closed"}" data-id="${i.id}" data-url="${esc(i.url)}" data-tip="${esc(`#${i.id}: ${i.subject}`)}">`
+      + `<span class="fc-dot ${st || "none"}"></span><b>#${i.id}</b>${i.env ? `<span class="fc-env">${esc(i.env)}</span>` : ""}${stage ? `<span class="fc-stage">${esc(stage)}</span>` : ""}<span>${esc(i.ball.label.split(" ")[0])}</span></button>`;
   }).join("");
   fitFocus();
 }
@@ -1154,6 +1249,7 @@ document.addEventListener("change", async (e) => {
   [...rmData.issues, ...(rmData.today_extra || []), ...(rmData.memo_extra || [])].filter((i) => i.id === id).forEach((i) => { i.status = d.status; });
   rmSt = null; rmRerender();
   loadRedmine(true);
+  delete fcCache[String(id)]; refreshFocus();  // 吹き出し・対応中も取り直す（サーバー側の覚えている分は変更のときに捨ててある）
 });
 // Redmine の行: タイトル右のアイコンで「#番号: タイトル」をコピー
 document.addEventListener("click", async (e) => {
@@ -1238,7 +1334,7 @@ function linkRows(items, days) {
     const when = `${t.getMonth() + 1}/${t.getDate()} ${t.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}`;
     return `<div class="link-row">
       <div class="link-meta"><span>${when}</span><span>${esc(v.src)}</span><span class="link-cat">${esc(v.cat)}</span></div>
-      <div class="link-ctx" title="${esc(v.context || v.url)}">${v.ticket ? `${v.ticket_url ? `<a class="link-ticket" href="${esc(v.ticket_url)}" target="_blank" rel="noopener noreferrer">#${esc(v.ticket)}</a>` : `<span class="link-ticket">#${esc(v.ticket)}</span>`}: ` : ""}${linkedContext(v)}</div>
+      <div class="link-ctx">${v.ticket ? `${v.ticket_url ? `<a class="link-ticket" href="${esc(v.ticket_url)}" target="_blank" rel="noopener noreferrer" data-fc="${esc(v.ticket)}">#${esc(v.ticket)}</a>` : `<span class="link-ticket" data-fc="${esc(v.ticket)}">#${esc(v.ticket)}</span>`}: ` : ""}<span title="${esc(v.context || v.url)}">${linkedContext(v)}</span></div>
     </div>`;
   }).join("") : `<div class="empty">該当するリンクはありません（直近${days}日）</div>`;
 }
@@ -1439,7 +1535,7 @@ function rmRows(items, opts = {}) {
       <div class="rm-head"><button class="rm-tg${has ? "" : " none"}" title="状況（セッション・ブランチ・履歴など）を開く／たたむ"></button>${i.priority ? `<span class="rm-tag ${RM_PRI[i.priority] || ""}">${esc(i.priority)}</span>` : ""}
         ${i.extra ? `<span class="rm-tag extra" title="今日作業したが、自分担当の未完了チケットではないもの">${i.closed ? "完了" : `担当外${i.assignee ? `: ${esc(i.assignee)}` : ""}`}</span>` : ""}
         ${rmStatusHtml(i)}
-        <span class="rm-subj" title="#${i.id}: ${esc(i.subject)}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${i.id}</a>: ${esc(i.subject)}</span>
+        <span class="rm-subj" data-fc="${i.id}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${i.id}</a>: ${esc(i.subject)}</span>
         <button class="rm-copy" data-copy="${esc(`#${i.id}: ${i.subject}`)}" data-url="${esc(i.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button>
         <button class="rm-memo" data-memo="${esc(`#${i.id}: ${i.subject}`)}" title="「#番号: タイトル -----」を、メモのチケットの見出しの一番上に足す">✎</button>
         <button class="rm-send" data-ticket="${i.id}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button>
@@ -1513,7 +1609,7 @@ function npNameHtml(name) {
   const copy = `<button class="rm-copy" data-copy="${esc(name)}" data-url="${esc(url)}" title="業務名を${url ? "リンク付きで" : ""}コピー">⧉</button> `;
   if (!url) return copy + esc(name);
   const send = `<button class="rm-send" data-ticket="${m[1]}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button> `;
-  return `${copy}${send}${esc(name.slice(0, m.index))}<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="Redmine で #${m[1]} を開く">#${m[1]}</a>${esc(name.slice(m.index + m[0].length))}`;
+  return `${copy}${send}${esc(name.slice(0, m.index))}<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">#${m[1]}</a>${esc(name.slice(m.index + m[0].length))}`;
 }
 // HRMOS の行と候補から、画面の行（np.rows）を作る
 // メモ欄の「#番号」（全角の ＃ も）を、出てくる順に重ならないように [番号, 件名] で返す。件名は「#番号: 件名」と書いてあるときだけ
@@ -1574,7 +1670,7 @@ function npRowHtml(r, i) {
   const future = npFuture();  // HRMOS は未来の日付に実績を入れられない
   return `<div class="np-row${off ? " off" : ""}${cur && r.del ? " del" : changed ? " changed" : ""}" data-i="${i}">
     <span class="np-check">${cur ? `<button class="np-del" title="${r.del ? "削除をやめる" : "この行を削除する（登録するまで消えません）"}">${r.del ? "↩" : "✕"}</button>` : `<input type="checkbox" data-f="checked" ${r.checked ? "checked" : ""}>`}</span>
-    <span class="np-name" title="${esc(r.name)}">${r.free ? `<input type="text" data-f="name" value="${esc(r.name)}" placeholder="業務名（例: MTG）">` : npNameHtml(r.name)}${r.sub ? ` <span class="np-sub">${esc(r.sub)}</span>` : ""}</span>
+    <span class="np-name"${/#(\d{4,6})(?!\d)/.test(r.name) && !r.free ? ` data-fc="${/#(\d{4,6})(?!\d)/.exec(r.name)[1]}"` : ` title="${esc(r.name)}"`}>${r.free ? `<input type="text" data-f="name" value="${esc(r.name)}" placeholder="業務名（例: MTG）">` : npNameHtml(r.name)}${r.sub ? ` <span class="np-sub">${esc(r.sub)}</span>` : ""}</span>
     <input type="text" class="${bad(r.plan)}" data-f="plan" value="${esc(r.plan)}" inputmode="numeric" placeholder="0:00" title="予定" ${dis}>
     <input type="text" class="${bad(r.result)}" data-f="result" value="${esc(future ? "" : r.result)}" inputmode="numeric" placeholder="${future ? "–" : "0:00"}" title="${future ? "未来の日付には実績を入れられません（HRMOS の決まり）" : "実績"}" ${future ? "disabled" : dis}>
     <span>${r.draft ? `<button class="np-draft" data-draft="${npRound5(r.draft)}" title="Claude・Codex の記録から出した作業時間（${npFmt(r.draft)}）を実績に入れる" ${dis}>⏱ ${npFmt(npRound5(r.draft))}</button>` : ""}</span>
@@ -2152,7 +2248,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     if (i % 2) return `<a class="mv-url" href="${part}" target="_blank" rel="noopener" title="${part}">${part}</a>`;
     return part.replace(/#(\d{4,6})(?!\d)/g, (t, n) => {
       const u = npIssueUrl(t);
-      return u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="${esc(npSubject(n))}">${t}</a>` : t;
+      return u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" data-fc="${n}">${t}</a>` : t;
     });
   }).join("");
   // 行を「見出し」「区切り（------ だけ）」「ふつうの行」に分ける。
@@ -2286,6 +2382,8 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
         const iss = tid && [...npIssues(), ...((rmData && rmData.memo_extra) || [])].find((x) => String(x.id) === tid);
         if (!iss) { if (tid && rmData) memoAsk(tid); return h; }
         const { info, cls } = rmInfo(iss);
+        // 見出しの文字にマウスを乗せると、対応中と同じ吹き出しでチケットの情報を出す
+        const ttl = h.querySelector(".mv-title"); ttl.removeAttribute("title"); ttl.dataset.fc = String(iss.id);
         // ステータスは Redmine 欄と同じ部品（押すと選べるステータスを出し、選ぶと変更する）。その右に担当者
         h.firstChild.insertAdjacentHTML("beforebegin", `<span class="mv-meta"><span class="mv-st">${rmStatusHtml(iss)}</span>`
           + (iss.assignee ? `<span class="mv-who" title="担当者">${esc(iss.assignee)}</span>` : "") + `</span>`);

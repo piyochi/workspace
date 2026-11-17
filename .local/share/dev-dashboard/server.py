@@ -1534,6 +1534,7 @@ def redmine_set_status(issue_id, status_id):
     except Exception as e:
         return {"error": f"ステータスを変えられませんでした: {e}"}, 502
     redmine_cache["at"] = 0  # 次の一覧で取り直す
+    focus_forget(str(issue_id))  # 対応中・吹き出しの Redmine の情報もすぐ取り直す
     if now.get("id") != status_id:
         return {"error": f"Redmine が変更を受け付けませんでした（今は「{now.get('name', '?')}」のまま）"}, 409
     return {"ok": True, "status": now.get("name", "")}, 200
@@ -2024,6 +2025,39 @@ focus_merge = {}   # チケット番号 -> (取った時刻, {"develop", "releas
 redmine_me = {"id": None}
 
 
+def focus_forget(n):
+    """そのチケットの覚えている Redmine の情報と、取り込み先（develop / release / master）の確認結果を捨てる。"""
+    with focus_lock:
+        focus_rm.pop(n, None)
+        focus_merge.pop(n, None)
+
+
+def refresh_branch_prs(brs):
+    """ブランチの PR とレビュー状況を、そのブランチだけ GitHub から取り直す（吹き出しの ↻ 用。5 分ごとの一括取得を待たない）。"""
+    gh = shutil.which("gh") or "/opt/homebrew/bin/gh"
+    for b in brs:
+        try:
+            out = subprocess.run([gh, "pr", "list", "--repo", f"{GH_OWNER}/{b['repo']}", "--head", b["branch"], "--author", "@me", "--state", "all",
+                                  "--limit", "1", "--json", "number,state,isDraft,url,reviewDecision,reviewRequests,latestReviews"],
+                                 capture_output=True, text=True, timeout=20)
+            rows = json.loads(out.stdout) if out.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            rows = None
+        if not rows:
+            continue
+        r, k = rows[0], (b["repo"], b["branch"])
+        with pr_lock:
+            pr_cache["prs"][k] = {"number": r["number"], "state": r["state"].lower(), "draft": r.get("isDraft", False), "url": r["url"]}
+            if r["state"] == "OPEN":
+                review_cache["mine"][k] = {
+                    "decision": r.get("reviewDecision") or "",
+                    "requests": [q.get("login") or q.get("name") or q.get("slug") or "" for q in r.get("reviewRequests") or []],
+                    "reviews": [{"who": (v.get("author") or {}).get("login", ""), "state": v.get("state", ""), "at": v.get("submittedAt", "")}
+                                for v in r.get("latestReviews") or []]}
+            else:
+                review_cache["mine"].pop(k, None)
+
+
 def redmine_my_id():
     if redmine_me["id"] is None:
         try:
@@ -2152,8 +2186,16 @@ def last_env(sess, envs, brs):
     return max(brs, key=lambda b: b.get("ts", 0))["env"].removeprefix("env") if brs else ""
 
 
-def focus_view():
-    """ヘッダーに出す「対応中」のチケット。tmux の枠の番号（複数番号も）＋レビューを頼まれている PR の番号。"""
+def focus_view(only=None, fresh=False):
+    """ヘッダーに出す「対応中」のチケット。tmux の枠の番号（複数番号も）＋レビューを頼まれている PR の番号。
+
+    only を渡すと、そのチケット 1 件だけを同じ形で返す（Redmine 欄・メモの見出しにマウスを乗せたとき用）。
+    fresh を付けると、そのチケットの Redmine・PR・取り込み先を覚えている分を使わずに取り直す（吹き出しの ↻）。
+    """
+    if only and fresh:
+        focus_forget(only)
+        p0 = ticket_places().get(only, {"branches": []})
+        refresh_branch_prs([b for b in latest_branches(p0["branches"]) if not b["branch"].startswith("backup/")])
     panes = ai_panes()
     order, sessions = [], {}
     for sl in panes.get("slots", []):
@@ -2191,8 +2233,12 @@ def focus_view():
             except (ValueError, KeyError):
                 pass
         return t
-    last = {n: last_of(n) for n in order}
-    order.sort(key=lambda n: -last[n])
+    if only:
+        order = [only]
+        tv = {k: t for k, t in today_view()["tickets"].items() if k == only}
+    else:
+        last = {n: last_of(n) for n in order}
+        order.sort(key=lambda n: -last[n])
     places = ticket_places()
     me = redmine_my_id()
     host, _ = redmine_creds()
@@ -3113,7 +3159,10 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/panes":
             self.send_json(ai_panes())
         elif self.path == "/api/focus":
-            self.send_json(focus_view())
+            n = self.query.get("ticket", [""])[0]
+            if n and not re.fullmatch(r"\d{4,6}", n):
+                return self.send_json({"error": "ticket が不正です"}, 400)
+            self.send_json(focus_view(n or None, fresh=bool(n) and self.query.get("fresh", [""])[0] == "1"))
         elif self.path == "/api/job":
             with job_lock:
                 self.send_json(dict(job))
