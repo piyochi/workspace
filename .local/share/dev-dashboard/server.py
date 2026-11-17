@@ -654,6 +654,12 @@ def pane_status(pane_id, cmd, ai_state, tty, slot_kind, kinds):
     return kind, codex_state(pane_id)
 
 
+def label_tickets(label):
+    """タイトルの先頭に並んだ「#番号」全部（「#14625 #14891: 件名 / 件名」→ 14625・14891）。件名の中の番号は拾わない。"""
+    m = re.match(r"\s*((?:[#＃]\d{4,6}(?!\d)[\s,、]*)+)", label or "")
+    return list(dict.fromkeys(re.findall(r"[#＃](\d{4,6})", m.group(1)))) if m else []
+
+
 def ai_panes():
     """tmuxp（ticket_v2_project）の monitor タブの [1]〜[12]（Claude / Codex）の稼働状態。
 
@@ -706,7 +712,7 @@ def ai_panes():
             ticket = label_ticket
         # 枠で作業中のチケット全部（先頭は ticket）。ラベルに「#14625 #14891」と並べたときはラベルの番号を全部
         if label_ticket:
-            tickets = re.findall(r"[#＃](\d{4,6})(?!\d)", label)
+            tickets = label_tickets(label)
         tickets = list(dict.fromkeys(([ticket] if ticket else []) + [t for t in tickets if ticket]))
         # 連動先: ダッシュボードで付けた印（@link_slot）を優先し、無ければ Claude の起動時の CODEX_SLOT
         link = None

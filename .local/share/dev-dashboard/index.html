@@ -192,6 +192,7 @@ pre { margin: 6px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; 
 .cell-state { font-weight: 700; font-size: 12px; }
 .cell-task { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cell-task a.ticket { color: var(--accent); }
+.cell-task.multi { white-space: normal; }  /* チケットが複数のときは番号だけを全部出す（件名はマウスを乗せると出る） */
 .modal-label .label-wrap { position: relative; flex: 1; min-width: 12em; display: flex; }
 .modal-label input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 3px 8px; }
 .label-sg { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin: 2px 0 0; padding: 4px 0; list-style: none; max-height: 320px; overflow-y: auto;
@@ -665,8 +666,16 @@ async function run(action, env) {
 
 // 一覧の2行目は、付けたタイトル（tmux の枠と同じ文字。~/bin/tmux-title・スキル ct-tmux-title・詳細画面で付ける）だけを出す。
 // 自動で拾ったチケット番号・作業名は出さない（クリアしたら空になる）
+// チケットが複数（先頭に「#番号」が2つ以上）のときは番号だけを全部出す。タイトル全体は枠にマウスを乗せると出る
 function taskHtml(s) {
+  const nums = labelNums(s.label);
+  if (nums.length > 1) return paneTicketLink(nums.map((n) => `#${n}`).join(" "));
   return s.label ? paneTicketLink(esc(s.label)) : "&nbsp;";
+}
+// タイトルの先頭に並んだ「#番号」全部（「#14625 #14891: 件名 / 件名」→ [14625, 14891]）。件名の中の番号は拾わない
+function labelNums(label) {
+  const m = /^\s*((?:[#＃]\d{4,6}(?!\d)[\s,、]*)+)/.exec(label || "");
+  return m ? [...new Set([...m[1].matchAll(/[#＃](\d{4,6})/g)].map((x) => x[1]))] : [];
 }
 // 文字の中の「#番号」を Redmine のリンクにする（html は esc 済みのもの）
 const paneTicketLink = (html) => html.replace(/#(\d{4,6})(?!\d)/g, (t) => { const u = npIssueUrl(t); return u ? `<a class="ticket" href="${esc(u)}" target="_blank" rel="noopener noreferrer">${t}</a>` : t; });
@@ -696,7 +705,7 @@ async function refreshPanes() {
       return `<div class="cell ${s.state}" data-slot="${s.slot}" title="${esc(cellTip(s))}">
         <div class="cell-head"><span class="cell-name">[${s.slot}] ${esc(s.env)} ${esc(s.kind)}</span>${linkHtml(s)}</div>
         <div class="cell-state">${PANE_STATES[s.state] || esc(s.state)}${s.subagents ? `（サブ${s.subagents}）` : ""}</div>
-        <div class="cell-task">${taskHtml(s)}</div>
+        <div class="cell-task${labelNums(s.label).length > 1 ? " multi" : ""}">${taskHtml(s)}</div>
         <div class="cell-skill${s.skill_done ? " done" : ""}">${s.skill ? skillText(s) : "&nbsp;"}</div></div>`;
     }).join("")}</div>`;
   } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
@@ -843,7 +852,7 @@ function renderLabel() {
   if (key === labelKey || box.contains(document.activeElement)) return;  // 入力中・変わっていないときは描き直さない
   labelKey = key;
   const init = s.label || "";
-  box.innerHTML = `<span class="label">タイトル:</span><span class="label-wrap"><input type="text" id="label-in" maxlength="200" autocomplete="off" value="${esc(init)}" placeholder="番号を打つと Redmine から、空なら過去に付けたものから選べます（36文字まで出ます）"><ul class="label-sg" id="label-sg" hidden></ul></span>
+  box.innerHTML = `<span class="label">タイトル:</span><span class="label-wrap"><input type="text" id="label-in" maxlength="200" autocomplete="off" value="${esc(init)}" placeholder="番号を打つと Redmine から（「14625 14891」と並べると複数）、空なら過去に付けたものから選べます"><ul class="label-sg" id="label-sg" hidden></ul></span>
     <button id="label-set" title="入力した文字を tmux の枠のタイトルにする">保存</button><button id="label-clear" ${!s.label ? "disabled" : ""} title="入力した文字を消して、tmux の枠のタイトルを元（envN claude(continue) など）に戻す">クリア</button>
     <span class="label">（今: ${s.label ? paneTicketLink(esc(s.label)) : "なし"}）</span>`;
   const save = async (label) => {
@@ -855,7 +864,9 @@ function renderLabel() {
     document.activeElement && document.activeElement.blur();
     labelKey = ""; await refreshPanes();
   };
-  $("label-set").onclick = () => save($("label-in").value.trim());
+  // 番号を並べただけで保存したときは「#14625 #14891: 件名 / 件名」にしてから保存する
+  const fix = (v) => multiNums(v) ? labelCands(v)[0].text : v;
+  $("label-set").onclick = () => save(fix($("label-in").value.trim()));
   $("label-clear").onclick = () => save("");
   const inp = $("label-in"), sg = $("label-sg");
   let items = [], sel = -1;
@@ -876,14 +887,22 @@ function renderLabel() {
     if (e.isComposing) return;
     if (!sg.hidden && items.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length; mark(); return; }
     if (e.key === "Escape" && !sg.hidden) { e.preventDefault(); sg.hidden = true; return; }
-    if (e.key === "Enter") { e.preventDefault(); if (!sg.hidden && sel >= 0) pick(sel); else save(inp.value.trim()); }
+    if (e.key === "Enter") { e.preventDefault(); if (!sg.hidden && sel >= 0) pick(sel); else save(fix(inp.value.trim())); }
   };
 }
 // タイトルの候補: 番号を打つと Redmine のチケット（Redmine 欄にある分＋無ければ番号で引く）、それ以外はその枠に過去に付けたタイトル（枠ごと・新しい順に 10 件）
 let labelHist = [];
 async function loadLabelHist() { try { labelHist = (await (await fetch(`/api/pane-label/history?slot=${modalSlot}`)).json()).items || []; } catch (e) { labelHist = []; } }
 const labelFetched = new Map();  // 番号 -> {id, subject, status} / {loading} / {error}
+// 番号を空白・カンマで並べた入力（「14625 14891」「#14625, #14891」）なら番号の配列。1つだけ・番号以外が混ざるときは null
+function multiNums(q) {
+  if (!/^\s*[#＃]?\d{4,6}(?:[\s,、]+[#＃]?\d{4,6})+[\s,、]*$/.test(q)) return null;
+  return [...new Set(q.match(/\d{4,6}/g))];
+}
+const knownIssue = (n) => [...npIssues(), ...((rmData && rmData.memo_extra) || [])].find((i) => String(i.id) === n) || (labelFetched.get(n) && labelFetched.get(n).id ? labelFetched.get(n) : null);
 async function labelLookup(q) {
+  const ms = multiNums(q);
+  if (ms) { await Promise.all(ms.map((n) => labelLookup(n))); return; }
   const n = (/^\s*[#＃]?(\d{4,6})\s*$/.exec(q) || [])[1];
   if (!n || labelFetched.has(n) || npIssues().some((i) => String(i.id) === n)) return;
   labelFetched.set(n, { loading: true });
@@ -892,13 +911,23 @@ async function labelLookup(q) {
   labelFetched.set(n, d.error ? { error: d.error } : d);
 }
 function labelLookupNote(q) {
+  const ms = multiNums(q);
+  if (ms) {
+    const f = ms.map((n) => labelFetched.get(n)).filter(Boolean);
+    return f.some((x) => x.loading) ? "Redmine で探しています…" : (f.find((x) => x.error) || {}).error || "";
+  }
   const n = (/^\s*[#＃]?(\d{4,6})\s*$/.exec(q) || [])[1], f = n && labelFetched.get(n);
   return f ? (f.loading ? `#${n} を Redmine で探しています…` : f.error ? f.error : "") : "";
 }
 function labelCands(q) {
   const t = q.trim(), num = (/^[#＃]?(\d{1,6})/.exec(t) || [])[1];
   const out = [];
-  if (num) {
+  const ms = multiNums(t);
+  if (ms) {
+    // 番号を並べたら「#14625 #14891: 件名 / 件名」の1件にまとめる（件名が分からない番号は番号だけ）
+    const subj = ms.map((n) => (knownIssue(n) || {}).subject || `#${n}`);  // 件名が取れない番号は番号のまま（並びをずらさない）
+    out.push({ kind: "rm", id: ms.join(" #"), subject: subj.join(" / "), text: `${ms.map((n) => `#${n}`).join(" ")}: ${subj.join(" / ")}`, head: `${ms.length}件のチケット` });
+  } else if (num) {
     const seen = new Set(), list = [];
     [...npIssues(), ...((rmData && rmData.memo_extra) || [])].forEach((i) => {
       if (!seen.has(i.id) && String(i.id).startsWith(num)) { seen.add(i.id); list.push(i); }

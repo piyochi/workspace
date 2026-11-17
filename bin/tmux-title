@@ -2,7 +2,7 @@
 """tmux-title — 今の tmux の枠のタイトルに出す文字（@ai_label）を付け替える。
 
 使い方:
-  tmux-title ticket <番号>     Redmine から件名を引いて「#番号: 件名」にする
+  tmux-title ticket <番号>...  Redmine から件名を引いて「#番号: 件名」にする。複数なら「#番号 #番号: 件名 / 件名」
   tmux-title set <文字>        好きな文字にする（「#番号: …」で始めると開発ダッシュボードもその番号として扱う）
   tmux-title clear             外す（元のタイトルに戻る）
   tmux-title show              今の文字を出す
@@ -102,11 +102,13 @@ def main(argv):
         print(f"{pane} のタイトルを元に戻しました")
         return 0
     if cmd == "ticket":
-        n = rest.lstrip("#＃")
-        if not re.fullmatch(r"\d{4,6}", n):
-            print("番号を 4〜6 桁で指定してください（例: tmux-title ticket 14892）", file=sys.stderr)
+        # 番号はいくつでも並べられる（tmux-title ticket 14625 14891 13844）→「#14625 #14891 #13844: 件名 / 件名 / 件名」
+        nums = [t.lstrip("#＃") for t in re.split(r"[\s,、]+", rest) if t]
+        if not nums or not all(re.fullmatch(r"\d{4,6}", n) for n in nums):
+            print("番号を 4〜6 桁で指定してください（例: tmux-title ticket 14892・複数なら tmux-title ticket 14625 14891）", file=sys.stderr)
             return 2
-        label = f"#{n}: {subject_of(n)}"
+        nums = list(dict.fromkeys(nums))
+        label = f"{' '.join('#' + n for n in nums)}: {' / '.join(subject_of(n) for n in nums)}"
     else:
         label = re.sub(r"\s+", " ", rest)
         if not label:
