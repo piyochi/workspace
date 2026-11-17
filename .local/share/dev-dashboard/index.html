@@ -97,6 +97,10 @@ h1 { font-size: 15px; margin: 0; }
 .mv-drop-before { box-shadow: 0 -3px 0 var(--accent); }
 .mv-drop-after { box-shadow: 0 3px 0 var(--accent); }
 /* 開いたまとまりの枠: 見出しと中身をカードにまとめ、中身は左の線で見出しにぶら下げる */
+.memo-search { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.memo-search input { flex: 1; min-width: 0; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: inherit; }
+.memo-search .label { white-space: nowrap; }
+mark.mv-hit { background: color-mix(in srgb, #facc15 55%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
 .mv-group { margin: 6px -6px; padding: 4px 6px 6px; border: 1px solid var(--line); border-radius: 10px;
   background: color-mix(in srgb, var(--accent) 3%, var(--card)); box-shadow: 0 1px 3px rgb(0 0 0 / 6%); }
 .mv-group.editing { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
@@ -412,6 +416,7 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
 
   <details class="sec" data-key="memo" open>
     <summary><h2>メモ</h2></summary>
+    <div class="memo-search"><input type="search" id="memo-q" autocomplete="off" placeholder="メモを検索（空白で区切ると全部を含むもの。引っかかった ----- のまとまりを開いて出す）" title="Esc で消す"><span class="label" id="memo-hits"></span></div>
     <div id="memo-view" class="memo-view" title="ダブルクリックで編集"></div>
     <div class="memo-wrap">
       <textarea id="memo-text" class="memo" rows="18" spellcheck="false" hidden placeholder="自由に書けます。入力をやめて1秒ほどで保存します（電源を落としても残ります）。「見出し------」の行は、表示のときに開け閉めできるまとまりになります。# を打つとチケットの候補が出ます"></textarea>
@@ -2008,6 +2013,12 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   const OPEN_KEY = "memo-open", ALL_KEY = "memo-all";
   let openSet = new Set(), allOpen = false;
   try { openSet = new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || "[]")); allOpen = localStorage.getItem(ALL_KEY) === "1"; } catch (e) {}
+  // 検索: 空白で区切った語を全部含む「----- のまとまり」（見出しの行〜次の ----- の手前）と、見出しの外の行だけを出す。
+  // 引っかかったまとまりは、開け閉めの状態（openSet）を変えずに開いて見せる。大文字小文字・全角半角は区別しない
+  let memoQ = [];
+  const qNorm = (t) => (t || "").normalize("NFKC").toLowerCase();
+  const qHit = (t) => { const n = qNorm(t); return memoQ.every((w) => n.includes(w)); };
+  const isOpen = (r) => memoQ.length ? true : openSet.has(r.text);
   const saveOpen = () => { try { localStorage.setItem(OPEN_KEY, JSON.stringify([...openSet])); localStorage.setItem(ALL_KEY, allOpen ? "1" : "0"); } catch (e) {} };
   // URL と「#番号」をリンクにする。#番号の行き先は Redmine 欄のチケットの URL から取る（Redmine 欄が読めるまではリンクにしない）
   // [テキスト](URL) と書くと、そのテキストでリンクにする（マウスを乗せると URL が出る）。それ以外の URL・#番号は linkifyAuto
@@ -2029,20 +2040,27 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   function rows(text) {
     const out = [];
     let head = null;  // 今いる見出しのまとまり（無ければ null）
-    text.split("\n").forEach((line, li) => {
+    const lines = text.split("\n");
+    lines.forEach((line, li) => {
       const m = line.match(DASHES);
       // start〜end（end は含まない）が、そのまとまりの行番号（見出しの行も含む）。まとまりだけ直すときに使う
       if (m && /[^\s-]/.test(m[1])) { head = { type: "head", text: m[1], count: 0, start: li, end: li + 1 }; out.push(head); }
       else if (m) { head = null; out.push({ type: "sep" }); }
-      else if (head) { head.count++; head.end = li + 1; if (openSet.has(head.text)) out.push({ type: "line", text: line, owner: head, li }); }
+      else if (head) { head.count++; head.end = li + 1; out.push({ type: "line", text: line, owner: head, li }); }
       else out.push({ type: "line", text: line });
     });
-    while (out.length && out[out.length - 1].type === "line" && !out[out.length - 1].text.trim()) out.pop();
-    return out;
+    let res;
+    if (memoQ.length) {
+      // まとまりは見出しと中身を合わせた文で判定する（語が別々の行にあっても引っかかる）。区切りは出さない
+      out.forEach((r) => { if (r.type === "head") r.hit = qHit(lines.slice(r.start, r.end).join("\n")); });
+      res = out.filter((r) => r.type === "head" ? r.hit : r.type === "line" ? (r.owner ? r.owner.hit : r.text.trim() && qHit(r.text)) : false);
+    } else res = out.filter((r) => r.type !== "line" || !r.owner || openSet.has(r.owner.text));
+    while (res.length && res[res.length - 1].type === "line" && !res[res.length - 1].text.trim()) res.pop();
+    return res;
   }
   function renderView() {
     const all = rows(ta.value);
-    const shown = allOpen ? all : all.slice(0, PREVIEW);
+    const shown = allOpen || memoQ.length ? all : all.slice(0, PREVIEW);
     // 開いた見出し（と直しているまとまり）は、見出しと中身を1つの枠（.mv-group）に入れて、どこまでがそのまとまりか分かるようにする
     const els = [], srcLines = ta.value.split("\n");
     let grp = null;  // {row, body}
@@ -2053,7 +2071,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
         (el.matches(".mv-head") ? el : el.querySelector(".mv-head")).insertAdjacentHTML("afterbegin",
           `<span class="mv-drag" draggable="true" title="ドラッグでまとまりごと並び替え（ほかの見出しの上・下に落とす）">⠿</span>`);
         const editing = sec && r.start === sec.start;
-        if (!openSet.has(r.text) && !editing) { grp = null; el.dataset.mvHead = "1"; els.push(el); return; }
+        if (!isOpen(r) && !editing) { grp = null; el.dataset.mvHead = "1"; els.push(el); return; }
         const g = document.createElement("div");
         g.className = "mv-group" + (editing ? " editing" : ""); g.mvRow = r; g.dataset.mvHead = "1";
         const body = document.createElement("div");
@@ -2075,7 +2093,11 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     });
     // 中身が無い（見出しだけ・空行だけ）の枠は、本文の欄を出さない
     els.forEach((g) => { const b = g.classList && g.classList.contains("mv-group") && g.querySelector(":scope > .mv-body"); if (b && !b.children.length) b.remove(); });
-    if (all.length > PREVIEW) {
+    if (memoQ.length) {
+      const nh = all.filter((r) => r.type === "head").length, nl = all.filter((r) => r.type === "line" && !r.owner).length;
+      $("memo-hits").textContent = nh + nl ? `${nh ? `${nh} まとまり` : ""}${nh && nl ? "・" : ""}${nl ? `${nl} 行` : ""}` : "見つかりません";
+    } else $("memo-hits").textContent = "";
+    if (!memoQ.length && all.length > PREVIEW) {
       const m = document.createElement("button");
       m.type = "button"; m.className = "mv-more";
       m.textContent = allOpen ? "閉じる（上の 3 行だけ見せる）" : `…残り ${all.length - PREVIEW} 行を表示`;
@@ -2083,13 +2105,48 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
       els.push(m);
     }
     view.replaceChildren(...els);
+    if (memoQ.length) markHits(view);
     // メモのふつうの URL はページのタイトルに置き換えない（好きな文字にしたいときは [文字](URL) で書く）
     fitBr(view);  // ブランチの行が長いときの ▸ 全部
     const sb = view.querySelector(".mv-sec");
     if (sb && sec.focus) { sec.focus = false; sb.mvFocus(); }
   }
+  // 見つかった語に印を付ける（見出しの文字とふつうの行だけ。進捗の行やボタンには付けない）
+  function markHits(root) {
+    const ws = [...new Set(memoQ)].sort((a, b) => b.length - a.length);
+    root.querySelectorAll(".mv-title, .mv-line").forEach((el) => {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      nodes.forEach((node) => {
+        // NFKC で長さが変わる文字（半角カナなど）があるときは位置がずれるので印を付けない
+        const t = node.nodeValue;
+        if (qNorm(t).length !== t.length) return;
+        const nn = qNorm(t), parts = [];
+        let i = 0;
+        while (i < t.length) {
+          let hit = null;
+          for (const w of ws) { const j = nn.indexOf(w, i); if (j >= 0 && (!hit || j < hit[0])) hit = [j, w.length]; }
+          if (!hit) break;
+          if (hit[0] > i) parts.push(document.createTextNode(t.slice(i, hit[0])));
+          const m = document.createElement("mark"); m.className = "mv-hit"; m.textContent = t.slice(hit[0], hit[0] + hit[1]); parts.push(m);
+          i = hit[0] + hit[1];
+        }
+        if (!parts.length) return;
+        if (i < t.length) parts.push(document.createTextNode(t.slice(i)));
+        node.replaceWith(...parts);
+      });
+    });
+  }
+  // 検索欄: 打つたびに絞る（入力をやめて少し待ってから）。Esc で消す
+  {
+    const q = $("memo-q");
+    let qt = 0;
+    const apply = () => { memoQ = qNorm(q.value).split(/\s+/).filter(Boolean); if (!editingAll && !sec) renderView(); };
+    q.oninput = () => { clearTimeout(qt); qt = setTimeout(apply, 150); };
+    q.onkeydown = (e) => { if (e.key === "Escape" && q.value) { e.preventDefault(); e.stopPropagation(); q.value = ""; apply(); } };
+  }
   function headEl(r) {
-        const open = openSet.has(r.text);
+        const open = isOpen(r);
         // 見出しの中の #番号・URL もリンクにするので、button ではなく div を押せるようにする（リンクを押したときは開け閉めしない）
         const h = document.createElement("div");
         h.className = "mv-head" + (open ? " open" : "");
