@@ -57,6 +57,15 @@ h1 { font-size: 15px; margin: 0; }
 .memo-view { margin-top: 6px; font-size: 13px; line-height: 1.6; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-height: 2em; cursor: text; }
 .memo-view:empty::before { content: "メモはまだありません。「編集」で書けます"; color: var(--muted); }
 .memo-wrap { position: relative; }
+/* 見たまま編集: 表示のときと同じ見た目のまま直接書ける欄（リンクは文字だけ見える） */
+.memo-wy { margin-top: 6px; box-sizing: border-box; min-height: 120px; max-height: 70vh; overflow: auto; resize: vertical; font-size: 13px; line-height: 1.6; border: 1px solid var(--accent); border-radius: 6px; padding: 6px 8px; outline: none; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--card); }
+.memo-wy:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+.memo-wy > div { min-height: 1.6em; }
+.memo-wy .wy-head { font-weight: 700; }
+.memo-wy .wy-sep { color: var(--muted); }
+.memo-wy a { color: var(--accent); text-decoration: underline; cursor: text; }
+.memo-wy-tip { font-size: 11px; color: var(--muted); }
+.memo-foot button.on, .mv-sec-foot button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--card)); }
 .np-fold { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .np-fold:hover { text-decoration: underline; }
 .memo-suggest { position: absolute; left: 0; right: 0; z-index: 4; margin: 2px 0 0; padding: 4px 0; list-style: none; max-height: 260px; overflow: auto;
@@ -407,7 +416,8 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
       <textarea id="memo-text" class="memo" rows="18" spellcheck="false" hidden placeholder="自由に書けます。入力をやめて1秒ほどで保存します（電源を落としても残ります）。「見出し------」の行は、表示のときに開け閉めできるまとまりになります。# を打つとチケットの候補が出ます"></textarea>
       <ul id="memo-suggest" class="memo-suggest" role="listbox" hidden></ul>
     </div>
-    <div class="memo-foot"><button id="memo-edit">編集</button><span class="label" id="memo-status"></span><button id="memo-reload" hidden>読み込み直す</button><button id="memo-force" class="danger" hidden>この内容で上書き</button></div>
+    <div class="memo-wy" id="memo-wy" contenteditable="true" spellcheck="false" hidden></div>
+    <div class="memo-foot"><button id="memo-edit">編集</button><button id="memo-link" hidden title="選んだ文字をリンクにする（Ctrl+K）。文字を選んで URL を貼り付けてもリンクになります">🔗 リンク</button><button id="memo-wybtn" hidden title="「見たまま」: リンクは文字だけ見える欄で直接書く ／「テキスト」: [文字](URL) のまま書く（# でチケットの候補が出る）">テキストで書く</button><span class="label" id="memo-status"></span><button id="memo-reload" hidden>読み込み直す</button><button id="memo-force" class="danger" hidden>この内容で上書き</button></div>
   </details>
 
   <details class="sec" data-key="nippo" open>
@@ -1064,7 +1074,7 @@ async function linkWork() {
       let d;
       try { d = await (await fetch(`/api/link-title?u=${encodeURIComponent(url)}`)).json(); } catch (err) { d = {}; }
       linkTitles.set(url, { title: d.title || "", desc: d.desc || "" });
-      document.querySelectorAll("a.mv-url, a.link-url").forEach((x) => { if (x.getAttribute("href") === url) linkPaint(x); });
+      document.querySelectorAll("a.link-url").forEach((x) => { if (x.getAttribute("href") === url) linkPaint(x); });
       linkRunning--; linkWork();
     })();
   }
@@ -1078,7 +1088,7 @@ const linkSeen = new IntersectionObserver((ents) => ents.forEach((e) => {
   linkTitles.set(url, { loading: true });
   linkQueue.push(url); linkWork();
 }), { rootMargin: "200px" });
-function linkFill(root) { root.querySelectorAll("a.mv-url, a.link-url").forEach((a) => { if (!linkTitles.has(a.getAttribute("href"))) linkSeen.observe(a); }); }
+function linkFill(root) { root.querySelectorAll("a.link-url").forEach((a) => { if (!linkTitles.has(a.getAttribute("href"))) linkSeen.observe(a); }); }
 // URL が書かれていた行を出し、その中の URL 部分をリンクにする（行が無ければ URL だけ）
 function linkedContext(v) {
   const a = `<a class="link-url${(linkTitles.get(v.url) || {}).title ? " titled" : ""}" href="${esc(v.url)}" target="_blank" rel="noopener noreferrer" title="${esc(linkTip(v.url))}">${esc(linkLabel(v.url))}</a>`;
@@ -1971,9 +1981,15 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   try { openSet = new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || "[]")); allOpen = localStorage.getItem(ALL_KEY) === "1"; } catch (e) {}
   const saveOpen = () => { try { localStorage.setItem(OPEN_KEY, JSON.stringify([...openSet])); localStorage.setItem(ALL_KEY, allOpen ? "1" : "0"); } catch (e) {} };
   // URL と「#番号」をリンクにする。#番号の行き先は Redmine 欄のチケットの URL から取る（Redmine 欄が読めるまではリンクにしない）
-  const linkify = (line) => esc(line).split(/(https?:\/\/[^\s<>"']+)/).map((part, i) => {
-    // 長い URL は1行で切り、マウスを乗せるとページのタイトルと URL 全体を出す（タイトルは初めて乗せたときにサーバーから取る）
-    if (i % 2) { const u = html2text(part), t = linkTitles.get(u); return `<a class="mv-url${t && t.title ? " titled" : ""}" href="${part}" target="_blank" rel="noopener" title="${esc(linkTip(u))}">${esc(linkLabel(u))}</a>`; }
+  // [テキスト](URL) と書くと、そのテキストでリンクにする（マウスを乗せると URL が出る）。それ以外の URL・#番号は linkifyAuto
+  const linkify = (line) => line.split(/(\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/).map((part, i) => {
+    if (!(i % 2)) return linkifyAuto(part);
+    const m = part.match(/^\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)$/);
+    return `<a class="mv-mdlink" href="${esc(m[2])}" target="_blank" rel="noopener" title="${esc(m[2])}">${esc(m[1])}</a>`;
+  }).join("");
+  const linkifyAuto = (line) => esc(line).split(/(https?:\/\/[^\s<>"']+)/).map((part, i) => {
+    // 長い URL は1行で切り、マウスを乗せると URL 全体を出す（ページのタイトルには置き換えない）
+    if (i % 2) return `<a class="mv-url" href="${part}" target="_blank" rel="noopener" title="${part}">${part}</a>`;
     return part.replace(/#(\d{4,6})(?!\d)/g, (t, n) => {
       const u = npIssueUrl(t);
       return u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="${esc(npSubject(n))}">${t}</a>` : t;
@@ -2038,10 +2054,10 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
       els.push(m);
     }
     view.replaceChildren(...els);
-    linkFill(view);
+    // メモのふつうの URL はページのタイトルに置き換えない（好きな文字にしたいときは [文字](URL) で書く）
     fitBr(view);  // ブランチの行が長いときの ▸ 全部
-    const st2 = view.querySelector(".mv-sec textarea");
-    if (st2 && sec.focus) { sec.focus = false; st2.focus({ preventScroll: true }); try { st2.setSelectionRange(sec.caret, sec.caret); } catch (err) {} st2.scrollTop = 0; }
+    const sb = view.querySelector(".mv-sec");
+    if (sb && sec.focus) { sec.focus = false; sb.mvFocus(); }
   }
   function headEl(r) {
         const open = openSet.has(r.text);
@@ -2153,7 +2169,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   }
   async function wsApply(headText, env, state) {
     wsEdit = null;
-    if (sec || !ta.hidden) { renderView(); return; }  // 直している最中は書き換えない
+    if (sec || editingAll) { renderView(); return; }  // 直している最中は書き換えない
     await load(false);  // 別の画面で書き足された分を先に取り込む
     const lines = ta.value.split("\n");
     const start = lines.findIndex((l) => { const m = l.match(DASHES); return m && m[1] === headText; });
@@ -2171,7 +2187,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   const clearDrop = () => view.querySelectorAll(".mv-drop-before, .mv-drop-after, .mv-dragging").forEach((x) => x.classList.remove("mv-drop-before", "mv-drop-after", "mv-dragging"));
   view.addEventListener("dragstart", (e) => {
     const hd = e.target.closest && e.target.closest(".mv-drag"), top = hd && hd.closest("[data-mv-head]");
-    if (!top || sec || !ta.hidden) { if (hd) e.preventDefault(); return; }
+    if (!top || sec || editingAll) { if (hd) e.preventDefault(); return; }
     dragText = top.mvRow.text;
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", dragText);
@@ -2206,7 +2222,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     return [start, end];
   }
   async function memoMove(srcText, dstText, after) {
-    if (sec || !ta.hidden) return;
+    if (sec || editingAll) return;
     await load(false);  // 別の画面で書き足された分を先に取り込む
     const lines = ta.value.split("\n"), sb = blockOf(lines, srcText);
     if (!sb) { renderView(); return; }
@@ -2238,23 +2254,220 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   function secEditor() {
     const box = document.createElement("div");
     box.className = "mv-sec";
-    box.innerHTML = `<textarea class="memo" spellcheck="false"></textarea>
+    box.innerHTML = `<textarea class="memo" spellcheck="false"${wyOn ? " hidden" : ""}></textarea><div class="memo-wy" contenteditable="true" spellcheck="false"${wyOn ? "" : " hidden"}></div>
       <div class="mv-sec-foot"><button class="mv-sec-save">保存</button><button class="mv-sec-cancel">やめる</button>
-      <span class="label">${sec.err ? `<span class="err">${esc(sec.err)}</span>` : "Ctrl+S・Ctrl+Enter で保存・Esc でやめる。見出しの行も直せます"}</span></div>`;
-    const t = box.querySelector("textarea");
+      <button class="mv-sec-link" title="選んだ文字をリンクにする（Ctrl+K）。文字を選んで URL を貼り付けてもリンクになります">🔗 リンク</button><button class="mv-sec-wy">${wyOn ? "テキストで書く" : "見たままで書く"}</button>
+      <span class="label">${sec.err ? `<span class="err">${esc(sec.err)}</span>` : "Ctrl+S・Ctrl+Enter で保存・Esc でやめる。見出しの行も直せます" + (wyOn ? "。リンクは Ctrl+クリックで開く" : "")}</span></div>`;
+    const t = box.querySelector("textarea"), w = box.querySelector(".memo-wy");
+    const keys = (e, el) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); secSave(); return true; }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") { e.preventDefault(); el === t ? linkMake(t) : wyLink(w); return true; }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") { e.preventDefault(); secSave(); return true; }  // Ctrl+S でも保存
+      if (e.key === "Escape" && !e.isComposing) { e.preventDefault(); secCancel(); return true; }
+      return false;
+    };
     t.value = sec.draft;
     t.rows = Math.min(24, Math.max(4, sec.draft.split("\n").length + 1));
     t.oninput = () => { sec.draft = t.value; sec.caret = t.selectionStart; };
-    t.onkeydown = (e) => {
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); secSave(); }
-      tplOnEnter(t, e);
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") { e.preventDefault(); secSave(); }  // Ctrl+S でも保存
-      else if (e.key === "Escape" && !e.isComposing) { e.preventDefault(); secCancel(); }
-    };
+    t.onkeydown = (e) => { if (!keys(e, t)) tplOnEnter(t, e); };
+    t.addEventListener("paste", (e) => linkPaste(t, e));
+    wyBind(w, () => sec.draft, (v) => { sec.draft = v; });
+    w.addEventListener("keydown", (e) => keys(e, w));
+    box.querySelector(".mv-sec-link").onclick = () => (wyOn ? wyLink(w) : linkMake(t));
+    box.querySelector(".mv-sec-wy").onclick = () => { wyToggle(); sec.focus = true; renderView(); };
     box.querySelector(".mv-sec-save").onclick = secSave;
     box.querySelector(".mv-sec-cancel").onclick = secCancel;
+    // 開いたときのカーソル（見出しのすぐ下の行の頭）
+    box.mvFocus = () => {
+      if (!wyOn) { t.focus({ preventScroll: true }); try { t.setSelectionRange(sec.caret, sec.caret); } catch (err) {} t.scrollTop = 0; return; }
+      w.focus({ preventScroll: true });
+      wyCaretLine(w, sec.draft.slice(0, sec.caret).split("\n").length - 1);
+    };
     return box;
   }
+  // ---- 見たまま編集（表示のときと同じく [文字](URL) は文字だけのリンクで見せ、そのまま書ける）とリンク作り ----
+  // 1 行 = 1 つの div。見出し・区切りの行は文字のまま（太字・薄字）にする。#番号・ふつうの URL は文字のまま
+  // 既定はふつうのテキストの欄。「見たままで書く」を押すと切り替わり、どちらにしたかを覚える
+  let wyOn = (() => { try { return localStorage.getItem("memo.wysiwyg") === "1"; } catch (e) { return false; } })();
+  function wyToggle() {
+    wyOn = !wyOn;
+    try { localStorage.setItem("memo.wysiwyg", wyOn ? "1" : "0"); } catch (e) {}
+  }
+  const MD_LINK = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g;
+  function wyLineEl(line) {
+    const d = document.createElement("div");
+    const m = line.match(DASHES);
+    if (m) d.className = m[1] ? "wy-head" : "wy-sep";
+    let at = 0;
+    for (const x of line.matchAll(MD_LINK)) {
+      if (x.index > at) d.append(line.slice(at, x.index));
+      d.append(wyA(x[1], x[2]));
+      at = x.index + x[0].length;
+    }
+    if (at < line.length) d.append(line.slice(at));
+    if (!d.childNodes.length) d.append(document.createElement("br"));
+    return d;
+  }
+  function wyA(text, url) {
+    const a = document.createElement("a");
+    a.href = url; a.textContent = text; a.title = `${url}\n（Ctrl+クリックで開く・Ctrl+K で URL を直す）`;
+    return a;
+  }
+  function wyRender(w, text) { w.replaceChildren(...text.split("\n").map(wyLineEl)); }
+  // 欄の中身を文字に戻す（div ごとに 1 行。<br> は改行。リンクは [文字](URL)）
+  function wyText(w) {
+    const lines = [];
+    const inline = (n) => n.nodeType === 3 ? n.nodeValue : n.nodeName === "BR" ? "\n" : n.nodeName === "A" ? mdLink(n.textContent, n.getAttribute("href")) : [...n.childNodes].map(inline).join("");
+    const block = (n) => {
+      if ([...n.childNodes].some((c) => c.nodeName === "DIV" || c.nodeName === "P")) { n.childNodes.forEach((c) => (c.nodeName === "DIV" || c.nodeName === "P") ? block(c) : lines.push(inline(c))); return; }
+      let t = [...n.childNodes].map(inline).join("");
+      if (n.lastChild && n.lastChild.nodeName === "BR") t = t.slice(0, -1);  // 空の行の <br> と、行末の <br>
+      lines.push(...t.split("\n"));
+    };
+    let loose = null;  // div に入っていない文字（打ち始めに直接入ることがある）
+    w.childNodes.forEach((n) => {
+      if (n.nodeName === "DIV" || n.nodeName === "P") { loose = null; block(n); }
+      else { const t = inline(n); if (loose === null) { lines.push(t); loose = lines.length - 1; } else lines[loose] += t; }
+    });
+    return lines.join("\n").replace(/ /g, " ");
+  }
+  // n 行目の頭にカーソルを置く
+  function wyCaretLine(w, n) {
+    const el = w.children[Math.max(0, Math.min(n, w.children.length - 1))];
+    if (!el) return;
+    const r = document.createRange(); r.setStart(el, 0); r.collapse(true);
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    if (el.offsetTop < w.scrollTop || el.offsetTop > w.scrollTop + w.clientHeight) w.scrollTop = el.offsetTop - 20;
+  }
+  // 欄 w と文字をつなぐ: get で今の文字を取り、打つたびに set で返す
+  function wyBind(w, get, set) {
+    wyRender(w, get());
+    w.addEventListener("input", () => set(wyText(w)));
+    w.addEventListener("keydown", (e) => {
+      // 太字などの書式は付けない（文字だけのメモなので）
+      if ((e.ctrlKey || e.metaKey) && ["b", "i", "u"].includes(e.key.toLowerCase())) e.preventDefault();
+    });
+    // 貼り付けは文字だけ。文字を選んだまま URL を貼ったらリンクにする
+    w.addEventListener("paste", (e) => {
+      const v = ((e.clipboardData && e.clipboardData.getData("text/plain")) || "");
+      e.preventDefault();
+      const sel = getSelection();
+      if (isUrl(v.trim()) && sel.rangeCount && !sel.isCollapsed && !sel.toString().includes("\n") && !isUrl(sel.toString().trim())) { wyWrap(w, v.trim()); return; }
+      document.execCommand("insertText", false, v);
+    });
+    // Ctrl+クリックでリンクを開く（ふつうのクリックは文字を直せるように何もしない）
+    w.addEventListener("click", (e) => {
+      const a = e.target.closest("a");
+      if (!a) return;
+      e.preventDefault();
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const o = document.createElement("a");
+      o.href = a.href; o.target = "_blank"; o.rel = "noopener"; o.hidden = true;
+      document.body.append(o); o.click(); o.remove();  // Edge のグループで開く処理（edgeOpen）も通す
+    });
+  }
+  // 選んだ文字を URL のリンクにする（選択が 1 行の中にあるときだけ）
+  function wyWrap(w, url) {
+    const sel = getSelection(); if (!sel.rangeCount) return false;
+    const r = sel.getRangeAt(0);
+    const text = r.toString();
+    if (!text.trim() || text.includes("\n")) return false;
+    r.deleteContents();
+    const a = wyA(text, url);
+    r.insertNode(a);
+    const after = document.createRange(); after.setStartAfter(a); after.collapse(true);
+    sel.removeAllRanges(); sel.addRange(after);
+    w.dispatchEvent(new Event("input"));
+    return true;
+  }
+  // 🔗・Ctrl+K（見たまま）: カーソルがリンクの中なら URL を直す（空にするとリンクを外す）。文字を選んでいればリンクにする。何も選んでいなければ URL と文字を聞いて入れる
+  function wyLink(w) {
+    w.focus();
+    const sel = getSelection();
+    const node = sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+    const inA = node && (node.nodeType === 3 ? node.parentElement : node).closest("a");
+    if (inA && w.contains(inA)) {
+      const url = prompt("リンクの URL（空にするとリンクを外す）", inA.getAttribute("href"));
+      if (url === null) return;
+      if (!url.trim()) inA.replaceWith(document.createTextNode(inA.textContent));
+      else if (isUrl(url.trim())) { inA.href = url.trim(); inA.title = wyA("", url.trim()).title; }
+      else return alert("http:// か https:// で始まる URL を入れてください");
+      w.dispatchEvent(new Event("input"));
+      return;
+    }
+    const keep = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+    const chosen = sel.toString();
+    let url, text;
+    if (isUrl(chosen.trim())) { url = chosen.trim(); text = prompt("リンクに表示する文字", ""); if (text === null) return; }
+    else {
+      url = prompt(chosen.trim() ? `「${chosen.trim().slice(0, 40)}」に付ける URL` : "リンクの URL", "https://");
+      if (url === null) return;
+      url = url.trim();
+      if (!isUrl(url)) return alert("http:// か https:// で始まる URL を入れてください");
+      if (!chosen.trim()) { text = prompt("リンクに表示する文字（空なら URL のまま）", ""); if (text === null) return; }
+    }
+    w.focus();
+    if (keep) { sel.removeAllRanges(); sel.addRange(keep); }
+    if (chosen.trim() && !isUrl(chosen.trim()) && wyWrap(w, url)) return;
+    // 何も選んでいない・URL を選んでいた → カーソルの位置にリンクを入れる
+    const r = sel.rangeCount ? sel.getRangeAt(0) : null;
+    if (!r) return;
+    r.deleteContents();
+    const a = wyA((text || "").replace(/[\[\]\n]/g, " ").trim() || url, url);
+    r.insertNode(a);
+    const after = document.createRange(); after.setStartAfter(a); after.collapse(true);
+    sel.removeAllRanges(); sel.addRange(after);
+    w.dispatchEvent(new Event("input"));
+  }
+  const isUrl = (v) => /^https?:\/\/\S+$/.test(v);
+  const mdLink = (text, url) => `[${text.replace(/[\[\]\n]/g, " ").trim() || url}](${url.replace(/\)/g, "%29")})`;
+  // 入力欄に文字を入れる（Ctrl+Z で戻せるように execCommand を使う）
+  function insertMd(t, s, e, md) {
+    t.focus(); t.setSelectionRange(s, e);
+    if (!document.execCommand("insertText", false, md)) { t.setRangeText(md, s, e, "end"); t.dispatchEvent(new Event("input")); }
+  }
+  // 🔗・Ctrl+K（テキスト）: 選んだ文字に URL を付ける。選んだのが URL なら表示する文字を聞く。何も選んでいなければ URL と文字を両方聞く
+  function linkMake(t) {
+    const s = t.selectionStart, e = t.selectionEnd, sel = t.value.slice(s, e).trim();
+    let url, text;
+    if (isUrl(sel)) { url = sel; text = prompt("リンクに表示する文字", ""); if (text === null) return t.focus(); }
+    else {
+      url = prompt(sel ? `「${sel.slice(0, 40)}」に付ける URL` : "リンクの URL", "https://");
+      if (url === null) return t.focus();
+      url = url.trim();
+      if (!isUrl(url)) { alert("http:// か https:// で始まる URL を入れてください"); return t.focus(); }
+      text = sel || prompt("リンクに表示する文字（空なら URL のまま）", "");
+      if (text === null) return t.focus();
+    }
+    insertMd(t, s, e, mdLink(text, url));
+  }
+  // テキストの欄で、文字を選んだまま URL を貼り付けると [選んだ文字](URL) にする
+  function linkPaste(t, e) {
+    const v = ((e.clipboardData && e.clipboardData.getData("text/plain")) || "").trim();
+    const sel = t.value.slice(t.selectionStart, t.selectionEnd);
+    if (!sel.trim() || sel.includes("\n") || isUrl(sel.trim()) || !isUrl(v)) return;
+    e.preventDefault();
+    insertMd(t, t.selectionStart, t.selectionEnd, mdLink(sel, v));
+  }
+  // 全体の編集: 見たままの欄（memo-wy）と textarea（memo-text）のどちらか一方を出す。中身はいつも textarea に入れる（保存は textarea から）
+  const wyFull = $("memo-wy"), wyBtn = $("memo-wybtn"), linkBtn = $("memo-link");
+  let editingAll = false;
+  wyBind(wyFull, () => ta.value, (v) => { ta.value = v; ta.dispatchEvent(new Event("input")); });
+  wyFull.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.preventDefault(); setEditing(false); return; }
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") { e.preventDefault(); wyLink(wyFull); return; }
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") { e.preventDefault(); if (conflict) return; clearTimeout(timer); if (dirty) save(false); else show(base ? `保存済み（${hm2(base)}）` : "変更はありません"); }
+  });
+  wyFull.addEventListener("blur", () => { if (dirty && !conflict) { clearTimeout(timer); save(false); } });
+  function wyApplyFull() {
+    ta.hidden = !editingAll || wyOn;
+    wyFull.hidden = !editingAll || !wyOn;
+    wyBtn.textContent = wyOn ? "テキストで書く" : "見たままで書く";
+    if (editingAll && wyOn) { wyRender(wyFull, ta.value); wyFull.style.height = Math.max(ta.offsetHeight, 288) + "px"; }
+  }
+  wyBtn.onclick = () => { wyToggle(); wyApplyFull(); (wyOn ? wyFull : ta).focus(); };
+  linkBtn.onclick = () => (wyOn ? wyLink(wyFull) : linkMake(ta));
+  ta.addEventListener("paste", (e) => linkPaste(ta, e));
   function secCancel() {
     if (sec && sec.draft !== sec.orig && !confirm("直した内容を捨てますか？")) return;
     sec = null; renderView();
@@ -2309,7 +2522,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     renderView();
     if (!conflict) save(false);
   }
-  window.__memoRender = () => { if (ta.hidden && !sec) renderView(); };  // まとまりを直している最中は描き直さない（入力が消えるため）  // Redmine 欄を読んだあとに #番号をリンクにし直す
+  window.__memoRender = () => { if (!editingAll && !sec) renderView(); };  // まとまりを直している最中は描き直さない（入力が消えるため）  // Redmine 欄を読んだあとに #番号をリンクにし直す
   // Redmine 欄の ✎ から呼ぶ。メモの一番上の ----- の真上に1行足して、待たずに保存する
   window.__memoAppend = (line) => {
     const n = (line.match(/#(\d{4,6})/) || [])[1];
@@ -2321,21 +2534,24 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     if (at >= 0) { lines.splice(at, 0, ...add); ta.value = lines.join("\n"); }
     else ta.value = ta.value.replace(/\s*$/, "") + (ta.value.trim() ? "\n" : "") + add.join("\n");
     dirty = true; clearTimeout(timer);
-    if (ta.hidden) renderView();
+    if (!editingAll) renderView(); else if (wyOn) wyRender(wyFull, ta.value);
     if (!conflict) save(false);
     return "added";
   };
   function setEditing(on) {
     if (on && sec) { if (sec.draft !== sec.orig && !confirm("まとまりで直している内容を捨てて、全体の編集に切り替えますか？")) return; sec = null; }
-    ta.hidden = !on; view.hidden = on;
+    editingAll = on; view.hidden = on;
     editBtn.textContent = on ? "表示に戻る" : "編集";
-    if (on) {  // 編集に入るときは、前回のカーソル位置ではなく必ず先頭から
+    wyBtn.hidden = linkBtn.hidden = !on;
+    wyApplyFull();
+    if (on && wyOn) { wyFull.focus({ preventScroll: true }); wyCaretLine(wyFull, 0); wyFull.scrollTop = 0; }
+    else if (on) {  // 編集に入るときは、前回のカーソル位置ではなく必ず先頭から
       ta.focus({ preventScroll: true });
       try { ta.setSelectionRange(0, 0); } catch (err) {}
       ta.scrollTop = 0;
     } else renderView();
   }
-  editBtn.onclick = () => setEditing(ta.hidden);
+  editBtn.onclick = () => setEditing(!editingAll);
   // ダブルクリック: 開閉のまとまり（見出しかその中の行）ならそのまとまりだけ、それ以外はメモ全体を直す
   view.addEventListener("dblclick", (e) => {
     if (e.target.closest("a, button, select, input, .mv-sec")) return;
@@ -2436,6 +2652,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
       if (e.key === "Escape") { e.preventDefault(); sgClose(); return; }
     }
     if (e.key === "Escape") setEditing(false);
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") { e.preventDefault(); linkMake(ta); return; }
     if (sg.hidden) tplOnEnter(ta, e);
     // Ctrl+S（Mac は ⌘S）: 1 秒待たずにすぐ保存する（ブラウザの「ページを保存」は出さない）。別の画面と食い違っているときは上書きしない
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") {
@@ -2450,10 +2667,10 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   const show = (text) => { st.textContent = text; };
   const setConflict = (on) => { conflict = on; reloadBtn.hidden = forceBtn.hidden = !on; };
   async function load(force) {
-    if (!force && (dirty || saving || document.activeElement === ta || sec)) return;
+    if (!force && (dirty || saving || document.activeElement === ta || editingAll || sec)) return;
     try {
       const d = await (await fetch("/api/memo")).json();
-      if (d.updated !== base || force) { ta.value = d.text; base = d.updated; if (ta.hidden && !sec) renderView(); }
+      if (d.updated !== base || force) { ta.value = d.text; base = d.updated; if (!editingAll && !sec) renderView(); else if (editingAll && wyOn) wyRender(wyFull, ta.value); }
       dirty = false; setConflict(false);
       show(base ? `保存済み（${hm2(base)}）` : "");
     } catch (e) { show("読み込めませんでした"); }
