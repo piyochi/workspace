@@ -26,7 +26,9 @@ import html
 import urllib.parse
 import urllib.request
 import hmac
+import io
 import json
+import zipfile
 import sys
 from urllib.parse import parse_qs, urlsplit
 import os
@@ -1050,6 +1052,24 @@ def command_list():
     cats = [c for c, _ in COMMAND_CATS] + ["その他", COMMAND_BUILTIN_CAT]
     counts = {c: sum(1 for r in rows if r["cat"] == c) for c in cats}
     return {"rows": rows, "cats": [[c, counts[c]] for c in cats if counts[c]]}
+
+
+# ---- リンクを Windows の Edge のタブグループで開く（拡張機能は edge-ext/。/edge-ext.zip で配る） ----
+TABGROUP_PAGE = r"""<!doctype html><meta charset="utf-8"><title>開発ダッシュボード → Edge</title>
+<body style="font:14px system-ui;margin:2em;color:#555">開いています…
+<script>
+setTimeout(function () {
+  var st = document.documentElement.dataset.ddExt;
+  if (st === "1") return;
+  try {
+    var d = JSON.parse(decodeURIComponent(location.hash.slice(1)));
+    if (/^https?:\/\//.test(d.url)) {
+      document.body.textContent = "タブグループの拡張機能が入っていないので、そのまま開きます（~/.local/share/dev-dashboard/edge-ext を edge://extensions で読み込むとグループにまとまります）";
+      setTimeout(function () { location.replace(d.url); }, 1200);
+    }
+  } catch (e) { document.body.textContent = "開く URL を読めませんでした"; }
+}, 800);
+</script>"""
 
 
 def wait_ready(pane_id, timeout=60):
@@ -2610,6 +2630,19 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self):
+        # Edge の拡張機能への合図のページ（合言葉なし。秘密は載せない）。Windows の Chrome が microsoft-edge: で Edge に開かせる。
+        # edge-ext/ を入れていないときは、このページが自分で URL を開く
+        ip = self.client_address[0].removeprefix("::ffff:")
+        allow = load_config()["allow_ips"]
+        if urlsplit(self.path).path == "/tabgroup" and ("*" in allow or ip in allow):
+            body = TABGROUP_PAGE.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if not self.check_access():
             return
         if self.path in ("/", "/index.html"):
@@ -2633,6 +2666,18 @@ class Handler(BaseHTTPRequestHandler):
                 "codex": codex_usage(cfg),
                 "stale_minutes": cfg["stale_minutes"],
             })
+        elif self.path == "/edge-ext.zip":
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+                for f in sorted(os.listdir(os.path.join(BASE, "edge-ext"))):
+                    z.write(os.path.join(BASE, "edge-ext", f), f)  # 展開したフォルダの直下に manifest.json が来るように
+            body = buf.getvalue()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", 'attachment; filename="edge-ext.zip"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif self.path == "/api/sys":
             self.send_json(sys_usage())
         elif self.path == "/api/memo":

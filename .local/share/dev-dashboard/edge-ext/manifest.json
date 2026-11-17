@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "開発ダッシュボードのタブグループ",
+  "version": "1.2",
+  "description": "開発ダッシュボード（ポート 8765）から開いたリンクを「開発ダッシュボード」のタブグループにまとめる。",
+  "permissions": ["tabs", "tabGroups"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    { "matches": ["http://*/", "http://*/?*", "http://*/index.html", "http://*/tabgroup*"], "js": ["content.js"], "run_at": "document_start" }
+  ]
+}

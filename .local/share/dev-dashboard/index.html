@@ -2481,6 +2481,31 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   load(true);
   setInterval(() => load(false), 30000);  // 別の端末で書いた内容を、入力していないときだけ取り込む
 })();
+// ---- Windows で見ているときは、リンクを Edge の「開発ダッシュボード」タブグループで開く ----
+// Edge の拡張機能（edge-ext/・/edge-ext.zip）がグループに入れる。
+//   Edge で見ていて拡張機能がこのページに入っている → window.postMessage で直接頼む（タブもウィンドウも開かない）
+//   Edge で見ていて拡張機能が古い → 合図のページ（/tabgroup#{url,group}）を新しいタブで開き、拡張機能が合図のタブを閉じる
+//   Chrome で見ているとき → microsoft-edge: で Edge に合図のページを開かせる
+// Shift を押しながらクリックしたとき・Windows 以外で見ているときは、今までどおりこのブラウザで開く
+const EDGE_GROUP = "開発ダッシュボード";
+let edgeGo = (u) => { if (u.startsWith("microsoft-edge:")) location.href = u; else window.open(u, "_blank"); };  // 外部プロトコルを開いても、このページは移動しない
+function edgeOpen(e) {
+  if (!/Windows/.test(navigator.userAgent)) return;
+  if (e.defaultPrevented || e.shiftKey || (e.type === "click" && e.button !== 0) || (e.type === "auxclick" && e.button !== 1)) return;
+  const a = e.target.closest && e.target.closest("a[href]");
+  if (!a || a.target !== "_blank" || !/^https?:\/\//.test(a.href) || new URL(a.href).origin === location.origin) return;
+  e.preventDefault();
+  // このページに拡張機能が入っていれば（Edge で見ているとき）、タブを開かずに直接頼む
+  if (document.documentElement.dataset.ddExt === "1") return window.postMessage({ type: "dd-open-req", url: a.href, group: EDGE_GROUP }, location.origin);
+  const sig = location.origin + "/tabgroup#" + encodeURIComponent(JSON.stringify({ url: a.href, group: EDGE_GROUP }));
+  edgeGo(/Edg\//.test(navigator.userAgent) ? sig : "microsoft-edge:" + sig);
+}
+// 拡張機能がグループに入れられなかったときは、このブラウザで普通に開く
+window.addEventListener("message", (e) => {
+  if (e.source === window && e.data && e.data.type === "dd-open-failed") { console.warn("タブグループに入れられませんでした:", e.data.message); window.open(e.data.url, "_blank", "noopener"); }
+});
+document.addEventListener("click", edgeOpen, true);
+document.addEventListener("auxclick", edgeOpen, true);
 </script>
 </body>
 </html>
