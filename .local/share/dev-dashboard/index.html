@@ -343,6 +343,12 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
 .rm-st-edit button { font-size: 10px; padding: 0 4px; line-height: 16px; }
 .rm-copy { flex: none; font-size: 11px; padding: 0 5px; line-height: 16px; }
 .rm-memo { flex: none; font-size: 11px; padding: 0 5px; line-height: 16px; }
+/* Redmine の行は普段は見出しの1行だけ。▸ で状況（セッション・ブランチ・履歴など）を開く */
+.rm-tg { flex: none; font-size: 10px; padding: 0 4px; line-height: 16px; background: none; border: 0; color: var(--muted); cursor: pointer; }
+.rm-tg::before { content: "▸"; display: inline-block; transition: transform .15s; }
+.rm-row.open .rm-tg::before { transform: rotate(90deg); }
+.rm-tg.none { visibility: hidden; }
+.rm-row:not(.open) > .rm-info, .rm-row:not(.open) > .rm-log-wrap { display: none; }
 .rm-subj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .rm-info { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 2px; font-size: 11px; color: var(--muted); }
 /* 今日（朝 4:00 以降）の作業。「今日作業した」で絞り込んだときは入力した文・コミットも出す */
@@ -1321,14 +1327,24 @@ function rmInfo(i) {
     const info = [...(td ? [todayHtml(td)] : []), ...rmRelHtml(i).filter((h) => h.includes("rm-wait")), ...sess, ...br, ...hist, ...fullInfo, ...rmRelHtml(i).filter((h) => !h.includes("rm-wait"))];
     return { td, info, cls: i.sessions.length ? " active" : td ? " today" : "" };
 }
+// 開いている Redmine の行（チケット番号）。取り直しても、開き直しても覚えておく
+const rmRowOpen = new Set((() => { try { return JSON.parse(localStorage.getItem("dd_rm_open") || "[]"); } catch (e) { return []; } })());
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button.rm-tg"); if (!b || b.classList.contains("none")) return;
+  const row = b.closest(".rm-row"), id = row.dataset.id;
+  if (rmRowOpen.has(id)) rmRowOpen.delete(id); else rmRowOpen.add(id);
+  row.classList.toggle("open", rmRowOpen.has(id)); fitBr(row);
+  try { localStorage.setItem("dd_rm_open", JSON.stringify([...rmRowOpen])); } catch (e) { /* 覚えられなくても表示は続ける */ }
+});
 function rmRows(items, opts = {}) {
   return items.length ? items.map((i, idx) => {
     const { td, info, cls } = rmInfo(i), full = rmFull[i.id];
     // 担当外・完了済み（直近に作業したもの）の先頭に区切りを入れる
     const sep = i.recent && !(idx && items[idx - 1].recent)
       ? `<div class="rm-sep">担当外・完了済み（直近${rmData ? rmData.history_days : 30}日に作業したもの・新しい順）</div>` : "";
-    return `${sep}<div class="rm-row${cls}">
-      <div class="rm-head">${i.priority ? `<span class="rm-tag ${RM_PRI[i.priority] || ""}">${esc(i.priority)}</span>` : ""}
+    const has = info.length || (opts.todayLog && td), open = has && rmRowOpen.has(String(i.id));
+    return `${sep}<div class="rm-row${cls}${open ? " open" : ""}" data-id="${i.id}">
+      <div class="rm-head"><button class="rm-tg${has ? "" : " none"}" title="状況（セッション・ブランチ・履歴など）を開く／たたむ"></button>${i.priority ? `<span class="rm-tag ${RM_PRI[i.priority] || ""}">${esc(i.priority)}</span>` : ""}
         ${i.extra ? `<span class="rm-tag extra" title="今日作業したが、自分担当の未完了チケットではないもの">${i.closed ? "完了" : `担当外${i.assignee ? `: ${esc(i.assignee)}` : ""}`}</span>` : ""}
         ${rmStatusHtml(i)}
         <span class="rm-subj" title="#${i.id}: ${esc(i.subject)}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${i.id}</a>: ${esc(i.subject)}</span>

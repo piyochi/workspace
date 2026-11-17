@@ -1791,21 +1791,23 @@ def ticket_places():
         for repo in REPO_NAMES:
             path = os.path.join(root, repo)
             try:
-                out = subprocess.run(["git", "-C", path, "for-each-ref", "--format=%(refname) %(objectname)",
+                out = subprocess.run(["git", "-C", path, "for-each-ref", "--format=%(refname) %(objectname) %(committerdate:unix)",
                                       "refs/heads", "refs/remotes/origin"], capture_output=True, text=True, timeout=5).stdout
             except (OSError, subprocess.TimeoutExpired):
                 continue
             heads, remotes = {}, {}
+            ts = {}
             for line in out.splitlines():
-                ref, _, sha = line.partition(" ")
+                ref, sha, t = (line.split(" ") + ["", ""])[:3]
                 if ref.startswith("refs/heads/"):
                     heads[ref[len("refs/heads/"):]] = sha
+                    ts[ref[len("refs/heads/"):]] = int(t) if t.isdigit() else 0
                 elif ref.startswith("refs/remotes/origin/"):
                     remotes[ref[len("refs/remotes/origin/"):]] = sha
             current = branch_of(path)
             for b, sha in heads.items():
                 for n in set(TICKET.findall(b)):
-                    entry = {"env": env, "repo": repo, "branch": b, "current": b == current}
+                    entry = {"env": env, "repo": repo, "branch": b, "current": b == current, "ts": ts.get(b, 0)}
                     if not b.startswith("backup/"):  # 退避用は push しない前提なので調べない
                         entry["push"] = push_state(path, sha, remotes.get(b))
                     places.setdefault(n, {"branches": [], "docs": []})["branches"].append(entry)
@@ -1883,6 +1885,27 @@ def branch_of(repo):
     return ref.removeprefix("ref: refs/heads/") if ref.startswith("ref: ") else ""
 
 
+def latest_branches(branches):
+    """同じリポジトリ・同じ名前のブランチが複数の環境にあるとき、最新の1つだけ残す（PR が重複して出るのを防ぐ）。
+
+    最新 = 先頭コミットの時刻が新しいもの。同じなら、そのチケットのブランチ全体で一番新しいコミットを持つ環境を優先する
+    （API は env1・フロントは env3 のように環境が分かれないように）。退避用の backup/ はそのまま残す。
+    """
+    env_ts = {}
+    for b in branches:
+        env_ts[b["env"]] = max(env_ts.get(b["env"], 0), b.get("ts", 0))
+    best = {}
+    for b in branches:
+        if b["branch"].startswith("backup/"):
+            continue
+        k = (b["repo"], b["branch"])
+        rank = (b.get("ts", 0), env_ts[b["env"]], b["current"])
+        if k not in best or rank > best[k][0]:
+            best[k] = (rank, b)
+    keep = {id(v[1]) for v in best.values()}
+    return [b for b in branches if b["branch"].startswith("backup/") or id(b) in keep]
+
+
 def redmine_view():
     """担当チケットに、どの枠（セッション）・どの環境のブランチ・issue docs があるかを付ける。"""
     data = redmine_issues()
@@ -1902,7 +1925,7 @@ def redmine_view():
         with hist_lock:
             h = sorted(hist.get(n, {}).items(), key=lambda kv: -kv[1])
         with pr_lock:
-            branches = [{**b, "pr": pr_cache["prs"].get((b["repo"], b["branch"]))} for b in p["branches"]]
+            branches = [{**b, "pr": pr_cache["prs"].get((b["repo"], b["branch"]))} for b in latest_branches(p["branches"])]
         return {"relations": [], **i, "url": f"{data['host']}/issues/{n}", "sessions": sessions.get(n, []),
                 "branches": branches, "docs": sorted(set(p["docs"])),
                 "history": [{"env": e, "last": t} for e, t in h]}
