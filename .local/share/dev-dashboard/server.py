@@ -21,6 +21,7 @@
   - POST は X-Dashboard ヘッダーも要る（別サイトからのフォーム送信対策）
 設定は config.json（無ければ既定値）。
 """
+import datetime
 import glob
 import html
 import urllib.parse
@@ -1866,12 +1867,63 @@ def refresh_prs():
         pr_cache.update(at=time.time(), prs=prs)
 
 
+review_cache = {"at": 0, "mine": {}, "requested": []}  # mine: (リポジトリ, ブランチ) -> レビュー状況 / requested: 自分が reviewer の PR
+
+
+def refresh_reviews():
+    """自分のオープンな PR のレビュー状況と、自分がレビューを頼まれている PR（ticket_v2 / ticket_v2_api だけ）を取る。"""
+    gh = shutil.which("gh") or "/opt/homebrew/bin/gh"
+    mine, ok = {}, True
+    for repo in REPO_NAMES:
+        try:
+            out = subprocess.run([gh, "pr", "list", "--repo", f"{GH_OWNER}/{repo}", "--author", "@me", "--state", "open", "--limit", "100",
+                                  "--json", "number,headRefName,reviewDecision,reviewRequests,latestReviews"],
+                                 capture_output=True, text=True, timeout=30)
+            rows = json.loads(out.stdout) if out.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            rows = None
+        if rows is None:
+            ok = False
+            continue
+        for r in rows:
+            mine[(repo, r["headRefName"])] = {
+                "decision": r.get("reviewDecision") or "",
+                "requests": [q.get("login") or q.get("name") or q.get("slug") or "" for q in r.get("reviewRequests") or []],
+                "reviews": [{"who": (v.get("author") or {}).get("login", ""), "state": v.get("state", ""), "at": v.get("submittedAt", "")}
+                            for v in r.get("latestReviews") or []]}
+    try:
+        out = subprocess.run([gh, "search", "prs", "--review-requested=@me", "--state=open", *[a for repo in REPO_NAMES for a in ("--repo", f"{GH_OWNER}/{repo}")],
+                              "--json", "number,title,repository,url,author,updatedAt", "--limit", "50"],
+                             capture_output=True, text=True, timeout=30)
+        rows = json.loads(out.stdout) if out.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        rows = None
+    requested = []
+    for r in rows or []:
+        m = TICKET.search(r.get("title", ""))
+        if m:
+            requested.append({"ticket": m.group(1), "repo": (r.get("repository") or {}).get("name", ""), "number": r["number"], "url": r["url"],
+                              "title": r.get("title", ""), "author": (r.get("author") or {}).get("login", ""), "updated": r.get("updatedAt", "")})
+    with pr_lock:
+        if ok:
+            review_cache["mine"] = mine
+        else:
+            review_cache["mine"].update(mine)
+        if rows is not None:
+            review_cache["requested"] = requested
+        review_cache["at"] = time.time()
+
+
 def pr_loop():
     while True:
         try:
             refresh_prs()
         except Exception as e:
             print(f"{time.strftime('%F %T')} PR の取得に失敗: {e}", file=sys.stderr, flush=True)
+        try:
+            refresh_reviews()
+        except Exception as e:
+            print(f"{time.strftime('%F %T')} PR のレビュー状況の取得に失敗: {e}", file=sys.stderr, flush=True)
         time.sleep(300)
 
 
@@ -1961,6 +2013,222 @@ def redmine_view():
     memo_extra = [{**item(i), "extra": True} for i in today_extra_issues(memo_ids, host, key, memo_cache) if i["status"]]
     return {"fetched_at": data["fetched_at"], "issues": items, "mine_count": len(mine), "history_days": HIST_DAYS, "pr_at": pr_cache["at"],
             "today": tv, "today_extra": extra, "memo_extra": memo_extra}
+
+
+# ---- ヘッダーの「対応中」: tmux の枠のチケットと、レビューを頼まれている PR のチケット。段階と担当（誰の番か）を付ける ----
+FOCUS_STAGES = ["", "設計", "実装", "レビュー", "PR", "testing", "staging", "本番", "完了"]
+FOCUS_DESIGN = re.compile(r"ct-(analyze|architect|planner|bug-|sweep|scope|grill|paltera|issue-(auto|docs))")
+FOCUS_REVIEW = re.compile(r"ct-(verify|review|code-review|security-review|finish|issue-reconcile|pr-create|pr-turn)")
+# 自分の最新コメントが「質問」か（報告・連絡は質問にしない）。引用（> の行）は除いて見る
+FOCUS_QUESTION = re.compile(r"[?？]|でしょうか|ですか|ますか|ませんか|教えて(ください|いただ)|ご判断|ご意見|いかがでしょう")
+focus_lock = threading.Lock()
+focus_rm = {}      # チケット番号 -> (取った時刻, Redmine の詳細)
+focus_merge = {}   # チケット番号 -> (取った時刻, {"develop", "release", "master"})
+redmine_me = {"id": None}
+
+
+def redmine_my_id():
+    if redmine_me["id"] is None:
+        try:
+            redmine_me["id"] = redmine_call("/users/current.json").get("user", {}).get("id")
+        except Exception:
+            return None
+    return redmine_me["id"]
+
+
+def focus_issue(n):
+    """チケットの件名・ステータス・担当・最新コメント・担当の付け替え。3 分覚える。"""
+    with focus_lock:
+        c = focus_rm.get(n)
+    if c and time.time() - c[0] < 180:
+        return c[1]
+    try:
+        i = redmine_call(f"/issues/{n}.json?include=journals,relations").get("issue", {})
+    except Exception:
+        return c[1] if c else None
+    js = i.get("journals") or []
+    notes = [j for j in js if (j.get("notes") or "").strip()]
+    last = notes[-1] if notes else None
+    assign = next((j for j in reversed(js) if any(d.get("name") == "assigned_to_id" for d in j.get("details") or [])), None)
+    st = i.get("status") or {}
+    waits = []
+    for r in i.get("relations") or []:
+        t, me = r["relation_type"], i.get("id")
+        if (t in ("blocks", "precedes") and r["issue_to_id"] == me) or (t in ("blocked", "follows") and r["issue_id"] == me):
+            waits.append(r["issue_id"] if r["issue_to_id"] == me else r["issue_to_id"])
+    open_waits = []
+    if waits:
+        try:
+            for o in redmine_call(f"/issues.json?issue_id={','.join(map(str, waits))}&status_id=*&limit=100").get("issues", []):
+                ost = o.get("status") or {}
+                if not (ost.get("is_closed") or o.get("closed_on")):
+                    open_waits.append(o["id"])
+        except Exception:
+            open_waits = waits
+    d = {"subject": i.get("subject", ""), "status": st.get("name", ""), "closed": bool(st.get("is_closed")) or bool(i.get("closed_on")),
+         "priority": (i.get("priority") or {}).get("name", ""),
+         "assignee": (i.get("assigned_to") or {}).get("name", ""), "assignee_id": (i.get("assigned_to") or {}).get("id"),
+         "last_note": {"who": last["user"]["name"], "who_id": last["user"]["id"], "at": last["created_on"],
+                       "text": re.sub(r"\s+", " ", last["notes"]).strip()[:120],
+                       "question": bool(FOCUS_QUESTION.search(re.sub(r"(?m)^>.*$", "", last["notes"])))} if last else None,
+         "assigned_at": assign["created_on"] if assign else "", "waits": open_waits}
+    with focus_lock:
+        focus_rm[n] = (time.time(), d)
+    return d
+
+
+def freshest_repo(repo):
+    """git fetch がいちばん新しい環境の作業ツリー（origin/* を見るため）。"""
+    best, t = None, -1
+    for d in ENV_DIRS:
+        path = os.path.join(HOME, "www", d, repo)
+        try:
+            m = os.path.getmtime(os.path.join(path, ".git", "FETCH_HEAD"))
+        except OSError:
+            continue
+        if m > t:
+            best, t = path, m
+    return best
+
+
+def focus_merged(n):
+    """origin の develop / release / master に、このチケットのコミット（「#番号」か「feature/番号」）が入っているか。10 分覚える。"""
+    with focus_lock:
+        c = focus_merge.get(n)
+    if c and time.time() - c[0] < 600:
+        return c[1]
+    res = {"develop": False, "release": False, "master": False}
+    for repo in REPO_NAMES:
+        path = freshest_repo(repo)
+        if not path:
+            continue
+        for ref in res:
+            if res[ref]:
+                continue
+            try:
+                out = subprocess.run(["git", "-C", path, "log", f"origin/{ref}", "--since=1.year", "-E", f"--grep=(#|feature/){n}([^0-9]|$)",
+                                      "-1", "--format=%h"], capture_output=True, text=True, timeout=10).stdout.strip()
+            except (OSError, subprocess.TimeoutExpired):
+                out = ""
+            res[ref] = bool(out)
+    with focus_lock:
+        focus_merge[n] = (time.time(), res)
+    return res
+
+
+def focus_phase(n):
+    """issue docs の 03_progress.md の「### Phase」ごとのチェックで、終わったフェーズ数 / 全フェーズ数。2 フェーズ未満なら None。"""
+    files = []
+    for d in ENV_DIRS:
+        files += glob.glob(os.path.join(HOME, "www", d, "docs", "issues", "active", f"{n}_*", "03_progress.md"))
+    if not files:
+        return None
+    try:
+        text = open(max(files, key=os.path.getmtime), encoding="utf-8").read()
+    except OSError:
+        return None
+    phases = re.split(r"(?m)^#{2,4}\s*(?:Phase|フェーズ)\s*\S*", text)[1:]
+    boxes = [re.findall(r"(?m)^\s*[-*] \[([ xX])\]", ph) for ph in phases]
+    boxes = [b for b in boxes if b]
+    if len(boxes) < 2:
+        return None
+    return {"done": sum(all(x.lower() == "x" for x in b) for b in boxes), "total": len(boxes)}
+
+
+def local_hm(iso):
+    """Redmine の UTC の日時（2026-11-17T07:11:00Z）を、手元の時刻の「11/17 16:11」にする。"""
+    try:
+        t = datetime.datetime.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc).astimezone()
+        return t.strftime("%m/%d %H:%M")
+    except (ValueError, TypeError):
+        return iso
+
+
+def focus_view():
+    """ヘッダーに出す「対応中」のチケット。tmux の枠の番号（複数番号も）＋レビューを頼まれている PR の番号。"""
+    panes = ai_panes()
+    order, sessions = [], {}
+    for sl in panes.get("slots", []):
+        if sl["state"] == "stopped":
+            continue
+        for tk in sl.get("tickets") or ([sl["ticket"]] if sl.get("ticket") else []):
+            if tk not in sessions:
+                order.append(tk)
+            sessions.setdefault(tk, []).append({"slot": sl["slot"], "env": sl["env"], "kind": sl["kind"], "state": sl["state"],
+                                                "skill": sl.get("skill", ""), "skill_done": sl.get("skill_done", False)})
+    with pr_lock:
+        requested = list(review_cache["requested"])
+        reviews = dict(review_cache["mine"])
+        prs = dict(pr_cache["prs"])
+    req_by = {}
+    for r in requested:
+        req_by.setdefault(r["ticket"], []).append(r)
+        if r["ticket"] not in order:
+            order.append(r["ticket"])
+    places = ticket_places()
+    me = redmine_my_id()
+    host, _ = redmine_creds()
+    items = []
+    for n in order:
+        rm = focus_issue(n) or {}
+        p = places.get(n, {"branches": [], "docs": []})
+        brs = [b for b in latest_branches(p["branches"]) if not b["branch"].startswith("backup/")]
+        mypr = []
+        for b in brs:
+            pr = prs.get((b["repo"], b["branch"]))
+            if pr:
+                mypr.append({**pr, "repo": b["repo"], **reviews.get((b["repo"], b["branch"]), {})})
+        merged = focus_merged(n) if brs or mypr else {"develop": False, "release": False, "master": False}
+        skills = " ".join(x["skill"] for x in sessions.get(n, []))
+        stage, why = 0, ""
+        for cond, k, w in [
+            (bool(p["docs"]) or bool(FOCUS_DESIGN.search(skills)), 1, "issue docs あり／調査・設計のスキル"),
+            (bool(brs), 2, "ブランチあり"),
+            (bool(FOCUS_REVIEW.search(skills)), 3, "レビュー系のスキルを実行"),
+            (any(x["state"] == "open" for x in mypr), 4, "PR がオープン"),
+            (merged["develop"], 5, "develop に取り込み済み"),
+            (merged["release"] or any(x["state"] == "merged" for x in mypr), 6, "release に取り込み済み"),
+            (merged["master"], 7, "master に取り込み済み"),
+            (bool(rm.get("closed")), 8, f"Redmine が {rm.get('status', '')}")]:
+            if cond and k >= stage:
+                stage, why = k, w
+        # 担当（誰の番か）: 上から順に当てはめる
+        opens = [x for x in mypr if x["state"] == "open" and not x.get("draft")]
+        ln = rm.get("last_note")
+        if n in req_by:
+            r = req_by[n][0]
+            ball = ("review_in", "📨 レビュー依頼が来てる", f"{r['repo']}#{r['number']}（{r['author']}）で reviewer に指定されている")
+        elif any(x.get("decision") == "CHANGES_REQUESTED" for x in opens):
+            x = next(x for x in opens if x.get("decision") == "CHANGES_REQUESTED")
+            ball = ("fix", "✍️ 修正依頼あり", f"{x['repo']}#{x['number']} が「変更を求める」")
+        elif opens and any(x.get("requests") or x.get("decision") == "REVIEW_REQUIRED" for x in opens) \
+                and not all(x.get("decision") == "APPROVED" for x in opens):
+            who = sorted({w for x in opens for w in x.get("requests") or []})
+            ball = ("reviewing", "👀 レビュー依頼中", f"レビュー待ち: {', '.join(who) or '未承認'}")
+        elif opens and all(x.get("decision") == "APPROVED" for x in opens):
+            ball = ("approved", "✅ 承認済み", "オープンな PR がすべて承認済み（デプロイ待ち）")
+        elif rm.get("closed"):
+            ball = ("done", "完了", f"Redmine が {rm.get('status', '')}")
+        elif rm.get("waits"):
+            ball = ("wait", "⏳ 他チケット待ち", "先行・ブロックのチケットが未完了: " + ", ".join(f"#{w}" for w in rm["waits"]))
+        elif me and rm.get("assignee_id") and rm["assignee_id"] != me and ln and ln["who_id"] == me and ln.get("question"):
+            ball = ("asking", "🙋 質問中", f"担当 {rm['assignee']}・最新コメントが自分の質問（{local_hm(ln['at'])}）")
+        elif me and rm.get("assignee_id") and rm["assignee_id"] != me:
+            mine_last = ln and ln["who_id"] == me
+            ball = ("other", f"👤 {rm['assignee']} の番",
+                    f"Redmine の担当が {rm['assignee']}" + (f"・最新コメントは自分の報告（{local_hm(ln['at'])}。質問の言い回しなし）" if mine_last else ""))
+        else:
+            reason = "Redmine の担当が自分"
+            if ln and me and ln["who_id"] != me:
+                reason += f"・最新コメントは {ln['who']}（{local_hm(ln['at'])}）"
+            ball = ("mine", "🔴 自分の番", reason)
+        items.append({"id": n, "subject": rm.get("subject", "") or (req_by.get(n, [{}])[0].get("title", "")), "url": f"{host}/issues/{n}" if host else "",
+                      "status": rm.get("status", ""), "priority": rm.get("priority", ""), "assignee": rm.get("assignee", ""),
+                      "last_note": ln, "stage": stage, "stage_label": FOCUS_STAGES[stage], "stage_why": why, "phase": focus_phase(n),
+                      "ball": {"kind": ball[0], "label": ball[1], "why": ball[2]}, "sessions": sessions.get(n, []),
+                      "branches": [{"env": b["env"], "repo": b["repo"], "branch": b["branch"]} for b in brs],
+                      "prs": mypr, "review_requested": req_by.get(n, [])})
+    return {"items": items, "pr_at": review_cache["at"]}
 
 
 HIST_DAYS = 30
@@ -2807,6 +3075,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(history_full(n))
         elif self.path == "/api/panes":
             self.send_json(ai_panes())
+        elif self.path == "/api/focus":
+            self.send_json(focus_view())
         elif self.path == "/api/job":
             with job_lock:
                 self.send_json(dict(job))

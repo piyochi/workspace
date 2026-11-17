@@ -36,6 +36,20 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -1
 .gauge-val { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
 /* ヘッダーの小さい版（Claude・Codex の使用率、tmux の処理中・確認待ち）。元の欄が画面から外れたときだけ出す */
 /* ヘッダーの下に重ねて出す（ページの配置を動かさないので、出し入れで元の欄が見え隠れしてちらつかない） */
+/* ヘッダーの「対応中」: tmux の枠のチケットとレビュー依頼。番号・段階・担当だけ出し、詳しくはマウスを乗せる */
+.focus { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 5px; font-size: 11px; }
+.focus:empty { display: none; }
+.focus-label { color: var(--muted); font-weight: 600; margin-right: 2px; }
+.fc { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 10px; padding: 0 7px 0 5px; line-height: 18px;
+  white-space: nowrap; cursor: pointer; font: inherit; background: var(--card); color: var(--text); }
+.fc:hover { border-color: var(--accent); }
+.fc b { color: var(--accent); font-variant-numeric: tabular-nums; }
+.fc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--off); flex: none; }
+.fc-dot.busy { background: #f97316; } .fc-dot.wait { background: var(--bad); } .fc-dot.idle { background: var(--ok); } .fc-dot.none { background: transparent; border: 1px solid var(--line); }
+.fc-stage { color: var(--muted); }
+.fc.b-mine, .fc.b-fix, .fc.b-review_in { border-color: var(--bad); }
+.fc.b-review_in { background: color-mix(in srgb, var(--bad) 10%, var(--card)); }
+.fc.b-done { opacity: .6; }
 .mini-wrap { position: absolute; left: 0; right: 0; top: 100%; background: var(--bg); padding: 0 16px 5px; border-bottom: 1px solid var(--line); }
 .mini { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 4px; font-size: 11px; }
 .mini-src { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
@@ -393,6 +407,7 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
       <div class="gauge" id="g-cpu"><span class="gauge-label">CPU</span><div class="bar"><i style="width:0"></i></div><span class="gauge-val">–</span></div>
       <div class="gauge" id="g-mem"><span class="gauge-label">メモリ</span><div class="bar"><i style="width:0"></i></div><span class="gauge-val">–</span></div>
     </div>
+    <div class="focus" id="focus"></div>
     <div class="mini-wrap" id="mini-wrap" hidden>
       <div class="mini" id="mini-usage" hidden></div>
       <div class="mini" id="mini-panes" hidden></div>
@@ -722,6 +737,56 @@ async function refreshPanes() {
   } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
 }
 
+// ---- ヘッダーの「対応中」 ----
+const FC_DOT = { wait: 3, busy: 2, idle: 1 };
+let focusItems = [];
+function focusTip(i) {
+  const L = [`#${i.id}: ${i.subject || "（件名なし）"}`];
+  L.push(`Redmine: ${i.status || "?"}${i.priority ? `・${i.priority}` : ""}${i.assignee ? `・担当 ${i.assignee}` : ""}`);
+  L.push(`段階: ${i.stage_label || "–"}${i.phase ? `（フェーズ ${i.phase.done}/${i.phase.total}）` : ""}${i.stage_why ? `  ← ${i.stage_why}` : ""}`);
+  L.push(`担当: ${i.ball.label}  ← ${i.ball.why}`);
+  if (i.last_note) L.push(`最新コメント: ${i.last_note.who}（${new Date(i.last_note.at).toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}）${i.last_note.text}`);
+  i.sessions.forEach((x) => L.push(`枠: [${x.slot}] ${x.env} ${x.kind} ${PANE_STATES[x.state] || x.state}${x.skill ? ` ${x.skill_done ? "✓" : "⚙"} ${x.skill}` : ""}`));
+  i.branches.forEach((b) => L.push(`ブランチ: ${b.env} ${b.branch}${b.repo === "ticket_v2" ? "(front)" : "(api)"}`));
+  i.prs.forEach((p) => {
+    const rv = (p.reviews || []).map((r) => `${r.who}=${r.state}`).join(", ");
+    L.push(`PR: ${p.repo}#${p.number} ${p.draft ? "下書き" : p.state}${p.decision ? `・${p.decision}` : ""}${(p.requests || []).length ? `・依頼中 ${p.requests.join(", ")}` : ""}${rv ? `・${rv}` : ""}`);
+  });
+  i.review_requested.forEach((r) => L.push(`レビュー依頼: ${r.repo}#${r.number}（${r.author}）${r.title}`));
+  L.push("", "押すと Redmine 欄のその行を開きます");
+  return L.join("\n");
+}
+function renderFocus() {
+  if (!focusItems.length) { $("focus").innerHTML = ""; return; }
+  $("focus").innerHTML = `<span class="focus-label">対応中</span>` + focusItems.map((i) => {
+    const st = i.sessions.reduce((a, x) => (FC_DOT[x.state] || 0) > (FC_DOT[a] || 0) ? x.state : a, "");
+    const stage = i.stage_label ? `${i.stage_label}${i.phase && i.stage <= 3 ? ` ${i.phase.done}/${i.phase.total}` : ""}` : "";
+    return `<button type="button" class="fc b-${i.ball.kind}" data-id="${i.id}" data-url="${esc(i.url)}" title="${esc(focusTip(i))}">`
+      + `<span class="fc-dot ${st || "none"}"></span><b>#${i.id}</b>${stage ? `<span class="fc-stage">${esc(stage)}</span>` : ""}<span>${esc(i.ball.label.split(" ")[0])}</span></button>`;
+  }).join("");
+}
+async function refreshFocus() {
+  try {
+    const d = await (await fetch("/api/focus")).json();
+    if (Array.isArray(d.items)) { focusItems = d.items; renderFocus(); }
+  } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
+}
+$("focus").addEventListener("click", (e) => {
+  const b = e.target.closest(".fc"); if (!b) return;
+  const row = document.querySelector(`#redmine .rm-row[data-id="${b.dataset.id}"]`);
+  if (!row) {  // Redmine 欄に無いチケットは Redmine を開く。ほかのリンクと同じく Edge のグループで開く処理（edgeOpen）を通す
+    if (!b.dataset.url) return;
+    const o = document.createElement("a");
+    o.href = b.dataset.url; o.target = "_blank"; o.rel = "noopener noreferrer"; o.hidden = true;
+    document.body.append(o); o.click(); o.remove();
+    return;
+  }
+  const sec = document.querySelector('details.sec[data-key="redmine"]'); if (sec) sec.open = true;
+  if (!row.classList.contains("open") && !row.querySelector(".rm-tg.none")) row.querySelector(".rm-tg").click();
+  window.scrollTo({ top: row.getBoundingClientRect().top + window.scrollY - document.querySelector("header").offsetHeight - 8, behavior: "smooth" });
+});
+refreshFocus();
+setInterval(refreshFocus, 30000);
 // ヘッダーの小さい版。元の欄（Claude・Codex・tmux）が画面に見えている間は出さず、
 // 下にスクロールして見えなくなったとき（または欄を閉じたとき）だけ出す
 const mini = { usage: null, slots: null, visible: { claude: true, codex: true, tmux: true } };
