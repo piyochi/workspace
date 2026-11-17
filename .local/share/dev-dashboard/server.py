@@ -454,9 +454,10 @@ def _claude_session_info(pane_id):
             text = prompt_text(entry)
             for n in PROMPT_TICKET.findall(text):
                 counts[n] = counts.get(n, 0) + 1
-            tk = claude_work_ticket(entry)
-            if tk:
-                st["ticket"] = tk  # 作業の番号が出た入力のうち一番新しいもの（今やっているチケット）
+            tks = claude_work_tickets(entry)
+            if tks:
+                st["ticket"] = tks[0]  # 作業の番号が出た入力のうち一番新しいもの（今やっているチケット）
+                st["tickets"] = tks  # スキルに番号を並べたときは全部（Redmine 欄・メモで全部に色を付ける）
             if "<command-name>" in line:
                 skills = skills or known_skills()
                 for name in SKILL_CMD.findall(json.dumps(entry.get("message", {}), ensure_ascii=False)):
@@ -477,7 +478,7 @@ def _claude_session_info(pane_id):
                 text = "\n".join(b.get("text", "") for b in msg.get("content") or [] if isinstance(b, dict) and b.get("type") == "text")
                 if not is_question(text):
                     st["skill_done"] = True
-    return st.get("ticket", ""), st.get("skill", ""), st.get("skill_done", False)
+    return st.get("ticket", ""), st.get("skill", ""), st.get("skill_done", False), st.get("tickets", [])
 
 
 codex_rollouts = {}  # codex の pid -> 記録ファイル（lsof は重いので pid ごとに1回）
@@ -687,11 +688,11 @@ def ai_panes():
             task = ""
         # チケット番号は Claude は入力した文・Codex は画面の「#番号」から取り、無ければタイトルから取る
         m = TICKET.search(task)
-        skill, skill_done = "", False
+        skill, skill_done, tickets = "", False, []
         if state == "stopped":
             ticket = ""
         elif kind == "claude":
-            ticket, skill, skill_done = claude_session_info(pane_id)
+            ticket, skill, skill_done, tickets = claude_session_info(pane_id)
         else:
             ticket = screen_ticket(pane_id)
             skill, skill_done = codex_skill(tty.removeprefix("/dev/"), kinds)
@@ -703,6 +704,10 @@ def ai_panes():
         label_ticket = lm.group(1) if lm else ""
         if label_ticket:
             ticket = label_ticket
+        # 枠で作業中のチケット全部（先頭は ticket）。ラベルに「#14625 #14891」と並べたときはラベルの番号を全部
+        if label_ticket:
+            tickets = re.findall(r"[#＃](\d{4,6})(?!\d)", label)
+        tickets = list(dict.fromkeys(([ticket] if ticket else []) + [t for t in tickets if ticket]))
         # 連動先: ダッシュボードで付けた印（@link_slot）を優先し、無ければ Claude の起動時の CODEX_SLOT
         link = None
         marked = parse_link_slots(link_slot)
@@ -712,6 +717,7 @@ def ai_panes():
             link = {"slots": [int(env_slots[tty.removeprefix("/dev/")])], "from": "codex_slot"}
         subagents = running_subagents(pane_id) if kind == "claude" and state != "stopped" else 0
         slots[n] = {"slot": n, "pane": pane_id, "env": env, "kind": kind, "slot_kind": slot_kind, "state": state, "task": task, "ticket": ticket,
+                    "tickets": tickets,
                     "label": label,
                     "subagents": subagents,
                     "skill": skill, "skill_done": skill_done, "link": link,
@@ -1199,6 +1205,33 @@ def work_ticket(text, command_args=None):
         return m.group(1)
     m = BRANCH_TICKET.search(head)
     return (m.group(1) or m.group(2)) if m else ""
+
+
+def work_tickets(text, command_args=None):
+    """work_ticket と同じ判定で、スキルの引数に番号がいくつも並んでいれば全部（/ct-redmine 14625 14891 13844）。
+
+    先頭は work_ticket の番号。引数以外（ブランチ名・1 行目の #番号）から取れたときは1件だけ。
+    """
+    tk = work_ticket(text, command_args)
+    if not tk:
+        return []
+    if command_args is not None:
+        args = command_args
+    else:
+        m = SKILL_ARGS.match(re.sub(r"<pasted_content\b.*?</pasted_content[^>]*>", " ", text or "", flags=re.S))
+        args = m.group(1) if m else ""
+    rest = [n for n in dict.fromkeys(PROMPT_TICKET.findall(args or "")) if n != tk]
+    return [tk] + rest
+
+
+def claude_work_tickets(entry):
+    """claude_work_ticket の複数版（スキルに並べた番号を全部）。"""
+    if entry.get("type") != "user" or entry.get("isMeta") or entry.get("isCompactSummary"):
+        return []
+    raw = json.dumps((entry.get("message") or {}).get("content"), ensure_ascii=False)
+    if "<command-name>" in raw:
+        return work_tickets("", prompt_text(entry))
+    return work_tickets(prompt_text(entry))
 
 
 def claude_work_ticket(entry):
@@ -1852,8 +1885,8 @@ def redmine_view():
     panes = ai_panes()
     sessions = {}
     for sl in panes.get("slots", []):
-        if sl.get("ticket"):
-            sessions.setdefault(sl["ticket"], []).append(
+        for tk in sl.get("tickets") or ([sl["ticket"]] if sl.get("ticket") else []):
+            sessions.setdefault(tk, []).append(
                 {"slot": sl["slot"], "env": sl["env"], "kind": sl["kind"], "state": sl["state"], "skill": sl.get("skill", ""), "skill_done": sl.get("skill_done", False)})
     places = ticket_places()
 
