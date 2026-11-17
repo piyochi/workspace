@@ -1561,6 +1561,10 @@ function npSlackText() {
   rows.forEach((r) => out.push(`　${r.name.trim()}`));
   return out.join("\n");
 }
+// 2つ目の出力: チェックした行の名前だけ（見出し・案件名・先頭の空白なし）
+function npSlackPlain() {
+  return npSlackRows().filter((r) => !np.slack.off.has(r.id)).map((r) => r.name.trim()).join("\n");
+}
 function npSlackRender() {
   const rows = npSlackRows(), body = $("np-body");
   $("np-total").textContent = "";
@@ -1572,9 +1576,14 @@ function npSlackRender() {
       : `<div class="empty">登録済みの行がありません</div>`}
     <div class="np-group">出力 <button id="np-sl-copy">コピー</button><span id="np-sl-copied" class="np-sl-sub"></span></div>
     <textarea id="np-sl-out" class="np-sl-out" readonly spellcheck="false"></textarea>
+    <div class="np-group">名前だけ（見出し・案件名・先頭の空白なし） <button id="np-sl-copy2">コピー</button><span id="np-sl-copied2" class="np-sl-sub"></span></div>
+    <textarea id="np-sl-out2" class="np-sl-out" readonly spellcheck="false"></textarea>
   </div>`;
-  const out = $("np-sl-out");
-  const update = () => { out.value = npSlackText(); out.rows = Math.min(20, out.value.split("\n").length + 1); };
+  const out = $("np-sl-out"), out2 = $("np-sl-out2");
+  const update = () => {
+    out.value = npSlackText(); out.rows = Math.min(20, out.value.split("\n").length + 1);
+    out2.value = npSlackPlain(); out2.rows = Math.min(20, out2.value.split("\n").length + 1);
+  };
   update();
   $("np-sl-title").oninput = (e) => { np.slack.title = e.target.value; update(); };
   $("np-sl-project").oninput = (e) => { np.slack.project = e.target.value; update(); };
@@ -1584,11 +1593,14 @@ function npSlackRender() {
   $("np-sl-all").onclick = () => { np.slack.off.clear(); npSlackRender(); };
   $("np-sl-none").onclick = () => { rows.forEach((r) => np.slack.off.add(r.id)); npSlackRender(); };
   out.onfocus = () => out.select();
-  $("np-sl-copy").onclick = async () => {
-    const ok = await copyText(out.value);
-    $("np-sl-copied").textContent = ok ? "コピーしました" : "コピーできませんでした（文字を選んで Ctrl+C）";
-    setTimeout(() => { const m = $("np-sl-copied"); if (m) m.textContent = ""; }, 2000);
-  };
+  out2.onfocus = () => out2.select();
+  const copyBtn = (btn, msg, ta) => { $(btn).onclick = async () => {
+    const ok = await copyText(ta.value);
+    $(msg).textContent = ok ? "コピーしました" : "コピーできませんでした（文字を選んで Ctrl+C）";
+    setTimeout(() => { const m = $(msg); if (m) m.textContent = ""; }, 2000);
+  }; };
+  copyBtn("np-sl-copy", "np-sl-copied", out);
+  copyBtn("np-sl-copy2", "np-sl-copied2", out2);
 }
 // 最初にチェックを入れるのは、予定に時間が入っている行だけ（0:00・空の行は外しておく）
 $("np-slack").onclick = () => {
