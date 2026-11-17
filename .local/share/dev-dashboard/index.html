@@ -1059,14 +1059,14 @@ document.addEventListener("click", async (e) => {
   b.textContent = ok ? "✓" : "✗"; b.title = ok ? "コピーしました" : "コピーできませんでした";
   setTimeout(() => { b.textContent = "⧉"; b.title = "「#番号: タイトル」をリンク付きでコピー"; }, 1500);
 });
-// Redmine の行: ✎ で「#番号: タイトル -----」（見出し）をメモの最後に足す（すぐ保存する。同じ番号がもうメモにあれば足さない）
+// Redmine の行: ✎ で「#番号: タイトル -----」（見出し）をメモのチケットの見出しの一番上に足す（すぐ保存する。同じ番号がもうメモにあれば足さない）
 document.addEventListener("click", (e) => {
   const b = e.target.closest("button.rm-memo"); if (!b) return;
   // 後ろに「 -----」を付けて見出しにする（その下に書いたことを、表示のときに開け閉めできる）
   const r = window.__memoAppend ? window.__memoAppend(`${b.dataset.memo} -----`) : "error";
   b.textContent = r === "added" ? "✓" : r === "exists" ? "済" : "✗";
   b.title = r === "added" ? "メモに足しました" : r === "exists" ? "この番号はもうメモにあります" : "メモに足せませんでした";
-  setTimeout(() => { b.textContent = "✎"; b.title = "「#番号: タイトル -----」をメモの最後に見出しとして足す"; }, 1500);
+  setTimeout(() => { b.textContent = "✎"; b.title = "「#番号: タイトル -----」を、メモのチケットの見出しの一番上に足す"; }, 1500);
 });
 $("modal-back").onclick = (e) => { e.preventDefault(); closePane(); };
 // 外側クリックで閉じるのは、押した所も離した所も外側のときだけ。
@@ -1328,7 +1328,7 @@ function rmRows(items, opts = {}) {
         ${rmStatusHtml(i)}
         <span class="rm-subj" title="#${i.id}: ${esc(i.subject)}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${i.id}</a>: ${esc(i.subject)}</span>
         <button class="rm-copy" data-copy="${esc(`#${i.id}: ${i.subject}`)}" data-url="${esc(i.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button>
-        <button class="rm-memo" data-memo="${esc(`#${i.id}: ${i.subject}`)}" title="「#番号: タイトル -----」をメモの一番上の ----- の真上に見出しとして足す">✎</button>
+        <button class="rm-memo" data-memo="${esc(`#${i.id}: ${i.subject}`)}" title="「#番号: タイトル -----」を、メモのチケットの見出しの一番上に足す">✎</button>
         <button class="rm-send" data-ticket="${i.id}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button>
         ${!i.history.length && !full ? `<button class="rm-full" data-ticket="${i.id}" title="直近${rmData ? rmData.history_days : 30}日に見つからなかったので、残っている Claude・Codex の記録全部と各環境の git のコミットから探す">全期間で調べる</button>` : ""}</div>
       ${info.length ? `<div class="rm-info">${info.join("")}</div>` : ""}
@@ -2552,14 +2552,15 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     if (!conflict) save(false);
   }
   window.__memoRender = () => { if (!editingAll && !sec) renderView(); };  // まとまりを直している最中は描き直さない（入力が消えるため）  // Redmine 欄を読んだあとに #番号をリンクにし直す
-  // Redmine 欄の ✎ から呼ぶ。メモの一番上の ----- の真上に1行足して、待たずに保存する
+  // Redmine 欄の ✎ から呼ぶ。チケット番号の付いた見出しのうち一番上のものの真上に足して、待たずに保存する
   window.__memoAppend = (line) => {
     const n = (line.match(/#(\d{4,6})/) || [])[1];
     const norm = ta.value.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
     if (n && new RegExp(`[#＃]${n}(?!\\d)`).test(norm)) return "exists";
-    // 一番上の ----- の行（見出しでも区切りでも）の真上に入れる。----- が無ければ最後に足す
+    // 「#番号 … -----」の見出しのうち一番上の真上に入れる（リンク・メモなど番号の無い見出しより下にする）。
+    // 番号の付いた見出しが無ければ最後に足す
     const add = n ? [line, ...memoTpl(n)] : [line];  // 見出しのすぐ下に「環境」「ブランチ：…」の2行
-    const lines = ta.value.split("\n"), at = lines.findIndex((l) => DASHES.test(l));
+    const lines = ta.value.split("\n"), at = lines.findIndex((l) => { const m = DASHES.exec(l); return m && /[#＃][0-9０-９]{4,6}(?![0-9０-９])/.test(m[1]); });
     if (at >= 0) { lines.splice(at, 0, ...add); ta.value = lines.join("\n"); }
     else ta.value = ta.value.replace(/\s*$/, "") + (ta.value.trim() ? "\n" : "") + add.join("\n");
     dirty = true; clearTimeout(timer);
