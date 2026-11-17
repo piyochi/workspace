@@ -37,9 +37,13 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -1
 /* ヘッダーの小さい版（Claude・Codex の使用率、tmux の処理中・確認待ち）。元の欄が画面から外れたときだけ出す */
 /* ヘッダーの下に重ねて出す（ページの配置を動かさないので、出し入れで元の欄が見え隠れしてちらつかない） */
 /* ヘッダーの「対応中」: tmux の枠のチケットとレビュー依頼。番号・段階・担当だけ出し、詳しくはマウスを乗せる */
-.focus { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 5px; font-size: 11px; }
-.focus:empty { display: none; }
-.focus-label { color: var(--muted); font-weight: 600; margin-right: 2px; }
+.focus { display: flex; align-items: flex-start; gap: 6px; margin-top: 5px; font-size: 11px; }
+.focus[hidden] { display: none; }
+.focus-label { color: var(--muted); font-weight: 600; line-height: 20px; flex: none; }
+/* 普段は 1 行目だけ。収まらないときは右端の ▸ で 2 行目以降を開く */
+.focus-list { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; flex: 1; min-width: 0; max-height: 20px; overflow: hidden; }
+.focus.open .focus-list { max-height: none; }
+.focus-tg { flex: none; font-size: 10px; padding: 0 6px; line-height: 18px; white-space: nowrap; }
 .fc { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 10px; padding: 0 7px 0 5px; line-height: 18px;
   white-space: nowrap; cursor: pointer; font: inherit; background: var(--card); color: var(--text); }
 .fc:hover { border-color: var(--accent); }
@@ -47,9 +51,11 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -1
 .fc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--off); flex: none; }
 .fc-dot.busy { background: #f97316; } .fc-dot.wait { background: var(--bad); } .fc-dot.idle { background: var(--ok); } .fc-dot.none { background: transparent; border: 1px solid var(--line); }
 .fc-stage { color: var(--muted); }
+.fc-env { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 0 3px; line-height: 13px; font-variant-numeric: tabular-nums; }
 .fc.b-mine, .fc.b-fix, .fc.b-review_in { border-color: var(--bad); }
 .fc.b-review_in { background: color-mix(in srgb, var(--bad) 10%, var(--card)); }
 .fc.b-done { opacity: .6; }
+.fc.closed { background: var(--bg); }  /* tmux の枠を閉じた、今日作業したチケット */
 .mini-wrap { position: absolute; left: 0; right: 0; top: 100%; background: var(--bg); padding: 0 16px 5px; border-bottom: 1px solid var(--line); }
 .mini { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 4px; font-size: 11px; }
 .mini-src { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
@@ -407,7 +413,7 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
       <div class="gauge" id="g-cpu"><span class="gauge-label">CPU</span><div class="bar"><i style="width:0"></i></div><span class="gauge-val">–</span></div>
       <div class="gauge" id="g-mem"><span class="gauge-label">メモリ</span><div class="bar"><i style="width:0"></i></div><span class="gauge-val">–</span></div>
     </div>
-    <div class="focus" id="focus"></div>
+    <div class="focus" id="focus" hidden><span class="focus-label">対応中</span><div class="focus-list" id="focus-list"></div><button type="button" class="focus-tg" id="focus-tg" hidden></button></div>
     <div class="mini-wrap" id="mini-wrap" hidden>
       <div class="mini" id="mini-usage" hidden></div>
       <div class="mini" id="mini-panes" hidden></div>
@@ -746,6 +752,8 @@ function focusTip(i) {
   L.push(`段階: ${i.stage_label || "–"}${i.phase ? `（フェーズ ${i.phase.done}/${i.phase.total}）` : ""}${i.stage_why ? `  ← ${i.stage_why}` : ""}`);
   L.push(`担当: ${i.ball.label}  ← ${i.ball.why}`);
   if (i.last_note) L.push(`最新コメント: ${i.last_note.who}（${new Date(i.last_note.at).toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}）${i.last_note.text}`);
+  if (i.last) L.push(`今日の最後の作業: ${hm(i.last)}`);
+  if (!i.sessions.length && i.today) L.push("tmux の枠は閉じています（今日作業した分として表示）");
   i.sessions.forEach((x) => L.push(`枠: [${x.slot}] ${x.env} ${x.kind} ${PANE_STATES[x.state] || x.state}${x.skill ? ` ${x.skill_done ? "✓" : "⚙"} ${x.skill}` : ""}`));
   i.branches.forEach((b) => L.push(`ブランチ: ${b.env} ${b.branch}${b.repo === "ticket_v2" ? "(front)" : "(api)"}`));
   i.prs.forEach((p) => {
@@ -756,14 +764,33 @@ function focusTip(i) {
   L.push("", "押すと Redmine 欄のその行を開きます");
   return L.join("\n");
 }
+let focusOpen = (() => { try { return localStorage.getItem("dd_focus_open") === "1"; } catch (e) { return false; } })();
+// 1 行目に収まらないチップの数を数えて ▸ を出す（開いているときは ▴ たたむ）
+function fitFocus() {
+  const box = $("focus"), list = $("focus-list"), tg = $("focus-tg");
+  box.classList.toggle("open", focusOpen);
+  const chips = [...list.children], top = chips.length ? chips[0].offsetTop : 0;
+  const hidden = chips.filter((c) => c.offsetTop > top + 2).length;
+  tg.hidden = !hidden;
+  tg.textContent = focusOpen ? "▴ たたむ" : `▸ 他 ${hidden} 件`;
+  tg.title = focusOpen ? "2 行目以降を隠す" : chips.filter((c) => c.offsetTop > top + 2).map((c) => c.title.split("\n")[0]).join("\n");
+}
+$("focus-tg").addEventListener("click", () => {
+  focusOpen = !focusOpen;
+  try { localStorage.setItem("dd_focus_open", focusOpen ? "1" : "0"); } catch (e) { /* 覚えられなくても表示は続ける */ }
+  fitFocus();
+});
+window.addEventListener("resize", () => fitFocus());
 function renderFocus() {
-  if (!focusItems.length) { $("focus").innerHTML = ""; return; }
-  $("focus").innerHTML = `<span class="focus-label">対応中</span>` + focusItems.map((i) => {
+  $("focus").hidden = !focusItems.length;
+  if (!focusItems.length) { $("focus-list").innerHTML = ""; return; }
+  $("focus-list").innerHTML = focusItems.map((i) => {
     const st = i.sessions.reduce((a, x) => (FC_DOT[x.state] || 0) > (FC_DOT[a] || 0) ? x.state : a, "");
     const stage = i.stage_label ? `${i.stage_label}${i.phase && i.stage <= 3 ? ` ${i.phase.done}/${i.phase.total}` : ""}` : "";
-    return `<button type="button" class="fc b-${i.ball.kind}" data-id="${i.id}" data-url="${esc(i.url)}" title="${esc(focusTip(i))}">`
-      + `<span class="fc-dot ${st || "none"}"></span><b>#${i.id}</b>${stage ? `<span class="fc-stage">${esc(stage)}</span>` : ""}<span>${esc(i.ball.label.split(" ")[0])}</span></button>`;
+    return `<button type="button" class="fc b-${i.ball.kind}${i.sessions.length ? "" : " closed"}" data-id="${i.id}" data-url="${esc(i.url)}" title="${esc(focusTip(i))}">`
+      + `<span class="fc-dot ${st || "none"}"></span><b>#${i.id}</b>${i.env ? `<span class="fc-env" title="最後に作業した環境">${esc(i.env)}</span>` : ""}${stage ? `<span class="fc-stage">${esc(stage)}</span>` : ""}<span>${esc(i.ball.label.split(" ")[0])}</span></button>`;
   }).join("");
+  fitFocus();
 }
 async function refreshFocus() {
   try {

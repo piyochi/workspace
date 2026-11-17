@@ -1188,7 +1188,8 @@ def work_ticket(text, command_args=None):
     """その入力で「このチケットの作業をする」と分かる番号。話に出ただけの番号は拾わない。
 
     拾うのは: スキルに渡した番号（/ct-redmine 14766・$ct-branch 14339）、番号だけの入力（14766・スキル：Redmine 14766）、
-    300 文字以内の入力の中のブランチ名（feature/14339_2・14339_2_2）。圧縮後の要約と貼り付け（<pasted_content>）の中は見ない。
+    1 行目の先頭の「#番号」と 1 行目のブランチ名（feature/14339_2・14339_2_2）。圧縮後の要約と貼り付け（<pasted_content>）の中は見ない。
+    2 行目以降のブランチ名は拾わない（例文・ブランチ一覧の貼り付けなど、作業の指示ではないことが多い）。
     """
     if command_args is not None:
         return main_ticket(command_args)
@@ -1201,11 +1202,7 @@ def work_ticket(text, command_args=None):
     m = SKILL_ARGS.match(text)
     if m and main_ticket(m.group(1)):
         return main_ticket(m.group(1))
-    # ブランチ名は短い指示の中のものだけ（ブランチ一覧の貼り付けなど、長い文に並んだものは作業の指示ではない）
-    m = BRANCH_TICKET.search(text) if len(text) <= 300 else None
-    if m:
-        return m.group(1) or m.group(2)
-    # 長い引き継ぎ文でも、1 行目の先頭の「#番号」と 1 行目のブランチ名は作業の指示（「#14339 feature/14339_2_2 の作業を引き継いで…」）
+    # 1 行目の先頭の「#番号」と 1 行目のブランチ名だけを作業の指示とみなす（「#14339 feature/14339_2_2 の作業を引き継いで…」）
     head = text.lstrip().split("\n", 1)[0][:120]
     m = HEAD_TICKET.match(head)
     if m:
@@ -2144,6 +2141,17 @@ def local_hm(iso):
         return iso
 
 
+def last_env(sess, envs, brs):
+    """最後に作業した環境の番号（"1"〜"4"）。tmux の枠が開いていればその環境（処理中・確認待ちの枠を優先）。"""
+    rank = {"wait": 3, "busy": 2, "idle": 1}
+    if sess:
+        return max(sess, key=lambda x: rank.get(x["state"], 0))["env"].removeprefix("env")
+    strict = [x for x in envs if x["strict"]]
+    if strict:
+        return max(strict, key=lambda x: x["last"])["env"].removeprefix("env")
+    return max(brs, key=lambda b: b.get("ts", 0))["env"].removeprefix("env") if brs else ""
+
+
 def focus_view():
     """ヘッダーに出す「対応中」のチケット。tmux の枠の番号（複数番号も）＋レビューを頼まれている PR の番号。"""
     panes = ai_panes()
@@ -2165,6 +2173,26 @@ def focus_view():
         req_by.setdefault(r["ticket"], []).append(r)
         if r["ticket"] not in order:
             order.append(r["ticket"])
+    # tmux を閉じても、今日（朝 4:00 以降）作業したチケットは残す
+    tv = {n: t for n, t in today_view()["tickets"].items() if t["work"] or n in sessions or n in req_by}
+    for n in tv:
+        if n not in order:
+            order.append(n)
+    # 並び: 最後に作業した時刻の新しい順。tmux の枠で動いているものは今、レビュー依頼だけのものは PR の更新時刻
+    now = time.time()
+
+    def last_of(n):
+        t = tv.get(n, {}).get("work_last", 0)
+        if sessions.get(n):
+            t = now
+        for r in req_by.get(n, []):
+            try:
+                t = max(t, datetime.datetime.fromisoformat(r["updated"].replace("Z", "+00:00")).timestamp())
+            except (ValueError, KeyError):
+                pass
+        return t
+    last = {n: last_of(n) for n in order}
+    order.sort(key=lambda n: -last[n])
     places = ticket_places()
     me = redmine_my_id()
     host, _ = redmine_creds()
@@ -2226,6 +2254,9 @@ def focus_view():
                       "status": rm.get("status", ""), "priority": rm.get("priority", ""), "assignee": rm.get("assignee", ""),
                       "last_note": ln, "stage": stage, "stage_label": FOCUS_STAGES[stage], "stage_why": why, "phase": focus_phase(n),
                       "ball": {"kind": ball[0], "label": ball[1], "why": ball[2]}, "sessions": sessions.get(n, []),
+                      "last": tv.get(n, {}).get("work_last", 0), "today": n in tv,
+                      # 最後に作業した環境の番号（tmux の枠 → 今日作業として扱った入力の最後 → いちばん新しいブランチの順に探す）
+                      "env": last_env(sessions.get(n, []), tv.get(n, {}).get("envs", []), brs),
                       "branches": [{"env": b["env"], "repo": b["repo"], "branch": b["branch"]} for b in brs],
                       "prs": mypr, "review_requested": req_by.get(n, [])})
     return {"items": items, "pr_at": review_cache["at"]}
@@ -2417,8 +2448,10 @@ def session_ticket(text, wt):
     return ""
 
 
-def _today_touch(work, tk, env, ts, prompt=None):
+def _today_touch(work, tk, env, ts, prompt=None, strict=False):
     w = work.setdefault(tk, {}).setdefault(env, {"first": ts, "last": ts, "prompts": []})
+    # strict: 作業の番号と分かる入力（work_ticket）で決まった番号か。話に出ただけの番号（短い入力の主な番号）は False
+    w["strict"] = w.get("strict", False) or strict
     w["first"], w["last"] = min(w["first"], ts), max(w["last"], ts)
     if prompt:
         w["prompts"] = (w["prompts"] + [{"ts": ts, "text": prompt}])[-TODAY_PROMPTS:]
@@ -2471,19 +2504,21 @@ def scan_today_once():
                     if text:
                         prompt, wt = text, work_ticket(text)
             if prompt:
-                st["cur"] = session_ticket(prompt, wt) or st["cur"]
+                new = session_ticket(prompt, wt)
+                if new:
+                    st["cur"], st["strict"] = new, bool(wt)
             env = env_of(st["cwd"])
             if ts >= start and env in ENV_DIRS.values():
                 ticks.append((int(ts // 60), st["cur"]))
             if ts >= start and st["cur"] and env in ENV_DIRS.values():
-                found.append((st["cur"], env, ts, snippet(prompt) if prompt else None))
+                found.append((st["cur"], env, ts, snippet(prompt) if prompt else None, st.get("strict", False)))
         if found or ticks:
             with today_lock:
                 m = mins.setdefault(path, {})
                 for minute, tk in ticks:
                     m[minute] = tk or m.get(minute, "")
-                for tk, env, ts, p in found:
-                    _today_touch(work, tk, env, ts, p)
+                for tk, env, ts, p, strict in found:
+                    _today_touch(work, tk, env, ts, p, strict)
     if time.time() - today["commits_at"] >= 300:
         commits = today_commits(start)
         with today_lock:
@@ -2533,12 +2568,14 @@ def today_view():
         start = today["start"] or day_start()
     out = {}
     for n in set(work) | set(commits):
-        envs = [{"env": e, "first": w["first"], "last": w["last"]} for e, w in sorted(work.get(n, {}).items())]
+        envs = [{"env": e, "first": w["first"], "last": w["last"], "strict": w.get("strict", False)} for e, w in sorted(work.get(n, {}).items())]
         prompts = sorted(({"ts": p["ts"], "env": e, "text": p["text"]} for e, w in work.get(n, {}).items() for p in w["prompts"]),
                          key=lambda p: -p["ts"])[:TODAY_PROMPTS]
         cm = sorted(commits.get(n, []), key=lambda c: -c["ts"])
         last = max([x["last"] for x in envs] + [c["ts"] for c in cm] or [0])
-        out[n] = {"envs": envs, "prompts": prompts, "commits": cm, "last": last}
+        # work: 作業の番号として扱った入力かコミットがある（ヘッダーの「対応中」に残すのはこれだけ）
+        out[n] = {"envs": envs, "prompts": prompts, "commits": cm, "last": last, "work": bool(cm) or any(x["strict"] for x in envs),
+                  "work_last": max([x["last"] for x in envs if x["strict"]] + [c["ts"] for c in cm] or [0])}
     return {"start": start, "tickets": out}
 
 
