@@ -1687,7 +1687,8 @@ function npBuild(data, src) {
     src.rows.filter((r) => !haveName.has(r.service_name.trim())).forEach((r) => {
       const n = npTicket(r.service_name), d = np.mode === "today" && n ? ts[n] || 0 : 0;
       haveName.add(r.service_name.trim()); if (n) have.add(n);
-      add({ group: "copy", checked: true, name: r.service_name, notes: r.notes, sub: [r.project, r.category].filter(Boolean).join("・"),
+      // 日報に1件でも登録済みの行があれば、コピーする行は最初はチェック無し（もう書き始めた日報に勝手に足さない）
+      add({ group: "copy", checked: !data.rows.length, name: r.service_name, notes: r.notes, sub: [r.project, r.category].filter(Boolean).join("・"),
         draft: d, result: npFmt(npRound5(d)),
         ids: { business_partner_id: r.business_partner_id, project_id: r.project_id, service_large_category_id: r.service_large_category_id,
           service_medium_category_id: r.service_medium_category_id, service_category_id: r.service_category_id } });
