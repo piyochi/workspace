@@ -2590,7 +2590,8 @@ def scan_today_once():
                 st["label"] = titled if ts >= start else []  # 前の日に付けたタイトルは今日の作業に数えない
             env = env_of(st["cwd"])
             if ts >= start and env in ENV_DIRS.values():
-                ticks.append((int(ts // 60), st["cur"]))
+                # 枠のタイトルに番号が複数あれば、その分は全部で等分する（空白区切りで持つ。timesheet_today で割る）
+                ticks.append((int(ts // 60), " ".join(dict.fromkeys(([st["cur"]] if st["cur"] else []) + (st.get("label") or [])))))
             if ts >= start and st["cur"] and env in ENV_DIRS.values():
                 found.append((st["cur"], env, ts, snippet(prompt) if prompt else None, st.get("strict", False)))
             if ts >= start and env in ENV_DIRS.values() and (prompt or titled):
@@ -2752,7 +2753,9 @@ def timesheet_today():
     out = {}
     for tks in per_min.values():
         for tk in tks:
-            out[tk] = out.get(tk, 0) + 1 / len(tks)
+            parts = tk.split() or [""]  # 1 つのセッションで複数のチケットを並行していたら、その分をさらに等分する
+            for p in parts:
+                out[p] = out.get(p, 0) + 1 / len(tks) / len(parts)
     return {"tickets": {k: round(v) for k, v in out.items() if k and round(v)}, "other": round(out.get("", 0)), "total": len(per_min)}
 
 

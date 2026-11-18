@@ -1772,7 +1772,7 @@ function npTotals() {
 async function npLoad() {
   np.busy = true; np.data = null; np.rows = []; np.srcDate = ""; np.msg = ""; np.msgCls = ""; npRender();
   try {
-    if (!rmData) await loadRedmine();
+    await loadRedmine();  // 「今日作業した」は開いたときの最新で作る（前に読んだ分だと、その後に始めたチケットが抜ける）
     const get = async (d) => (await fetch(`/api/nippo?date=${d}`)).json();
     const [data, src] = await Promise.all([get(np.mode === "today" ? np.pick || "today" : np.date), np.mode === "next" ? get("today") : null]);
     if (data.error) throw new Error(data.error);
