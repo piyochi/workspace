@@ -1617,7 +1617,15 @@ function renderRmAll() {
 // ---- 日報（HRMOS勤怠）: 今日の日報に不足分を足す・時間を入れる／次回（次の平日）の日報を今日の行と Redmine から作る ----
 const np = { open: false, mode: "today", date: "", data: null, rows: [], msg: "", msgCls: "", busy: false, q: "", target: "", memoOpen: false,
   slack: null };  // slack: Slack 報告の文を作っているとき {title, project: 2行目の案件名, off: チェックを外した行の id の Set}
-const npMin = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "").trim()); return m && Number(m[2]) < 60 ? Number(m[1]) * 60 + Number(m[2]) : null; };
+// 時間の入力をそろえる。空・「0」「1」（時だけ）・「0:0」「1:5」（分が1桁）・全角を「0:00」の形にする。形にできないものはそのまま返す
+const npTime = (s) => {
+  const v = String(s ?? "").trim().replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/：/g, ":");
+  if (!v) return "0:00";
+  let m = /^(\d{1,2})$/.exec(v); if (m) return `${Number(m[1])}:00`;
+  m = /^(\d{1,2}):(\d{1,2})$/.exec(v); if (m && Number(m[2]) < 60) return `${Number(m[1])}:${m[2].padStart(2, "0")}`;
+  return v;
+};
+const npMin = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(npTime(s)); return m && Number(m[2]) < 60 ? Number(m[1]) * 60 + Number(m[2]) : null; };
 const npFmt = (min) => `${Math.floor(min / 60)}:${String(Math.round(min) % 60).padStart(2, "0")}`;
 const npRound5 = (min) => Math.round(min / 5) * 5;
 const npTicket = (name) => (/#(\d{4,6})/.exec(name || "") || [])[1] || "";
@@ -1872,6 +1880,12 @@ $("np-date").onchange = (e) => {
   if (np.mode === "today") np.pick = e.target.value; else np.date = e.target.value;
   npLoad();
 };
+// 時間の欄は離れたときに「0:00」の形にそろえて見せる（0:0・0・空のまま登録すると HRMOS に弾かれるため）
+$("np-body").addEventListener("change", (e) => {
+  const t = e.target; if (t.dataset.f !== "plan" && t.dataset.f !== "result" || t.disabled) return;
+  const v = npTime(t.value); if (v === t.value) return;
+  t.value = v; t.dispatchEvent(new Event("input", { bubbles: true }));
+});
 $("np-body").addEventListener("input", (e) => {
   const t = e.target;
   if (t.id === "np-q") {  // 絞り込みは打つたびに描き直し、カーソルを戻す
@@ -1938,6 +1952,7 @@ async function npCopyPrev() {
   np.busy = false; npRender();
 }
 $("np-save").onclick = async () => {
+  np.rows.forEach((r) => { r.plan = npTime(r.plan); if (!npFuture()) r.result = npTime(r.result); });  // 送る前に 0:0・0・空を 0:00 にそろえる
   const on = np.rows.filter((r) => r.kind === "cur" ? !r.del : r.checked);
   if (on.some((r) => npMin(r.plan) == null || npMin(r.result) == null)) { np.msg = "時間の形が不正な行があります（例 1:30）"; np.msgCls = "err"; npRender(); return; }
   if (on.some((r) => r.kind === "add" && !r.name.trim())) { np.msg = "業務名が空の行があります"; np.msgCls = "err"; npRender(); return; }

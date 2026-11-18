@@ -2908,10 +2908,15 @@ def hrmos_day(day_id):
 
 
 def hrmos_time(value, default="00:00"):
-    """ "1:5" や "01:05" を "01:05" にそろえる。空なら default。不正なら ValueError。"""
-    v = str(value or "").strip()
+    """ "1:5"・"0:0"・"0"（時だけ）・"01:05"・全角を "01:05" の形にそろえる。空なら default。不正なら ValueError。"""
+    v = str(value or "").strip().translate(str.maketrans("０１２３４５６７８９：", "0123456789:"))
     if not v:
         return default
+    if re.fullmatch(r"\d{1,2}", v):
+        v += ":00"
+    m = re.fullmatch(r"(\d{1,2}):(\d{1,2})", v)
+    if m:
+        v = f"{m.group(1)}:{int(m.group(2)):02d}"
     m = HRMOS_TIME.fullmatch(v)
     if not m or int(m.group(2)) > 59 or int(m.group(1)) > 23:
         raise ValueError(f"時間「{v}」が不正です（0:00〜23:59）")
