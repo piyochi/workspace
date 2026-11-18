@@ -2699,19 +2699,25 @@ def today_extra_issues(ids, host, key, cache=None):
 
 
 def run_action(action, env, comp):
+    # 出力に UTF-8 で読めない文字（途中で切れた全角など）があっても止まらないよう errors="replace" で読む。
+    # 何が起きても最後に running を外す（外さないと「実行中」のまま固まり、ほかの起動・停止を受け付けなくなる）
+    rc = 1
     try:
         proc = subprocess.Popen([LOCAL_SERVER, action, env, comp], stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True)
+                                stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
         for line in proc.stdout:
             with job_lock:
                 job["output"] += line
         rc = proc.wait()
     except OSError as e:
-        rc = 1
         with job_lock:
             job["output"] += f"⚠️  起動できませんでした: {e}\n"
-    with job_lock:
-        job.update(running=False, rc=rc, finished=time.time())
+    except Exception as e:
+        with job_lock:
+            job["output"] += f"⚠️  途中で止まりました: {e}\n"
+    finally:
+        with job_lock:
+            job.update(running=False, rc=rc, finished=time.time())
 
 
 # --- 日報（HRMOS勤怠 p.ieyasu.co）-----------------------------------------------------------
