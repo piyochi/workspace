@@ -315,7 +315,7 @@ button.rm-send { flex: none; font-size: 10px; padding: 0 5px; line-height: 16px;
 .np-bar a { color: var(--accent); font-size: 12px; margin-left: auto; white-space: nowrap; text-decoration: none; }
 .np-group { margin: 10px 0 2px; font-size: 11px; font-weight: 600; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .np-group button, .np-group input { font-size: 11px; font-weight: 400; padding: 1px 6px; }
-.np-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 56px 56px 74px minmax(140px, 30%); gap: 4px 6px; align-items: start; padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px; }
+.np-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 56px 56px 74px minmax(140px, 30%); gap: 4px 6px; align-items: start; padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px; }
 .np-row.sum { border-top: 2px solid var(--line); font-weight: 700; font-variant-numeric: tabular-nums; align-items: center; }
 .np-row.sum .np-sum-label { text-align: right; }
 .np-row.sum .np-sum-v { padding: 0 4px; }
@@ -324,6 +324,21 @@ button.rm-send { flex: none; font-size: 10px; padding: 0 5px; line-height: 16px;
 .np-row.off .np-name, .np-row.off input[type=text], .np-row.off textarea { opacity: .45; }
 .np-row.del { background: color-mix(in srgb, var(--bad) 8%, var(--card)); }
 .np-row.del .np-name { text-decoration: line-through; }
+/* 並べ替え: △▽ で1行ずつ、つまみ（△▽ の列）をつかんでドラッグでも */
+.np-check { display: flex; align-items: center; gap: 1px; }
+.np-move { display: flex; flex-direction: column; cursor: grab; border-radius: 3px; }
+.np-move:hover { background: var(--bg); }
+.np-move button { font-size: 8px; line-height: 10px; padding: 0 2px; color: var(--muted); border: 0; background: none; cursor: pointer; }
+.np-move button:hover:not(:disabled) { color: var(--accent); }
+.np-move button:disabled { opacity: .25; cursor: default; }
+.np-row.cur { cursor: grab; }
+.np-row.cur :is(input, textarea, button, a) { cursor: auto; }
+.np-row.cur :is(button, a) { cursor: pointer; }
+.np-row.cur input[type=text], .np-row.cur textarea { cursor: text; }
+.np-row.dragging { opacity: .4; }
+.np-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.np-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.np-moved { color: var(--warn); font-weight: 400; }
 button.np-del { font-size: 10px; padding: 0 3px; line-height: 16px; color: var(--muted); border-color: transparent; background: none; }
 button.np-del:hover { color: var(--bad); border-color: var(--bad); }
 .np-row.del button.np-del { color: var(--accent); }
@@ -356,7 +371,7 @@ button.np-draft { font-size: 10px; padding: 0 4px; line-height: 18px; white-spac
 .np-msg.ok { color: var(--ok); } .np-msg.err { color: var(--bad); }
 .np-note { color: var(--muted); font-size: 11px; margin: 4px 0; }
 @media (max-width: 640px) {
-  .np-row { grid-template-columns: 18px 56px 56px 74px minmax(0, 1fr); }
+  .np-row { grid-template-columns: 34px 56px 56px 74px minmax(0, 1fr); }
   .np-row textarea { grid-column: 2 / -1; }
   .np-row .np-name { grid-column: 2 / -1; }
   .np-row.head { display: none; }
@@ -1700,14 +1715,29 @@ function npBuild(data, src) {
   });
   return rows;
 }
+// 並べ替え（登録済みの行だけ。HRMOS の並び順は登録のときに詳細画面の ▲▼ と同じ呼び出しで変える）
+const npCurIdx = () => np.rows.flatMap((r, i) => r.kind === "cur" ? [i] : []);
+const npMoved = () => np.data && np.rows.filter((r) => r.kind === "cur" && !r.del).map((r) => r.id).join() !== np.data.rows.map((r) => r.id).filter((id) => np.rows.some((r) => r.id === id && !r.del)).join();
+function npMoveHtml(i) {
+  const idx = npCurIdx(), k = idx.indexOf(i);
+  return `<span class="np-move" title="ドラッグで並べ替え（△▽ で1行ずつ）"><button class="np-up" aria-label="上へ" ${k <= 0 ? "disabled" : ""}>△</button><button class="np-down" aria-label="下へ" ${k >= idx.length - 1 ? "disabled" : ""}>▽</button></span>`;
+}
+// 登録済みの行 from（np.rows の位置）を、登録済みの行 to の前（after なら後ろ）に動かす
+function npMove(from, to, after) {
+  if (from === to) return;
+  const target = np.rows[to], [r] = np.rows.splice(from, 1);
+  np.rows.splice(np.rows.indexOf(target) + (after ? 1 : 0), 0, r);
+  npRender();
+  return np.rows.indexOf(r);
+}
 function npRowHtml(r, i) {
   const cur = r.kind === "cur", off = cur ? !!r.del : !r.checked;
   const changed = cur && (npMin(r.plan) !== r.orig.plan || npMin(r.result) !== r.orig.result || r.notes !== r.orig.notes);
   const dis = off ? "disabled" : "";
   const bad = (v) => npMin(v) == null ? "bad" : "";
   const future = npFuture();  // HRMOS は未来の日付に実績を入れられない
-  return `<div class="np-row${off ? " off" : ""}${cur && r.del ? " del" : changed ? " changed" : ""}" data-i="${i}">
-    <span class="np-check">${cur ? `<button class="np-del" title="${r.del ? "削除をやめる" : "この行を削除する（登録するまで消えません）"}">${r.del ? "↩" : "✕"}</button>` : `<input type="checkbox" data-f="checked" ${r.checked ? "checked" : ""}>`}</span>
+  return `<div class="np-row${cur ? " cur" : ""}${off ? " off" : ""}${cur && r.del ? " del" : changed ? " changed" : ""}" data-i="${i}">
+    <span class="np-check">${cur ? `${npMoveHtml(i)}<button class="np-del" title="${r.del ? "削除をやめる" : "この行を削除する（登録するまで消えません）"}">${r.del ? "↩" : "✕"}</button>` : `<input type="checkbox" data-f="checked" ${r.checked ? "checked" : ""}>`}</span>
     <span class="np-name"${/#(\d{4,6})(?!\d)/.test(r.name) && !r.free ? ` data-fc="${/#(\d{4,6})(?!\d)/.exec(r.name)[1]}"` : ` title="${esc(r.name)}"`}>${r.free ? `<input type="text" data-f="name" value="${esc(r.name)}" placeholder="業務名（例: MTG）">` : npNameHtml(r.name)}${r.sub ? ` <span class="np-sub">${esc(r.sub)}</span>` : ""}</span>
     <input type="text" class="${bad(r.plan)}" data-f="plan" value="${esc(r.plan)}" inputmode="numeric" placeholder="0:00" title="予定" ${dis}>
     <input type="text" class="${bad(r.result)}" data-f="result" value="${esc(future ? "" : r.result)}" inputmode="numeric" placeholder="${future ? "–" : "0:00"}" title="${future ? "未来の日付には実績を入れられません（HRMOS の決まり）" : "実績"}" ${future ? "disabled" : dis}>
@@ -1740,7 +1770,7 @@ function npRender() {
   const rmShown = rm.filter(([r]) => r.checked || words.every((w) => r.name.toLowerCase().includes(w)));
   body.innerHTML = [
     ts ? `<div class="np-note">⏱ 下書き = 今日（朝4:00以降）Claude・Codex を動かしていた時間をチケットごとに分けたもの（並行は等分・5分単位に丸め）。計 ${npFmt(ts.total)}、うちチケット以外 ${npFmt(ts.other)}。ブラウザ確認や打ち合わせの時間は入りません。</div>` : "",
-    `<div class="np-group">登録済みの行（${np.data.rows.length}）<button id="np-prev" ${np.busy || np.srcDate ? "disabled" : ""} title="${np.srcDate ? `${np.srcDate} の日報と突き合わせ済みです` : `この日より前で、行のある一番近い日の日報を読み、この日報に無い行だけを足します（最大2か月前まで。時間は 0:00、備考は引き継ぎ）`}">前回の日報から不足分を足す</button>${ts ?`<button id="np-apply">下書きを実績に入れる</button><input type="text" id="np-target" size="5" value="${esc(np.target)}" placeholder="8:00" title="実績の合計をこの時間に合わせて、下書きの割合で配る（空なら下書きのまま）"><span>に合わせて配る${np.data.work_total ? `（HRMOS の総労働時間 ${esc(np.data.work_total)}）` : "（総労働時間は退勤の打刻後に入ります）"}</span>` : ""}</div>`,
+    `<div class="np-group">登録済みの行（${np.data.rows.length}）${npMoved() ? `<span class="np-moved">並び順を変更（登録で HRMOS に反映）</span>` : ""}<button id="np-prev" ${np.busy || np.srcDate ? "disabled" : ""} title="${np.srcDate ? `${np.srcDate} の日報と突き合わせ済みです` : `この日より前で、行のある一番近い日の日報を読み、この日報に無い行だけを足します（最大2か月前まで。時間は 0:00、備考は引き継ぎ）`}">前回の日報から不足分を足す</button>${ts ?`<button id="np-apply">下書きを実績に入れる</button><input type="text" id="np-target" size="5" value="${esc(np.target)}" placeholder="8:00" title="実績の合計をこの時間に合わせて、下書きの割合で配る（空なら下書きのまま）"><span>に合わせて配る${np.data.work_total ? `（HRMOS の総労働時間 ${esc(np.data.work_total)}）` : "（総労働時間は退勤の打刻後に入ります）"}</span>` : ""}</div>`,
     (np.data.rows.length ? head + rowsOf((r) => r.kind === "cur") : `<div class="empty">まだ行がありません</div>`)
       + `<div class="np-row sum" id="np-sum"></div>`,  // 予定・実績の合計（npTotals で入れる）
     np.mode === "next" || npCopied()
@@ -1909,6 +1939,16 @@ $("np-body").addEventListener("change", (e) => {
 $("np-body").addEventListener("click", (e) => {
   const del = e.target.closest("button.np-del");
   if (del) { const r = np.rows[Number(del.closest(".np-row").dataset.i)]; r.del = !r.del; npRender(); return; }
+  const mv = e.target.closest(".np-move button");
+  if (mv) {
+    const i = Number(mv.closest(".np-row").dataset.i), idx = npCurIdx(), k = idx.indexOf(i);
+    const up = mv.classList.contains("np-up"), j = idx[up ? k - 1 : k + 1];
+    if (j == null) return;
+    const at = npMove(i, j, !up);  // 続けて押せるように、動かした行の同じボタンにフォーカスを戻す
+    const btn = document.querySelector(`#np-body .np-row[data-i="${at}"] .np-${up ? "up" : "down"}`);
+    if (btn && !btn.disabled) btn.focus();
+    return;
+  }
   const d = e.target.closest("button.np-draft");
   if (d) { np.rows[Number(d.closest(".np-row").dataset.i)].result = npFmt(Number(d.dataset.draft)); npRender(); return; }
   if (e.target.id === "np-prev") { npCopyPrev(); return; }
@@ -1959,6 +1999,7 @@ $("np-save").onclick = async () => {
   const body = { date: np.date,
     deletes: np.rows.filter((r) => r.kind === "cur" && r.del).map((r) => r.id),
     updates: np.rows.filter((r) => r.kind === "cur" && !r.del).map((r) => ({ id: r.id, plan: r.plan.trim(), result: r.result.trim(), notes: r.notes })),
+    order: np.rows.filter((r) => r.kind === "cur" && !r.del).map((r) => r.id),  // 画面の並び順（いまと同じならサーバーは何もしない）
     adds: np.rows.filter((r) => r.kind === "add" && r.checked).map((r) => ({ service_name: r.name.trim(), plan: r.plan.trim(), result: r.result.trim(), notes: r.notes, ...(r.ids || {}) })) };
   const post = async (b) => (await fetch("/api/nippo", { method: "POST", headers: { "Content-Type": "application/json", "X-Dashboard": "1" }, body: JSON.stringify(b) })).json();
   np.busy = true; np.msg = "送る内容を確かめています…"; np.msgCls = ""; npRender();
@@ -1975,6 +2016,46 @@ $("np-save").onclick = async () => {
   } catch (e) { np.msg = e.message || "Mac に接続できません"; np.msgCls = "err"; }
   np.busy = false; npRender();
 };
+// ドラッグで並べ替え: つまみ（△▽ の列）を押したときだけ行をドラッグできるようにする（入力欄の文字選択を邪魔しない）
+let npDrag = null;
+// Mac の Chrome はツールチップ（title）を別ウィンドウで出し、ドラッグ中もそこに残る。その上ではドロップ先が取れないので、
+// つかんだ時点で日報の中の title を外し（出ているツールチップも消える）、ドラッグが終わったら戻す
+function npTitles(on) {
+  if (on) document.querySelectorAll("#np-body [data-np-title]").forEach((x) => { x.title = x.dataset.npTitle; delete x.dataset.npTitle; });
+  else document.querySelectorAll("#np-body [title]").forEach((x) => { x.dataset.npTitle = x.title; x.removeAttribute("title"); });
+}
+$("np-body").addEventListener("mousedown", (e) => {
+  // 登録済みの行は、入力欄・ボタン・リンク以外のどこをつかんでもドラッグできる（つまみの △▽ の列は、ボタンの上からでもつかめる）
+  const row = e.target.closest(".np-row.cur"); if (!row || e.button !== 0) return;
+  if (e.target.closest(".np-move") || !e.target.closest("input, textarea, button, a, select, label")) { row.draggable = true; npTitles(false); }
+});
+$("np-body").addEventListener("dragstart", (e) => {
+  const row = e.target.closest && e.target.closest(".np-row[draggable=true]"); if (!row) return;
+  npDrag = Number(row.dataset.i); row.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "");
+});
+const npDropClear = () => document.querySelectorAll("#np-body .drop-before, #np-body .drop-after").forEach((x) => x.classList.remove("drop-before", "drop-after"));
+const npDropAt = (e) => {
+  const row = e.target.closest && e.target.closest(".np-row[data-i]");
+  if (npDrag == null || !row || np.rows[Number(row.dataset.i)].kind !== "cur") return null;
+  const b = row.getBoundingClientRect();
+  return { row, i: Number(row.dataset.i), after: e.clientY > b.top + b.height / 2 };
+};
+$("np-body").addEventListener("dragover", (e) => {
+  const at = npDropAt(e); if (!at) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = "move";
+  npDropClear(); if (at.i !== npDrag) at.row.classList.add(at.after ? "drop-after" : "drop-before");
+});
+$("np-body").addEventListener("drop", (e) => {
+  const at = npDropAt(e); if (!at) return;
+  e.preventDefault(); const from = npDrag; npDrag = null; npDropClear();
+  npMove(from, at.i, at.after);
+});
+$("np-body").addEventListener("dragend", () => {
+  npDrag = null; npDropClear(); npTitles(true);
+  document.querySelectorAll("#np-body .np-row[draggable=true]").forEach((x) => { x.draggable = false; x.classList.remove("dragging"); });
+});
+document.addEventListener("mouseup", () => { if (npDrag == null) { document.querySelectorAll("#np-body .np-row[draggable=true]").forEach((x) => { x.draggable = false; }); npTitles(true); } });
 ["focusin", "focusout"].forEach((ev) => $("np-body").addEventListener(ev, (e) => {
   if (e.target.tagName === "TEXTAREA") requestAnimationFrame(() => npFit(e.target));
 }));

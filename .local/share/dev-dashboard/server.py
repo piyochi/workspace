@@ -2907,6 +2907,31 @@ def hrmos_day(day_id):
     return {"token": p.token, "rows": out, "page_date": p.date}
 
 
+def hrmos_reorder(day_id, ids):
+    """日報の行の並び順を変える。ids = 全行の id を並べたい順に。
+    HRMOS の日報の詳細画面の ▲▼ と同じ呼び出し（PUT /reports/reorder_sequence?daily_report_id=… に {行id: 0始まりの順番} を全行分）。
+    編集画面のフォームには順番の項目が無く、並び順はこの呼び出しでしか変えられない。"""
+    import html
+    import urllib.request
+    from urllib.parse import urlencode
+    page = hrmos_get(f"/daily_reports/{day_id}")  # ログインの確認と、送信用の token（ブラウザは meta の csrf-token を送る）
+    m = re.search(r'<meta name="csrf-token" content="([^"]+)"', page)
+    if not m:
+        raise OSError("日報の詳細画面から送信用の token を読めませんでした")
+    shown = re.findall(r'<tr id="(\d+)"', page)
+    if sorted(shown) != sorted(ids):
+        raise OSError("並べる行が HRMOS の行と合いません（画面を取り直してください）")
+    req = urllib.request.Request(f"{HRMOS_BASE}/reports/reorder_sequence?daily_report_id={day_id}",
+                                 data=urlencode([(i, n) for n, i in enumerate(ids)]).encode(), method="PUT",
+                                 headers={"X-CSRF-Token": html.unescape(m.group(1)), "X-Requested-With": "XMLHttpRequest",
+                                          "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "Accept": "*/*"})
+    with hrmos_opener.open(req, timeout=20) as r:
+        r.read()
+    now = [r["id"] for r in hrmos_day(day_id)["rows"]]  # 読み直して、本当にその順になったか確かめる
+    if now != list(ids):
+        raise OSError("並び替えを送りましたが、HRMOS の並びが変わっていません（HRMOS の画面で確かめてください）")
+
+
 def hrmos_time(value, default="00:00"):
     """ "1:5"・"0:0"・"0"（時だけ）・"01:05"・全角を "01:05" の形にそろえる。空なら default。不正なら ValueError。"""
     v = str(value or "").strip().translate(str.maketrans("０１２３４５６７８９：", "0123456789:"))
@@ -3040,13 +3065,34 @@ def nippo_save(req):
                 summary.append(f"追加 {name[:40]}: 予定 {hrmos_time(a.get('plan'))}・実績 {hrmos_time(a.get('result'))}")
                 n += 1
                 changed += 1
-            if not changed:
+            # 並び順（order = 残す行の id を並べたい順に）。いまの並び（削除する行を除く）と違うときだけ並べ替える。
+            # 足す行は HRMOS が末尾に足すので、登録の後に読み直して最後に回す
+            order = [str(x) for x in (req.get("order") or [])]
+            keep = [r["id"] for r in cur["rows"] if r["id"] not in deletes]
+            if order and sorted(order) != sorted(keep):
+                raise ValueError("並び順の行が HRMOS の行と合いません（画面を取り直してください）")
+            reorder = bool(order) and order != keep
+            if reorder:
+                summary.append("並び替え: " + " → ".join(known[i]["service_name"][:20] for i in order))
+            if not changed and not reorder:
                 return {"ok": True, "changed": 0, "summary": [], "message": "変更はありません"}, 200
             if req.get("dry"):
-                return {"dry": True, "changed": changed, "sent_rows": n, "summary": summary, "fields": [[k, v] for k, v in data if k != "authenticity_token"]}, 200
-            _, page = _hrmos_open(f"/daily_reports/{day_id}", data)
-            # 削除を頼んだ行が本当に消えたかを読み直して確かめる
-            left = [r["service_name"][:40] for r in hrmos_day(day_id)["rows"] if r["id"] in deletes] if deletes and "登録が完了しました" in page else []
+                return {"dry": True, "changed": changed + reorder, "sent_rows": n, "summary": summary, "fields": [[k, v] for k, v in data if k != "authenticity_token"]}, 200
+            left = []
+            if changed:
+                _, page = _hrmos_open(f"/daily_reports/{day_id}", data)
+                # 削除を頼んだ行が本当に消えたかを読み直して確かめる
+                left = [r["service_name"][:40] for r in hrmos_day(day_id)["rows"] if r["id"] in deletes] if deletes and "登録が完了しました" in page else []
+            else:
+                page = "登録が完了しました"  # 並び替えだけ（行の内容は送らない）
+            if reorder and "登録が完了しました" in page and not left:
+                try:
+                    now = [r["id"] for r in hrmos_day(day_id)["rows"]]
+                    want = [i for i in order if i in now] + [i for i in now if i not in order]
+                    if want != now:
+                        hrmos_reorder(day_id, want)
+                except Exception as e:
+                    return {"error": ("行の登録はしましたが、" if changed else "") + f"並び替えに失敗しました: {e}"}, 502
     except ValueError as e:
         return {"error": str(e)}, 400
     except Exception as e:
@@ -3054,7 +3100,7 @@ def nippo_save(req):
     if "登録が完了しました" in page and left:
         return {"error": "登録はされましたが、次の行が削除されずに残っています: " + " / ".join(left)}, 409
     if "登録が完了しました" in page:
-        return {"ok": True, "changed": changed, "summary": summary, "url": f"{HRMOS_BASE}/daily_reports/{day_id}"}, 200
+        return {"ok": True, "changed": changed + reorder, "summary": summary, "url": f"{HRMOS_BASE}/daily_reports/{day_id}"}, 200
     errs = re.findall(r"\d+行目：[^<\n]+", page) or (["エラーが発生しました。管理者にお問合せください。"] if "エラーが発生しました" in page else [])
     return {"error": "HRMOS が登録を受け付けませんでした: " + (" / ".join(errs) if errs else "理由は画面から読み取れませんでした（HRMOS の画面で確かめてください）")}, 409
 
