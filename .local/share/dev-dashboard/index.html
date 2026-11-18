@@ -48,6 +48,7 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -1
   white-space: nowrap; cursor: pointer; font: inherit; background: var(--card); color: var(--text); }
 .fc:hover { border-color: var(--accent); }
 .fc b { color: var(--accent); font-variant-numeric: tabular-nums; }
+.fc b:hover { text-decoration: underline; }  /* 番号の部分は Redmine を開く */
 .fc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--off); flex: none; }
 .fc-dot.busy { background: #f97316; } .fc-dot.wait { background: var(--bad); } .fc-dot.idle { background: var(--ok); } .fc-dot.none { background: transparent; border: 1px solid var(--line); }
 .fc-stage { color: var(--muted); }
@@ -893,19 +894,48 @@ async function refreshFocus() {
     if (Array.isArray(d.items)) { focusItems = d.items; renderFocus(); }
   } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
 }
+// Redmine を開く。ほかのリンクと同じく Edge のグループで開く処理（edgeOpen）を通す
+function focusOpenRedmine(b) {
+  if (!b.dataset.url) return;
+  const o = document.createElement("a");
+  o.href = b.dataset.url; o.target = "_blank"; o.rel = "noopener noreferrer"; o.hidden = true;
+  document.body.append(o); o.click(); o.remove();
+}
+// 番号の部分・⌘（Windows は Ctrl）を押しながらのクリック・Redmine 欄に無いチケットは Redmine を開き、それ以外は Redmine 欄の行へ移動する
 $("focus").addEventListener("click", (e) => {
   const b = e.target.closest(".fc"); if (!b) return;
+  if (e.metaKey || e.ctrlKey || e.target.closest(".fc b")) { focusOpenRedmine(b); return; }
   const row = document.querySelector(`#redmine .rm-row[data-id="${b.dataset.id}"]`);
-  if (!row) {  // Redmine 欄に無いチケットは Redmine を開く。ほかのリンクと同じく Edge のグループで開く処理（edgeOpen）を通す
-    if (!b.dataset.url) return;
-    const o = document.createElement("a");
-    o.href = b.dataset.url; o.target = "_blank"; o.rel = "noopener noreferrer"; o.hidden = true;
-    document.body.append(o); o.click(); o.remove();
+  if (!row) {  // 欄は先頭 10 件だけ。外れたものは「もっと見る」の画面で行を開き、そこにも無ければ Redmine を開く
+    const id = b.dataset.id, has = (l) => (l || []).some((i) => String(i.id) === id);
+    if (!rmData || !(has(rmData.issues) || has(rmData.today_extra))) { focusOpenRedmine(b); return; }
+    $("rm-cat").value = has(rmData.issues) ? "" : "s:today"; $("rm-q").value = "";
+    openRm();
+    const r = $("rm-all").querySelector(`.rm-row[data-id="${id}"]`);
+    if (!r) { closeRm(); focusOpenRedmine(b); return; }
+    if (!r.classList.contains("open") && !r.querySelector(".rm-tg.none")) r.querySelector(".rm-tg").click();
+    $("rm-all").querySelector(`.rm-row[data-id="${id}"]`)?.scrollIntoView({ block: "start" });
     return;
   }
   const sec = document.querySelector('details.sec[data-key="redmine"]'); if (sec) sec.open = true;
   if (!row.classList.contains("open") && !row.querySelector(".rm-tg.none")) row.querySelector(".rm-tg").click();
-  window.scrollTo({ top: row.getBoundingClientRect().top + window.scrollY - document.querySelector("header").offsetHeight - 8, behavior: "smooth" });
+  // 下へ移動するとヘッダーに小さい版（tmux 等）が出て高さが変わるので、移動し終えたら測り直して行の見出しがヘッダーに隠れないよう合わせる
+  // 小さい版（#mini-wrap）はヘッダーの下にはみ出して出る（position: absolute）ので、出ているときはその下端を使う
+  const headBottom = () => {
+    const h = document.querySelector("header").getBoundingClientRect().bottom, m = $("mini-wrap").getBoundingClientRect();
+    return m.height ? Math.max(h, m.bottom) : h;
+  };
+  const gap = () => row.getBoundingClientRect().top - headBottom() - 8;
+  window.scrollBy({ top: gap(), behavior: "smooth" });
+  let fixed = false;
+  const fix = () => { if (fixed) return; fixed = true; window.removeEventListener("scrollend", fix); const d = gap(); if (Math.abs(d) > 1) window.scrollBy({ top: d }); };
+  window.addEventListener("scrollend", fix); setTimeout(fix, 1200);
+});
+// ホイールクリックも Redmine を開く（button は click が来ないので auxclick で受ける。mousedown で自動スクロールを止める）
+$("focus").addEventListener("mousedown", (e) => { if (e.button === 1 && e.target.closest(".fc")) e.preventDefault(); });
+$("focus").addEventListener("auxclick", (e) => {
+  const b = e.button === 1 && e.target.closest(".fc"); if (!b) return;
+  e.preventDefault(); focusOpenRedmine(b);
 });
 refreshFocus();
 setInterval(refreshFocus, 30000);
