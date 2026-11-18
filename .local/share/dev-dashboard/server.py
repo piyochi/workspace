@@ -2503,6 +2503,37 @@ def _today_touch(work, tk, env, ts, prompt=None, strict=False):
         w["prompts"] = (w["prompts"] + [{"ts": ts, "text": prompt}])[-TODAY_PROMPTS:]
 
 
+# コマンドの書き出しが tmux-title のものだけ（Claude は Bash の command の先頭、Codex は JSON の引用符の直後）。スクリプトの中の文字列などは拾わない
+TITLE_CMD = re.compile(r"(?:^\s*|(?<=\"))(?:\S*/)?tmux-title\s+(?:(ticket)\s+((?:#?1\d{4}(?!\d)[\s,]*)+)|(set)\s+[\\\"']*\s*((?:[#＃]1\d{4}(?!\d)[\s,]*)*)|(clear)\b)")
+
+
+def title_cmd_tickets(line, kind):
+    """その行が AI の実行した ~/bin/tmux-title なら、付けた番号の一覧（clear は []）。それ以外は None。
+
+    スキルの説明（入力側に載る）の例文を拾わないよう、Claude は assistant の Bash の tool_use、Codex は function_call の行だけを見る。
+    """
+    if "tmux-title" not in line:
+        return None
+    if kind == "claude":
+        if '"tool_use"' not in line or '"assistant"' not in line:
+            return None
+        try:
+            items = (json.loads(line).get("message") or {}).get("content") or []
+        except ValueError:
+            return None
+        cmds = [str((x.get("input") or {}).get("command", "")) for x in items
+                if isinstance(x, dict) and x.get("type") == "tool_use" and x.get("name") == "Bash"]
+    else:
+        if '"function_call"' not in line:
+            return None
+        cmds = [line]
+    found = None
+    for cmd in cmds:
+        for m in (TITLE_CMD.finditer(cmd) if kind != "claude" else [TITLE_CMD.match(cmd)] if TITLE_CMD.match(cmd) else []):
+            found = [] if m.group(5) else list(dict.fromkeys(re.findall(r"1\d{4}", m.group(2) or m.group(4) or "")))
+    return found
+
+
 def scan_today_once():
     start = day_start()
     with today_lock:
@@ -2553,11 +2584,21 @@ def scan_today_once():
                 new = session_ticket(prompt, wt)
                 if new:
                     st["cur"], st["strict"] = new, bool(wt)
+            # ct-tmux-title で枠に付けた番号は、以降の入力を全部その番号の作業として数える（番号を書かずに進めた作業も残すため）
+            titled = title_cmd_tickets(line, kind)
+            if titled is not None:
+                st["label"] = titled if ts >= start else []  # 前の日に付けたタイトルは今日の作業に数えない
             env = env_of(st["cwd"])
             if ts >= start and env in ENV_DIRS.values():
                 ticks.append((int(ts // 60), st["cur"]))
             if ts >= start and st["cur"] and env in ENV_DIRS.values():
                 found.append((st["cur"], env, ts, snippet(prompt) if prompt else None, st.get("strict", False)))
+            if ts >= start and env in ENV_DIRS.values() and (prompt or titled):
+                for tk in st.get("label") or []:
+                    if tk != st["cur"]:
+                        found.append((tk, env, ts, snippet(prompt) if prompt else None, True))
+                    elif not st.get("strict"):
+                        found.append((tk, env, ts, None, True))  # 番号は同じでも、話に出ただけの扱いを作業に上げる
         if found or ticks:
             with today_lock:
                 m = mins.setdefault(path, {})
