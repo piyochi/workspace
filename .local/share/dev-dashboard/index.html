@@ -415,7 +415,7 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
 .bpr.open { color: #16a34a; } .bpr.draft { color: var(--muted); } .bpr.merged { color: #8b5cf6; } .bpr.closed { color: #dc2626; text-decoration: line-through; }
 .rm-bk { text-decoration: underline dotted; cursor: help; }
 .rm-cur { color: var(--text); font-weight: 700; }
-.rm-full { margin-left: auto; flex-shrink: 0; font-size: 11px; padding: 1px 6px; }
+.rm-full { flex-shrink: 0; font-size: 11px; padding: 1px 5px; line-height: 1.2; }  /* 件名を隠さないようアイコンだけ。説明はマウスを乗せると出る */
 .rm-wait { color: var(--bad); font-weight: 700; }
 .rm-wait.done { color: var(--muted); font-weight: 400; text-decoration: line-through; }
 .rm-rel a, .rm-wait a { color: inherit; }
@@ -1569,7 +1569,7 @@ function rmRows(items, opts = {}) {
         <button class="rm-copy" data-copy="${esc(`#${i.id}: ${i.subject}`)}" data-url="${esc(i.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button>
         <button class="rm-memo" data-memo="${esc(`#${i.id}: ${i.subject}`)}" title="「#番号: タイトル -----」を、メモのチケットの見出しの一番上に足す">✎</button>
         <button class="rm-send" data-ticket="${i.id}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button>
-        ${!i.history.length && !full ? `<button class="rm-full" data-ticket="${i.id}" title="直近${rmData ? rmData.history_days : 30}日に見つからなかったので、残っている Claude・Codex の記録全部と各環境の git のコミットから探す">全期間で調べる</button>` : ""}</div>
+        ${!i.history.length && !full ? `<button class="rm-full" data-ticket="${i.id}" title="全期間で調べる: 直近${rmData ? rmData.history_days : 30}日に見つからなかったので、残っている Claude・Codex の記録全部と各環境の git のコミットから探す" aria-label="全期間で調べる">🔍</button>` : ""}</div>
       ${info.length ? `<div class="rm-info">${info.join("")}</div>` : ""}
       ${opts.todayLog && td ? todayLogHtml(td, i.id) : ""}
     </div>`;
