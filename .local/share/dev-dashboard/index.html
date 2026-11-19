@@ -59,8 +59,17 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -1
 .fc.closed { background: var(--bg); }  /* tmux の枠を閉じた、今日作業したチケット */
 /* 対応中のチップにマウスを乗せたときの吹き出し */
 .fc-pop { position: fixed; z-index: 40; width: min(460px, calc(100vw - 24px)); background: var(--card); color: var(--text);
-  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 10px 12px; font-size: 12px; line-height: 1.5; }
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 10px 12px; font-size: 12px; line-height: 1.5;
+  max-height: calc(100vh - 16px); overflow-y: auto; }
 .fc-pop[hidden] { display: none; }
+.fc-pop .fc-when { color: var(--muted); font-size: 11px; margin-left: 6px; white-space: nowrap; }
+.fc-pop .fc-art { display: flex; align-items: baseline; min-width: 0; }
+.fc-pop .fc-art a { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-pop .fc-art .fc-when { flex: none; }
+.fc-pop .fc-more > summary { cursor: pointer; color: var(--muted); font-size: 11px; list-style: none; }
+.fc-pop .fc-more > summary::-webkit-details-marker { display: none; }
+.fc-pop .fc-more > summary::before { content: "▸ "; }
+.fc-pop .fc-more[open] > summary::before { content: "▾ "; }
 .fc-pop-title { font-weight: 700; margin-bottom: 6px; word-break: break-all; }
 .fc-pop-title { display: flex; gap: 6px; align-items: flex-start; }
 .fc-pop-title > span { flex: 1; min-width: 0; }
@@ -399,6 +408,13 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
 .rm-st-edit button { font-size: 10px; padding: 0 4px; line-height: 16px; }
 .rm-copy { flex: none; font-size: 11px; padding: 0 5px; line-height: 16px; }
 .rm-memo { flex: none; font-size: 11px; padding: 0 5px; line-height: 16px; }
+.rm-memo.done { color: var(--muted); }
+/* 「済」から移動したまとまり: 3 秒はっきり色を付けて枠で囲み、そのあと 0.6 秒で消す */
+@keyframes mv-flash {
+  0%, 83% { background: color-mix(in srgb, var(--warn) 22%, var(--card)); box-shadow: 0 0 0 2px var(--warn); }
+  100% { background: transparent; box-shadow: 0 0 0 2px transparent; }
+}
+.mv-flash { animation: mv-flash 3.6s ease-out; border-radius: 6px; }
 /* Redmine の行は普段は見出しの1行だけ。▸ で状況（セッション・ブランチ・履歴など）を開く */
 .rm-tg { flex: none; font-size: 10px; padding: 0 4px; line-height: 16px; background: none; border: 0; color: var(--muted); cursor: pointer; }
 .rm-tg::before { content: "▸"; display: inline-block; transition: transform .15s; }
@@ -747,8 +763,9 @@ function labelNums(label) {
   const m = /^\s*((?:[#＃]\d{4,6}(?!\d)[\s,、]*)+)/.exec(label || "");
   return m ? [...new Set([...m[1].matchAll(/[#＃](\d{4,6})/g)].map((x) => x[1]))] : [];
 }
-// 文字の中の「#番号」を Redmine のリンクにする（html は esc 済みのもの）
-const paneTicketLink = (html) => html.replace(/#(\d{4,6})(?!\d)/g, (t) => { const u = npIssueUrl(t); return u ? `<a class="ticket" href="${esc(u)}" target="_blank" rel="noopener noreferrer">${t}</a>` : t; });
+// 文字の中の「#番号」を Redmine のリンクにする（html は esc 済みのもの）。
+// data-fc でマウスを乗せるとチケットの詳細の吹き出しを出す（title="" で枠のネイティブの説明を重ねて出さない）
+const paneTicketLink = (html) => html.replace(/#(\d{4,6})(?!\d)/g, (t, n) => { const u = npIssueUrl(t); return u ? `<a class="ticket" href="${esc(u)}" target="_blank" rel="noopener noreferrer" data-fc="${n}" title="">${t}</a>` : `<span data-fc="${n}">${t}</span>`; });
 // 一覧のリンク（「#番号」）を押したときは、枠の画面を開かずにリンクだけ開く
 $("panes").addEventListener("click", (e) => { if (e.target.closest("a")) e.stopPropagation(); }, true);
 
@@ -806,25 +823,40 @@ function focusPopHtml(i, here) {
       + `${d ? `・<span class="${d[1]}">${d[0]}</span>` : ""}${(p.requests || []).length ? `・依頼中 ${esc(p.requests.join("、"))}` : ""}${rv ? `<span class="why">${rv}</span>` : ""}</div>`;
   }).join("");
   const req = i.review_requested.map((r) => `<div>${ext(r.url, `${r.repo === "ticket_v2" ? "front" : "api"}#${r.number}`)} ${esc(r.author)}<span class="why">${esc(r.title)}</span></div>`).join("");
+  // 会話（Claude・Codex の記録）に出た、そのチケットの PR とアーティファクトの URL（新しい順）。上の PR 行に出ているものは除く
+  const prLinks = (i.pr_links || []).map((p) => `<div>${ext(p.url, `${p.repo === "ticket_v2" ? "front" : p.repo === "ticket_v2_api" ? "api" : p.repo}#${p.number}`)}<span class="fc-when">${fcDate(p.ts * 1000)} の会話</span></div>`).join("");
+  // アーティファクトは1件1行（長いタイトルは「…」）。2件以上なら最新だけ出し、残りは「他 N 件」で開閉する
+  const artLine = (a) => `<div class="fc-art"><a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" title="${esc([a.title, a.url].filter(Boolean).join("\n"))}">${esc(a.title || a.url.replace(/^https:\/\//, ""))}</a><span class="fc-when">${fcDate(a.ts * 1000)}</span></div>`;
+  const artList = i.artifacts || [];
+  const arts = !artList.length ? "" : artLine(artList[0]) + (artList.length > 1
+    ? `<details class="fc-more"><summary>他 ${artList.length - 1} 件</summary>${artList.slice(1).map(artLine).join("")}</details>` : "");
   return `<div class="fc-pop-title"><span>${i.url ? ext(i.url, `#${i.id}`) : `#${i.id}`}${esc(i.subject || "（件名なし）")}</span>`
       + `<button type="button" class="fc-pop-re" data-re="${esc(i.id)}" title="覚えている分を使わずに、Redmine・GitHub・git から取り直す">↻</button></div>`
     + (tags ? `<div class="fc-pop-tags">${tags}</div>` : "")
-    + `<dl>${row("tmux", slots)}${row("段階", stage)}${row("担当", ball)}${row("最新コメント", note)}${row("作業", work)}${row("ブランチ", brs)}${row("PR", prs)}${row("レビュー依頼", req)}</dl>`
+    + `<dl>${row("tmux", slots)}${row("段階", stage)}${row("担当", ball)}${row("最新コメント", note)}${row("作業", work)}${row("ブランチ", brs)}${row("PR", prs)}${row("レビュー依頼", req)}${row("PR（会話）", prLinks)}${row("アーティファクト", arts)}</dl>`
     + (here ? "" : `<div class="fc-pop-foot">押すと Redmine 欄のその行を開きます（無ければ Redmine を開きます）</div>`);
 }
 // チップに乗せたら吹き出しを出す。吹き出しの上にマウスを移しても消さない（中のリンクを押せるように）
 let fcPopTimer = 0, fcPopFor = null;
 // Redmine 欄・メモの見出しの分は、乗せたチケットだけサーバーに聞く（サーバーが Redmine 3 分・git 10 分覚える）。ここでも 1 分覚える
 const fcCache = {};
+let fcPopRect = null;  // 最後に吹き出しを出した要素の位置（tmux 欄は毎秒描き直すので、要素が消えても置き直せるように）
 function placeFocusPop(el) {
   const pop = $("fc-pop");
-  const r = el.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  const r = el && document.contains(el) ? (fcPopRect = el.getBoundingClientRect()) : fcPopRect;
+  if (!r) return;
+  const w = pop.offsetWidth, h = pop.offsetHeight;
   const left = Math.max(12, Math.min(r.left, window.innerWidth - w - 12));
-  const top = r.bottom + 6 + h > window.innerHeight - 8 ? Math.max(8, r.top - h - 6) : r.bottom + 6;
+  // 要素との隙間は 2px（マウスを吹き出しへ移す途中で切れないように）。上下どちらにも収まらなければ画面の下端に合わせる
+  const GAP = 2;
+  const want = r.bottom + GAP + h > window.innerHeight - 8 ? r.top - h - GAP : r.bottom + GAP;
+  const top = Math.max(8, Math.min(want, window.innerHeight - h - 8));
   pop.style.left = `${left}px`; pop.style.top = `${top}px`;
 }
 function showFocusPop(el) {
   const id = el.dataset.id || el.dataset.fc; if (!id) return;
+  // tmux 欄は約1秒ごとに描き直す。待つ間に入れ替わったら、マウスが乗っている同じ番号の要素に出す（無ければ出さない）
+  if (!document.contains(el)) { el = document.querySelector(`[data-fc="${CSS.escape(id)}"]:hover`); if (!el) return; }
   clearTimeout(fcPopTimer);
   fcPopFor = el;
   const pop = $("fc-pop");
@@ -837,7 +869,11 @@ function showFocusPop(el) {
     fetch(`/api/focus?ticket=${encodeURIComponent(id)}`).then((r) => r.json()).then((d) => {
       const it = d.items && d.items[0]; if (!it) return;
       fcCache[id] = { at: Date.now(), item: it };
-      if (fcPopFor === el && !pop.hidden) { pop.innerHTML = focusPopHtml(it, true); placeFocusPop(el); }
+      // tmux 欄は数秒ごとに描き直すので、要素ではなく番号で「まだ同じチケットの吹き出しか」を見る（入れ替わった要素なら位置はそのまま）
+      if (fcPopFor && (fcPopFor.dataset.id || fcPopFor.dataset.fc) === id && !pop.hidden) {
+        pop.innerHTML = focusPopHtml(it, true);
+        if (document.contains(fcPopFor)) placeFocusPop(fcPopFor);
+      }
     }).catch(() => {});
   }
   pop.hidden = false;
@@ -859,7 +895,7 @@ async function refetchFocus(id, btn) {
   } catch (e) { btn.disabled = false; btn.textContent = "↻ 失敗"; }
 }
 $("fc-pop").addEventListener("click", (e) => { const b = e.target.closest("button.fc-pop-re"); if (b) refetchFocus(b.dataset.re, b); });
-const hideFocusPop = () => { clearTimeout(fcPopTimer); fcPopTimer = setTimeout(() => { $("fc-pop").hidden = true; }, 150); };
+const hideFocusPop = () => { clearTimeout(fcPopTimer); fcPopTimer = setTimeout(() => { $("fc-pop").hidden = true; }, 300); };  // 吹き出しへ移るまでの猶予
 // 対応中のチップ（.fc）と、Redmine 欄の件名・メモの見出し（[data-fc]）。少し止めてから出す（通り過ぎただけで取りに行かない）
 let fcHoverTimer = 0;
 document.addEventListener("mouseover", (e) => {
@@ -873,6 +909,8 @@ document.addEventListener("mouseout", (e) => {
   if (c && !c.contains(e.relatedTarget)) { clearTimeout(fcHoverTimer); hideFocusPop(); }
 });
 $("fc-pop").addEventListener("mouseenter", () => clearTimeout(fcPopTimer));
+// 「他 N 件」を開閉したら高さが変わるので、画面に収まる位置に置き直す（toggle は泡立たないので capture で拾う）
+$("fc-pop").addEventListener("toggle", () => placeFocusPop(fcPopFor), true);
 $("fc-pop").addEventListener("mouseleave", hideFocusPop);
 window.addEventListener("scroll", () => { $("fc-pop").hidden = true; }, { passive: true });
 let focusOpen = (() => { try { return localStorage.getItem("dd_focus_open") === "1"; } catch (e) { return false; } })();
@@ -1303,14 +1341,31 @@ document.addEventListener("click", async (e) => {
   b.textContent = ok ? "✓" : "✗"; b.title = ok ? "コピーしました" : "コピーできませんでした";
   setTimeout(() => { b.textContent = "⧉"; b.title = "「#番号: タイトル」をリンク付きでコピー"; }, 1500);
 });
-// Redmine の行: ✎ で「#番号: タイトル -----」（見出し）をメモのチケットの見出しの一番上に足す（すぐ保存する。同じ番号がもうメモにあれば足さない）
+// Redmine の行: ✎ で「#番号: タイトル -----」（見出し）をメモのチケットの見出しの一番上に足す（すぐ保存する。同じ番号の見出しがもうメモにあれば足さない）
+// メモに同じ番号の見出しがあるときは、ボタンを「済」にする。済を押すとメモのその見出しへ移動（メモを直したら syncMemoBtns で付け直す）
+const MEMO_BTN_TIP = "「#番号: タイトル -----」を、メモのチケットの見出しの一番上に足す";
+const MEMO_DONE_TIP = "この番号の見出しはもうメモにあります（押すとメモのその見出しへ移動）";
+const memoBtnHtml = (i) => {
+  const has = window.__memoHas && window.__memoHas(String(i.id));
+  return `<button class="rm-memo${has ? " done" : ""}" data-n="${i.id}" data-memo="${esc(`#${i.id}: ${i.subject}`)}" title="${has ? MEMO_DONE_TIP : MEMO_BTN_TIP}">${has ? "済" : "✎"}</button>`;
+};
+function syncMemoBtns() {
+  if (!window.__memoHas) return;
+  document.querySelectorAll("button.rm-memo[data-n]").forEach((b) => {
+    const has = window.__memoHas(b.dataset.n);
+    if (b.classList.contains("done") === has) return;
+    b.classList.toggle("done", has);
+    b.textContent = has ? "済" : "✎"; b.title = has ? MEMO_DONE_TIP : MEMO_BTN_TIP;
+  });
+}
 document.addEventListener("click", (e) => {
   const b = e.target.closest("button.rm-memo"); if (!b) return;
+  if (b.classList.contains("done")) { if (window.__memoJump) window.__memoJump(b.dataset.n); return; }  // 済: メモのその見出しへ移動
   // 後ろに「 -----」を付けて見出しにする（その下に書いたことを、表示のときに開け閉めできる）
   const r = window.__memoAppend ? window.__memoAppend(`${b.dataset.memo} -----`) : "error";
-  b.textContent = r === "added" ? "✓" : r === "exists" ? "済" : "✗";
-  b.title = r === "added" ? "メモに足しました" : r === "exists" ? "この番号はもうメモにあります" : "メモに足せませんでした";
-  setTimeout(() => { b.textContent = "✎"; b.title = "「#番号: タイトル -----」を、メモのチケットの見出しの一番上に足す"; }, 1500);
+  if (r === "added" || r === "exists") { syncMemoBtns(); return; }  // 足したら（もうあれば）「済」にする
+  b.textContent = "✗"; b.title = "メモに足せませんでした";
+  setTimeout(() => { b.textContent = "✎"; b.title = MEMO_BTN_TIP; }, 1500);
 });
 $("modal-back").onclick = (e) => { e.preventDefault(); closePane(); };
 // 外側クリックで閉じるのは、押した所も離した所も外側のときだけ。
@@ -1582,7 +1637,7 @@ function rmRows(items, opts = {}) {
         ${rmStatusHtml(i)}
         <span class="rm-subj" data-fc="${i.id}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${i.id}</a>: ${esc(i.subject)}</span>
         <button class="rm-copy" data-copy="${esc(`#${i.id}: ${i.subject}`)}" data-url="${esc(i.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button>
-        <button class="rm-memo" data-memo="${esc(`#${i.id}: ${i.subject}`)}" title="「#番号: タイトル -----」を、メモのチケットの見出しの一番上に足す">✎</button>
+        ${memoBtnHtml(i)}
         <button class="rm-send" data-ticket="${i.id}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button>
         ${!i.history.length && !full ? `<button class="rm-full" data-ticket="${i.id}" title="全期間で調べる: 直近${rmData ? rmData.history_days : 30}日に見つからなかったので、残っている Claude・Codex の記録全部と各環境の git のコミットから探す" aria-label="全期間で調べる">🔍</button>` : ""}</div>
       ${info.length ? `<div class="rm-info">${info.join("")}</div>` : ""}
@@ -1834,9 +1889,10 @@ function npSlackText() {
   rows.forEach((r) => out.push(`　${r.name.trim()}`));
   return out.join("\n");
 }
-// 2つ目の出力: チェックした行の名前だけ（見出し・案件名・先頭の空白なし）
+// 2つ目の出力: チェックした行と、チェックが無くても実績（実時間）が入っている行の名前だけ（見出し・案件名・先頭の空白なし）
+const npHasResult = (r) => (npMin(r.result) || 0) > 0;
 function npSlackPlain() {
-  return npSlackRows().filter((r) => !np.slack.off.has(r.id)).map((r) => r.name.trim()).join("\n");
+  return npSlackRows().filter((r) => !np.slack.off.has(r.id) || npHasResult(r)).map((r) => r.name.trim()).join("\n");
 }
 function npSlackRender() {
   const rows = npSlackRows(), body = $("np-body");
@@ -1845,11 +1901,11 @@ function npSlackRender() {
     <label class="np-sl-title">見出し <input type="text" id="np-sl-title" value="${esc(np.slack.title)}"></label>
     <label class="np-sl-title">案件名 <input type="text" id="np-sl-project" value="${esc(np.slack.project)}" placeholder="空なら出さない"></label>
     <div class="np-group">登録済みの行（${rows.length}）・チェックした行だけ出します <button id="np-sl-all">全部入れる</button><button id="np-sl-none">全部外す</button></div>
-    ${rows.length ? rows.map((r) => `<label class="np-sl-row"><input type="checkbox" data-sl="${esc(String(r.id))}" ${np.slack.off.has(r.id) ? "" : "checked"}><span class="np-sl-main"><span>${esc(r.name)}</span>${(r.notes || "").trim() ? `<span class="np-sl-notes">${esc(r.notes.trim())}</span>` : ""}</span>${r.project ? `<span class="np-sl-sub">${esc(r.project)}</span>` : ""}</label>`).join("")
+    ${rows.length ? rows.map((r) => `<label class="np-sl-row"><input type="checkbox" data-sl="${esc(String(r.id))}" ${np.slack.off.has(r.id) ? "" : "checked"}><span class="np-sl-main"><span>${esc(r.name)}</span>${(r.notes || "").trim() ? `<span class="np-sl-notes">${esc(r.notes.trim())}</span>` : ""}</span>${np.slack.off.has(r.id) && npHasResult(r) ? `<span class="np-sl-sub" title="チェックが無くても、実績が入っているので「名前だけ」には出します">実績あり</span>` : ""}${r.project ? `<span class="np-sl-sub">${esc(r.project)}</span>` : ""}</label>`).join("")
       : `<div class="empty">登録済みの行がありません</div>`}
     <div class="np-group">出力 <button id="np-sl-copy">コピー</button><span id="np-sl-copied" class="np-sl-sub"></span></div>
     <textarea id="np-sl-out" class="np-sl-out" readonly spellcheck="false"></textarea>
-    <div class="np-group">名前だけ（見出し・案件名・先頭の空白なし） <button id="np-sl-copy2">コピー</button><span id="np-sl-copied2" class="np-sl-sub"></span></div>
+    <div class="np-group">名前だけ（チェックした行＋実績が入っている行・見出し・案件名・先頭の空白なし） <button id="np-sl-copy2">コピー</button><span id="np-sl-copied2" class="np-sl-sub"></span></div>
     <textarea id="np-sl-out2" class="np-sl-out" readonly spellcheck="false"></textarea>
   </div>`;
   const out = $("np-sl-out"), out2 = $("np-sl-out2");
@@ -1861,7 +1917,7 @@ function npSlackRender() {
   $("np-sl-title").oninput = (e) => { np.slack.title = e.target.value; update(); };
   $("np-sl-project").oninput = (e) => { np.slack.project = e.target.value; update(); };
   body.querySelectorAll("input[data-sl]").forEach((c) => {
-    c.onchange = () => { const r = rows.find((x) => String(x.id) === c.dataset.sl); if (c.checked) np.slack.off.delete(r.id); else np.slack.off.add(r.id); update(); };
+    c.onchange = () => { const r = rows.find((x) => String(x.id) === c.dataset.sl); if (c.checked) np.slack.off.delete(r.id); else np.slack.off.add(r.id); npSlackRender(); };  // 「実績あり」の印も付け直す
   });
   $("np-sl-all").onclick = () => { np.slack.off.clear(); npSlackRender(); };
   $("np-sl-none").onclick = () => { rows.forEach((r) => np.slack.off.add(r.id)); npSlackRender(); };
@@ -2401,7 +2457,19 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
     while (res.length && res[res.length - 1].type === "line" && !res[res.length - 1].text.trim()) res.pop();
     return res;
   }
-  function renderView() {
+  let memoFlash = null;  // {text: 見出し, at: 色を付け始めた時刻}。「済」から移動したまとまりの色付け（描き直しても続きから付け直す）
+  const FLASH_MS = 3600;
+  function paintFlash() {
+    if (!memoFlash) return;
+    const left = memoFlash.at + FLASH_MS - Date.now();
+    if (left <= 0) { memoFlash = null; return; }
+    const el = [...view.querySelectorAll("[data-mv-head]")].find((x) => x.mvRow && x.mvRow.text === memoFlash.text);
+    if (!el || el.classList.contains("mv-flash")) return;
+    el.style.animationDelay = `-${FLASH_MS - left}ms`;  // 途中から続ける
+    el.classList.add("mv-flash");
+  }
+  function renderView() { renderViewInner(); paintFlash(); syncMemoBtns(); }  // メモが変わったら Redmine 欄の ✎・済 も付け直す
+  function renderViewInner() {
     const all = rows(ta.value);
     const shown = allOpen || memoQ.length ? all : all.slice(0, PREVIEW);
     // 開いた見出し（と直しているまとまり）は、見出しと中身を1つの枠（.mv-group）に入れて、どこまでがそのまとまりか分かるようにする
@@ -2955,10 +3023,31 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
   }
   window.__memoRender = () => { if (!editingAll && !sec) renderView(); };  // まとまりを直している最中は描き直さない（入力が消えるため）  // Redmine 欄を読んだあとに #番号をリンクにし直す
   // Redmine 欄の ✎ から呼ぶ。チケット番号の付いた見出しのうち一番上のものの真上に足して、待たずに保存する
+  // 同じ番号の「#番号 … -----」の見出しがメモにあるか（本文の中で番号に触れているだけのものは数えない）
+  window.__memoHas = (n) => {
+    const re = new RegExp(`[#＃]${n}(?![0-9])`);
+    return ta.value.split("\n").some((l) => { const m = DASHES.exec(l); return m && re.test(m[1].replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))); });
+  };
+  // Redmine 欄の「済」から呼ぶ: その番号の見出しまでスクロールし、まとまりを開いて少しの間目立たせる
+  window.__memoJump = (n) => {
+    const re = new RegExp(`[#＃]${n}(?![0-9])`);
+    const hw = (t) => t.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+    const sec0 = document.querySelector('details.sec[data-key="memo"]'); if (sec0) sec0.open = true;
+    if (editingAll || sec) { view.closest("details")?.scrollIntoView({ behavior: "smooth", block: "start" }); return false; }  // 直している最中は描き直さない
+    const r = rows(ta.value).find((x) => x.type === "head" && re.test(hw(x.text)));
+    if (!r) return false;
+    if (memoQ.length) { memoQ = []; $("memo-q").value = ""; }
+    allOpen = true; openSet.add(r.text); saveOpen(); renderView();
+    const el = [...view.querySelectorAll("[data-mv-head]")].find((x) => x.mvRow && x.mvRow.text === r.text);
+    if (!el) return false;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    memoFlash = { text: r.text, at: Date.now() };  // 3 秒色を付けて、0.6 秒で消す（.mv-flash の animation）
+    el.classList.remove("mv-flash"); el.style.animationDelay = ""; void el.offsetWidth; el.classList.add("mv-flash");
+    return true;
+  };
   window.__memoAppend = (line) => {
     const n = (line.match(/#(\d{4,6})/) || [])[1];
-    const norm = ta.value.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
-    if (n && new RegExp(`[#＃]${n}(?!\\d)`).test(norm)) return "exists";
+    if (n && window.__memoHas(n)) return "exists";
     // 「#番号 … -----」の見出しのうち一番上の真上に入れる（リンク・メモなど番号の無い見出しより下にする）。
     // 番号の付いた見出しが無ければ最後に足す
     const add = n ? [line, ...memoTpl(n)] : [line];  // 見出しのすぐ下に「環境」「ブランチ：…」の2行

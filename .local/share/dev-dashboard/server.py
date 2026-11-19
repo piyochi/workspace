@@ -2304,8 +2304,36 @@ def focus_view(only=None, fresh=False):
                       # 最後に作業した環境の番号（tmux の枠 → 今日作業として扱った入力の最後 → いちばん新しいブランチの順に探す）
                       "env": last_env(sessions.get(n, []), tv.get(n, {}).get("envs", []), brs),
                       "branches": [{"env": b["env"], "repo": b["repo"], "branch": b["branch"]} for b in brs],
-                      "prs": mypr, "review_requested": req_by.get(n, [])})
+                      "prs": mypr, "review_requested": req_by.get(n, []),
+                      **ticket_links(n, {p.get("url", "") for p in mypr} | {r.get("url", "") for r in req_by.get(n, [])})})
     return {"items": items, "pr_at": review_cache["at"]}
+
+
+PR_URL = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/pull/(\d+)")
+ARTIFACT_ID = re.compile(r"^https://claude\.ai/(?:code/)?artifact/([\w-]+)")
+TICKET_LINKS_MAX = 8
+
+
+def ticket_links(n, shown):
+    """会話ログのリンク一覧から、そのチケットのアーティファクトと PR の URL（新しい順）。吹き出しに出す。
+    shown: 吹き出しの PR・レビュー依頼の行に既に出ている PR の URL（重ねて出さない）。"""
+    with links_lock:
+        vs = sorted((v for v in links.values() if v.get("ticket") == n), key=lambda v: -v["ts"])
+    arts, prs, seen = [], [], set(shown)
+    for v in vs:
+        a, p = ARTIFACT_ID.match(v["url"]), PR_URL.match(v["url"])
+        if a and len(arts) < TICKET_LINKS_MAX and a.group(1) not in seen:
+            seen.add(a.group(1))
+            with artifact_lock:
+                info = artifacts["ids"].get(a.group(1)) or {}
+            arts.append({"url": v["url"], "title": info.get("title", ""), "ts": v["ts"]})
+        elif p and len(prs) < TICKET_LINKS_MAX:
+            url = p.group(0)  # /files・#discussion などは PR の URL にまとめる
+            if url in seen:
+                continue
+            seen.add(url)
+            prs.append({"url": url, "repo": p.group(2), "number": int(p.group(3)), "ts": v["ts"]})
+    return {"artifacts": arts, "pr_links": prs}
 
 
 HIST_DAYS = 30
