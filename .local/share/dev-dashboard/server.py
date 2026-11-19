@@ -443,7 +443,7 @@ def _claude_session_info(pane_id):
         st = transcript_cache.setdefault(path, {"offset": 0})
         lines = read_new_lines(path, st)
     except (OSError, ValueError, KeyError):
-        return "", "", False
+        return "", "", False, []  # 通常の戻り値（番号・スキル・スキル完了・番号の一覧）と同じ 4 つ
     counts = st.setdefault("counts", {})
     skills = None
     for line in lines:
