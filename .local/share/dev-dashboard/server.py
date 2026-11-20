@@ -355,7 +355,11 @@ TICKET = re.compile(r"(?<!\d)(\d{5})(?!\d)")
 
 
 SCREEN_TICKET = re.compile(r"#(\d{5})(?!\d)")
-PROMPT_TICKET = re.compile(r"(?<![\d.])#?(1\d{4})(?!\d)")
+# スキルの引数（/ct-redmine 14625 14891）は # が無くても番号とみなす
+PROMPT_TICKET = re.compile(r"(?<![\d.])#?(\d{5})(?!\d)")
+# 依頼文の地の文は「#番号」だけ（貼ったメールの「17767件」などを拾わない）
+MENTION_TICKET = re.compile(r"[#＃](\d{5})(?!\d)")
+REDMINE_MISSING = set()  # Redmine に問い合わせて見つからなかった番号（今日の作業・日報の候補から外す）
 transcript_lock = threading.RLock()  # 画面の更新と Redmine 欄が同時に読むと、片方が読み進めた分をもう片方が見落とす
 transcript_cache = {}  # transcript_path -> {"offset", "counts"}（追記分だけ読む）
 
@@ -453,7 +457,7 @@ def _claude_session_info(pane_id):
             except ValueError:
                 continue
             text = prompt_text(entry)
-            for n in PROMPT_TICKET.findall(text):
+            for n in MENTION_TICKET.findall(text):
                 counts[n] = counts.get(n, 0) + 1
             tks = claude_work_tickets(entry)
             if tks:
@@ -515,6 +519,15 @@ def _codex_skill(tty, kinds_pids):
     except OSError:
         return st.get("skill", ""), st.get("skill_done", False)
     for line in lines:
+        if '"token_count"' in line and '"model_context_window"' in line:  # 会話の大きさ（tmux 欄の context %）
+            try:
+                info = (json.loads(line).get("payload") or {}).get("info") or {}
+                last, size = info.get("last_token_usage") or {}, info.get("model_context_window") or 0
+                if size:
+                    st["ctx"] = {"used": int(last.get("total_tokens") or 0), "size": int(size)}
+            except (ValueError, TypeError, AttributeError):
+                pass
+            continue
         # 区切り（task_complete）の最後の返答が質問でなければ、スキルは終わったとみなす（Claude と同じ）
         if '"task_complete"' in line and st.get("skill") and not st.get("skill_done"):
             try:
@@ -661,6 +674,31 @@ def label_tickets(label):
     return list(dict.fromkeys(re.findall(r"[#＃](\d{4,6})", m.group(1)))) if m else []
 
 
+def claude_context(pane_id):
+    """Claude の枠の会話の大きさ {used, size, pct}。statusline.py が cache/pane-<id>.json に残した context_window を読む。"""
+    try:
+        with open(os.path.join(CACHE, f"pane-{pane_id.lstrip('%')}.json")) as f:
+            cw = json.load(f).get("context_window") or {}
+        u, size = cw.get("current_usage") or {}, int(cw.get("context_window_size") or 0)
+    except (OSError, ValueError, TypeError):
+        return None
+    if not size:
+        return None
+    used = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+    pct = cw.get("used_percentage")
+    return {"used": used, "size": size, "pct": round(pct if isinstance(pct, (int, float)) else used * 100 / size)}
+
+
+def codex_context(tty, kinds_pids):
+    """Codex の枠の会話の大きさ {used, size, pct}。記録ファイルの直近の token_count（codex_skill が読む）から。"""
+    pid = kinds_pids.get(tty, {}).get("codex")
+    with transcript_lock:
+        c = (transcript_cache.get(codex_rollouts.get(pid) or "") or {}).get("ctx") if pid else None
+    if not c:
+        return None
+    return {**c, "pct": round(c["used"] * 100 / c["size"])}
+
+
 def ai_panes():
     """tmuxp（ticket_v2_project）の monitor タブの [1]〜[12]（Claude / Codex）の稼働状態。
 
@@ -723,10 +761,11 @@ def ai_panes():
         elif state != "stopped" and env_slots.get(tty.removeprefix("/dev/")):
             link = {"slots": [int(env_slots[tty.removeprefix("/dev/")])], "from": "codex_slot"}
         subagents = running_subagents(pane_id) if kind == "claude" and state != "stopped" else 0
+        ctx = None if state == "stopped" else (claude_context(pane_id) if kind == "claude" else codex_context(tty.removeprefix("/dev/"), kinds))
         slots[n] = {"slot": n, "pane": pane_id, "env": env, "kind": kind, "slot_kind": slot_kind, "state": state, "task": task, "ticket": ticket,
                     "tickets": tickets,
                     "label": label,
-                    "subagents": subagents,
+                    "subagents": subagents, "ctx": ctx,
                     "skill": skill, "skill_done": skill_done, "link": link,
                     "ticket_from": "label" if label_ticket else ("title" if m and ticket == m.group(1) and not session_ticket else ("session" if ticket else ""))}
     return {"running": True, "slots": [slots[k] for k in sorted(slots)]}
@@ -1174,13 +1213,13 @@ def env_of(cwd):
     return os.path.basename(cwd or "") or "?"
 
 
-LINE_TICKET = re.compile(r"#(1\d{4})(?!\d)|/issues/(1\d{4})(?!\d)")
+LINE_TICKET = re.compile(r"#(\d{5})(?!\d)|/issues/(\d{5})(?!\d)")
 
 
-ONLY_TICKET = re.compile(r"\s*(?:スキル[:：]\s*\S+\s*)?#?(1\d{4})\s*")
+ONLY_TICKET = re.compile(r"\s*(?:スキル[:：]\s*\S+\s*)?#?(\d{5})\s*")
 SKILL_ARGS = re.compile(r"\s*[/$]?ct-[\w-]+\s+(.*)", re.S)
 BRANCH_TICKET = re.compile(r"feature/(1\d{4})|(?<![\d/])(1\d{4})_\d")
-HEAD_TICKET = re.compile(r"\s*#(1\d{4})(?!\d)")
+HEAD_TICKET = re.compile(r"\s*[#＃](\d{5})(?!\d)")
 GIT_BRANCH_TICKET = re.compile(r"^(?:feature|design)/(1\d{4})(?!\d)")
 
 
@@ -1224,7 +1263,7 @@ def work_tickets(text, command_args=None):
     else:
         m = SKILL_ARGS.match(re.sub(r"<pasted_content\b.*?</pasted_content[^>]*>", " ", text or "", flags=re.S))
         args = m.group(1) if m else ""
-    rest = [n for n in dict.fromkeys(PROMPT_TICKET.findall(args or "")) if n != tk]
+    rest = [n for n in dict.fromkeys(arg_tickets(args)) if n != tk]
     return [tk] + rest
 
 
@@ -1248,12 +1287,27 @@ def claude_work_ticket(entry):
     return work_ticket(prompt_text(entry))
 
 
+LEAD_TICKETS = re.compile(r"\s*((?:[#＃]?\d{5}(?!\d)[\s,、]*)+)")
+
+
+def arg_tickets(text):
+    """スキルの引数・入力に出た番号。「#番号」があればそれだけ。無ければ先頭に並べた番号（/ct-redmine 14625 14891）だけ。
+
+    貼り付けたメールの「17767件」のように、文の途中の # の無い数字は拾わない。
+    """
+    nums = MENTION_TICKET.findall(text or "")
+    if nums:
+        return nums
+    m = LEAD_TICKETS.match(text or "")
+    return PROMPT_TICKET.findall(m.group(1)) if m else []
+
+
 def main_ticket(text):
     """ユーザーの入力に出たチケット番号のうち、いちばん多く出たもの（同数なら先に出たもの）。無ければ ""。
 
     圧縮後の要約や貼り付けには番号がいくつも出るので、最後の番号ではなく主な番号を取る。
     """
-    nums = PROMPT_TICKET.findall(text or "")
+    nums = arg_tickets(text)
     return max(nums, key=lambda n: (nums.count(n), -nums.index(n))) if nums else ""
 
 
@@ -2394,7 +2448,7 @@ def history_entries(path, kind, st, lines, work=None):
             wt = session_ticket(text, claude_work_ticket(d) if kind == "claude" else work_ticket(text))
             if wt:
                 work[wt] = max(work.get(wt, 0), ts)
-        for n in set(PROMPT_TICKET.findall(text)):
+        for n in set(MENTION_TICKET.findall(text)):
             yield n, env, ts, kind
 
 
@@ -2683,7 +2737,7 @@ def today_view():
         commits = dict(today["commits"])
         start = today["start"] or day_start()
     out = {}
-    for n in set(work) | set(commits):
+    for n in (set(work) | set(commits)) - REDMINE_MISSING:
         envs = [{"env": e, "first": w["first"], "last": w["last"], "strict": w.get("strict", False)} for e, w in sorted(work.get(n, {}).items())]
         prompts = sorted(({"ts": p["ts"], "env": e, "text": p["text"]} for e, w in work.get(n, {}).items() for p in w["prompts"]),
                          key=lambda p: -p["ts"])[:TODAY_PROMPTS]
@@ -2707,7 +2761,7 @@ def today_extra_issues(ids, host, key, cache=None):
     if extra_cache["ids"] == ids and time.time() - extra_cache["at"] < 300:
         return extra_cache["issues"]
     import urllib.request
-    issues = []
+    issues, ok = [], True
     for k in range(0, len(ids), 50):
         req = urllib.request.Request(f"{host}/issues.json?issue_id={','.join(ids[k:k + 50])}&status_id=*&limit=100",
                                      headers={"X-Redmine-API-Key": key})
@@ -2715,14 +2769,18 @@ def today_extra_issues(ids, host, key, cache=None):
             with urllib.request.urlopen(req, timeout=15) as r:
                 issues += json.load(r).get("issues", [])
         except Exception as e:  # 引けなくても番号だけは出す
+            ok = False
             print(f"{time.strftime('%F %T')} 今日の作業のチケットを Redmine から取れませんでした: {e}", file=sys.stderr, flush=True)
     found = {i["id"] for i in issues}
+    if ok:  # 問い合わせが通ったときだけ「無い番号」と決める（通信の失敗で消さない）
+        REDMINE_MISSING.update(n for n in ids if int(n) not in found)
+        REDMINE_MISSING.difference_update(str(i) for i in found)
     rows = [{"id": i["id"], "subject": i.get("subject", ""), "status": (i.get("status") or {}).get("name", ""),
              "priority": (i.get("priority") or {}).get("name", ""), "updated_on": i.get("updated_on", ""),
              "assignee": (i.get("assigned_to") or {}).get("name", ""),
              "closed": bool((i.get("status") or {}).get("is_closed")) or bool(i.get("closed_on"))} for i in issues]
     rows += [{"id": int(n), "subject": "（Redmine で見つかりません）", "status": "", "priority": "", "updated_on": "",
-              "assignee": "", "closed": False} for n in ids if int(n) not in found]
+              "assignee": "", "closed": False} for n in ids if int(n) not in found and not ok]
     extra_cache.update(at=time.time(), ids=ids, issues=rows)
     return rows
 
@@ -2784,6 +2842,8 @@ def timesheet_today():
             parts = tk.split() or [""]  # 1 つのセッションで複数のチケットを並行していたら、その分をさらに等分する
             for p in parts:
                 out[p] = out.get(p, 0) + 1 / len(tks) / len(parts)
+    for k in [k for k in out if k in REDMINE_MISSING]:  # Redmine に無い番号の時間は「その他」へ
+        out[""] = out.get("", 0) + out.pop(k)
     return {"tickets": {k: round(v) for k, v in out.items() if k and round(v)}, "other": round(out.get("", 0)), "total": len(per_min)}
 
 

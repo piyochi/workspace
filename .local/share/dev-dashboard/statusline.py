@@ -98,7 +98,10 @@ def main():
             tmp = os.path.join(CACHE, f".pane-{pane.lstrip('%')}.tmp")
             with open(tmp, "w") as f:
                 json.dump({"pane": pane, "session_id": data.get("session_id"),
-                           "transcript_path": data["transcript_path"], "updated_at": time.time()}, f)
+                           "transcript_path": data["transcript_path"], "updated_at": time.time(),
+                           # 会話の大きさ（tmux 欄の context %）。項目の形は Claude Code のまま渡す
+                           "context_window": data.get("context_window"),
+                           "model": (data.get("model") or {}).get("display_name")}, f)
             os.replace(tmp, os.path.join(CACHE, f"pane-{pane.lstrip('%')}.json"))
         except OSError:
             pass
