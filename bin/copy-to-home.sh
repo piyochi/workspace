@@ -17,7 +17,7 @@ SOURCE_DASHBOARD="$HOME/workspace/.local/share/dev-dashboard"
 DEST_DASHBOARD="$HOME/.local/share/dev-dashboard/"
 
 # 確認プロンプトを表示
-read -p "設定ファイル (nvim, mcphub, bin, tmuxp, dev-dashboard) を home にコピーしますか？ [Y/n]: " CONFIRM
+read -p "設定ファイル (nvim, mcphub, bin, tmuxp, dev-dashboard, hub) を home にコピーしますか？ [Y/n]: " CONFIRM
 
 # 入力を大文字に変換して確認
 CONFIRM=${CONFIRM^^} # 小文字を大文字に変換
@@ -74,6 +74,26 @@ if [ -d "$SOURCE_DASHBOARD" ]; then
     --exclude='server.log' --exclude='__pycache__/' --exclude='README.md' --exclude='.gitignore' \
     "$SOURCE_DASHBOARD/" "$DEST_DASHBOARD"
   echo "  server.py を変えたときは launchctl kickstart -k gui/\$(id -u)/local.dev-dashboard で反映"
+fi
+
+# hub（~/www/ticket_v2_hub の取りまとめ用。README・hub_status.py・na_to.py・/na-to・/na-list のスキル本体）をコピー
+SOURCE_HUB="$HOME/workspace/.local/share/ticket-v2/hub"
+DEST_HUB="$HOME/.local/share/ticket-v2/hub/"
+HUB_WS="$HOME/www/ticket_v2_hub"
+if [ -d "$SOURCE_HUB" ]; then
+  echo "Copying $SOURCE_HUB to $DEST_HUB..."
+  mkdir -p "$DEST_HUB"
+  rsync -av --exclude='.DS_Store' --exclude='__pycache__/' "$SOURCE_HUB/" "$DEST_HUB"
+  # hub の workspace があれば、スキルへのシンボリックリンクと git の除外を作る（「/」の候補に /na-to・/na-list を出すため）
+  if [ -d "$HUB_WS/.claude/skills" ]; then
+    for s in na-to na-list; do
+      ln -sfn "$HOME/.local/share/ticket-v2/hub/skills/$s" "$HUB_WS/.claude/skills/$s"
+      grep -qxF "/.claude/skills/$s" "$HUB_WS/.git/info/exclude" 2>/dev/null || echo "/.claude/skills/$s" >> "$HUB_WS/.git/info/exclude"
+    done
+    echo "  hook（$HUB_WS/.claude/settings.local.json の UserPromptSubmit に na_to.py --hook）は手で設定する（README の /na-to の項目）"
+  else
+    echo "  $HUB_WS が無いのでスキルのリンクは作りません（hub を clone した後にもう一度実行）"
+  fi
 fi
 
 if [ $? -eq 0 ]; then
