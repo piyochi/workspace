@@ -332,6 +332,9 @@ def codex_usage(cfg):
 
 TMUX_SESSION = "ticket_v2_project"
 SLOT_TITLE = re.compile(r"\[(\d+)\]\s+(\S+)\s+(claude|codex)(?:\(([^)]*)\))?")
+# MAIN の枠で動く hub（環境1〜4の12枠の取りまとめ役。2026-11-25〜。説明は ~/.local/share/ticket-v2/hub/README.md）
+HUB_DIR = os.path.join(HOME, "www", "ticket_v2_hub")
+HUB_CLAUDE_CMD = "bin/claude ticket_v2 ticket_v2_api --permission-mode auto"
 CODEX_WAIT = re.compile(r"Would you like to (run the following command|make the following edits|grant these permissions)\?")
 SHELLS = {"zsh", "bash", "sh", "fish"}
 
@@ -709,18 +712,27 @@ def ai_panes():
         if tmux("has-session", "-t", TMUX_SESSION).returncode != 0:
             return {"running": False, "slots": []}
         out = tmux("list-panes", "-s", "-t", TMUX_SESSION, "-F",
-                   "#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{@ai_state}\t#{@cm_title}\t#{pane_tty}\t#{@link_slot}\t#{@ai_label}\t#{pane_title}").stdout
+                   "#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{@ai_state}\t#{@cm_title}\t#{pane_tty}\t#{@link_slot}\t#{@ai_label}\t#{pane_current_path}\t#{pane_title}").stdout
         kinds = running_kinds()
         env_slots = codex_slots(kinds)
     except (OSError, subprocess.TimeoutExpired):
         return {"running": False, "slots": []}
     slots = {}
+    main = None
     for line in out.splitlines():
         parts = line.split("\t")
-        if len(parts) < 9 or parts[0] != "monitor":
+        if len(parts) < 10 or parts[0] != "monitor":
             continue
-        _, pane_id, cmd, ai_state, cm_title, tty, link_slot, label = parts[:8]
-        pane_title = "\t".join(parts[8:])
+        _, pane_id, cmd, ai_state, cm_title, tty, link_slot, label, path = parts[:9]
+        pane_title = "\t".join(parts[9:])
+        # MAIN（hub）の枠: monitor タブで ~/www/ticket_v2_hub にいる枠。
+        # 枠をフォーカスするとタイトルが「[n] → left」に変わるので、タイトルではなく場所で見つける
+        if (path == HUB_DIR or path.startswith(HUB_DIR + "/")) and main is None:
+            kind, state = pane_status(pane_id, cmd, ai_state, tty, "claude", kinds)
+            main = {"pane": pane_id, "kind": kind, "state": state, "label": label,
+                    "ctx": None if state == "stopped" else claude_context(pane_id),
+                    "subagents": running_subagents(pane_id) if state != "stopped" else 0}
+            continue
         m = SLOT_TITLE.search(cm_title)
         if not m or "→ left" in cm_title:
             continue
@@ -768,7 +780,7 @@ def ai_panes():
                     "subagents": subagents, "ctx": ctx,
                     "skill": skill, "skill_done": skill_done, "link": link,
                     "ticket_from": "label" if label_ticket else ("title" if m and ticket == m.group(1) and not session_ticket else ("session" if ticket else ""))}
-    return {"running": True, "slots": [slots[k] for k in sorted(slots)]}
+    return {"running": True, "slots": [slots[k] for k in sorted(slots)], "main": main}
 
 
 # ---- tmux の枠のタイトルの文字（@ai_label） ----
@@ -862,12 +874,20 @@ cli_lock = threading.Lock()
 
 
 def slot_pane(n):
-    """monitor タブの [n] の枠（フォーカス中なら「★ FOCUS [n]」の方）。無ければ None。"""
+    """monitor タブの [n] の枠（フォーカス中なら「★ FOCUS [n]」の方）。無ければ None。
+    n = 0 は MAIN（hub）の枠（~/www/ticket_v2_hub にいる枠。タイトルは変わるので場所で見る）。"""
     out = tmux("list-panes", "-s", "-t", TMUX_SESSION, "-F",
-               "#{window_name}\t#{pane_id}\t#{@cm_title}\t#{pane_current_command}\t#{@ai_state}\t#{pane_tty}").stdout
+               "#{window_name}\t#{pane_id}\t#{@cm_title}\t#{pane_current_command}\t#{@ai_state}\t#{pane_tty}\t#{pane_current_path}").stdout
     for line in out.splitlines():
         parts = line.split("\t")
-        if len(parts) < 6 or parts[0] != "monitor" or "→ left" in parts[2]:
+        if len(parts) < 7 or parts[0] != "monitor":
+            continue
+        if n == 0:
+            if parts[6] == HUB_DIR or parts[6].startswith(HUB_DIR + "/"):
+                kind, state = pane_status(parts[1], parts[3], parts[4], parts[5], "claude", running_kinds())
+                return {"id": parts[1], "title": "★ MAIN hub", "kind": kind, "slot_kind": "claude", "state": state}
+            continue
+        if "→ left" in parts[2]:
             continue
         m = SLOT_TITLE.search(parts[2])
         if m and int(m.group(1)) == n:
@@ -900,6 +920,11 @@ def launch_command(n, kind, mode):
     フォルダは [n] の行のもの。コマンドは同じフォルダの行のうち bin/<kind> を使う行から取るので、
     Codex の枠で Claude を（その逆も）起動できる。CODEX_SLOT（相方の Codex の枠番号）は奇数の枠の Claude だけに付ける。
     """
+    if n == 0:  # MAIN（hub）: monitor.txt に無いので ~/.tmuxp/ticket_v2_project.yaml の履歴に積むコマンドと同じものを使う
+        if kind != "claude" or mode not in CLI_MODES["claude"]:
+            return None
+        extra = CLI_MODES["claude"][mode]
+        return HUB_DIR, HUB_CLAUDE_CMD + (f" {extra}" if extra else "")
     rows = monitor_commands()
     if not 1 <= n <= len(rows) or mode not in CLI_MODES.get(kind, {}):
         return None
@@ -926,8 +951,8 @@ def pane_text(n, lines=100):
     except (OSError, subprocess.TimeoutExpired) as e:
         return {"error": str(e)}
     labels = {"new": "新規", "continue": "continue", "resume": "resume --last"}
-    # 枠の既定の CLI を先に並べる
-    order = [p["slot_kind"]] + [k for k in CLI_MODES if k != p["slot_kind"]]
+    # 枠の既定の CLI を先に並べる。MAIN（n = 0）は Claude だけ
+    order = ["claude"] if n == 0 else [p["slot_kind"]] + [k for k in CLI_MODES if k != p["slot_kind"]]
     modes = []
     for k in order:
         for m in CLI_MODES[k]:
@@ -1021,10 +1046,11 @@ def skill_list():
     """送る画面のコマンドの候補: 各環境の .claude/skills・.claude/commands と ~/.claude/skills のスキル名と説明。10 分覚える。"""
     if skills_cache["rows"] and time.time() - skills_cache["at"] < 600:
         return skills_cache["rows"]
-    roots = [os.path.join(HOME, ".claude")] + [os.path.join(HOME, "www", d, ".claude") for d in ENV_DIRS]
+    # MAIN（hub）の .claude も見る（/na-to・/na-list は hub だけにある。where = "hub" で MAIN 宛てのときだけ候補に出す）
+    roots = [os.path.join(HOME, ".claude")] + [os.path.join(HOME, "www", d, ".claude") for d in ENV_DIRS] + [os.path.join(HUB_DIR, ".claude")]
     found, where = {}, {}
     for root in roots:
-        place = "home" if root == roots[0] else "project"
+        place = "home" if root == roots[0] else ("hub" if root == roots[-1] else "project")
         files = glob.glob(os.path.join(root, "skills", "*", "SKILL.md")) + glob.glob(os.path.join(root, "commands", "*.md"))
         for path in files:
             name = os.path.basename(os.path.dirname(path)) if path.endswith("SKILL.md") else os.path.basename(path)[:-3]
@@ -1045,7 +1071,10 @@ def skill_list():
                 if name not in found:
                     found[name] = desc.strip("'\"")[:160]
     # where: スキルの置き場所（home = ~/.claude・project = 各環境の .claude・both = 両方にある）
-    rows = [{"cmd": "/" + n, "desc": found[n], "where": "both" if len(where[n]) > 1 else next(iter(where[n]))} for n in sorted(found)]
+    def place_of(n):
+        w = where[n] - {"hub"} or where[n]  # hub は ticket_v2_project の clone なので、環境にもあるスキルは環境側として数える
+        return "both" if len(w) > 1 else next(iter(w))
+    rows = [{"cmd": "/" + n, "desc": found[n], "where": place_of(n)} for n in sorted(found)]
     skills_cache.update(at=time.time(), rows=rows)
     return rows
 
@@ -3289,8 +3318,8 @@ class Handler(BaseHTTPRequestHandler):
                 n = int(self.query.get("slot", ["0"])[0])
             except ValueError:
                 n = 0
-            if not 1 <= n <= 12:
-                return self.send_json({"error": "slot は 1〜12 です"}, 400)
+            if not 0 <= n <= 12:  # 0 は MAIN（hub）
+                return self.send_json({"error": "slot は 0（MAIN）〜12 です"}, 400)
             self.send_json(pane_text(n))
         elif self.path == "/api/links":
             try:
@@ -3386,7 +3415,7 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 return self.send_json({"error": "slot が不正です"}, 400)
             label = re.sub(r"\s+", " ", str(req.get("label") or "")).strip()
-            p = slot_pane(slot) if 1 <= slot <= 12 else None
+            p = slot_pane(slot) if 0 <= slot <= 12 else None  # 0 は MAIN（hub）
             if not p:
                 return self.send_json({"error": f"[{slot}] の枠が見つかりません"}, 404)
             set_pane_label(p["id"], label)
@@ -3408,8 +3437,8 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 return self.send_json({"error": "slot が不正です"}, 400)
             cmd, tickets = str(req.get("cmd") or ""), req.get("tickets")
-            if not 1 <= slot <= 12:
-                return self.send_json({"error": "slot は 1〜12 です"}, 400)
+            if not 0 <= slot <= 12:  # 0 は MAIN（hub）
+                return self.send_json({"error": "slot は 0（MAIN）〜12 です"}, 400)
             # 自由な文: 1行にそろえ（改行・タブは空白）、制御文字は落とす。1000 文字まで
             free = re.sub(r"[\x00-\x1f\x7f]", "", re.sub(r"[\r\n\t]+", " ", str(req.get("free") or ""))).strip()
             if len(free) > 1000:
@@ -3450,8 +3479,8 @@ class Handler(BaseHTTPRequestHandler):
                 slot = int(req.get("slot"))
             except (TypeError, ValueError):
                 return self.send_json({"error": "slot が不正です"}, 400)
-            if not 1 <= slot <= 12:
-                return self.send_json({"error": "slot は 1〜12 です"}, 400)
+            if not 0 <= slot <= 12:  # 0 は MAIN（hub）
+                return self.send_json({"error": "slot は 0（MAIN）〜12 です"}, 400)
             # 同じ枠に2回送らないよう、起動・停止は1つずつ
             if not cli_lock.acquire(blocking=False):
                 return self.send_json({"error": "別の起動・停止を実行中です"}, 409)

@@ -462,6 +462,10 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
 .cell.wait { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--bg)); } .cell.wait .cell-state { color: var(--bad); }
 .cell.idle .cell-state { color: var(--ok); }
 .cell.stopped { opacity: .55; } .cell.stopped .cell-state { color: var(--off); }
+/* MAIN（hub）: グリッドの横いっぱいの1行 */
+.cell.main { grid-column: 1 / -1; min-height: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cell.main .cell-name { font-weight: 600; }
+.cell.main .cell-task { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .h-nippo { font: inherit; font-size: 12px; padding: 2px 10px; border: 1px solid var(--line, #ccc); border-radius: 4px; background: transparent; color: inherit; cursor: pointer; flex-shrink: 0; margin-left: auto; margin-right: 10px; align-self: center; }
 .h-nippo:hover, .h-nippo:focus-visible { border-color: var(--accent); color: var(--accent); }
 </style>
@@ -597,7 +601,8 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
       <input type="text" id="send-cmd" spellcheck="false" autocomplete="off" placeholder="クリックすると全部のコマンドが出ます。打つと名前・説明で絞れます">
       <div class="send-cmd-list" id="send-cmd-list" hidden></div>
       <div class="send-label">自由入力（コマンド・番号のあとに続けて送ります。コマンドを空にすれば、この文だけ送れます）</div>
-      <textarea id="send-free" rows="2" maxlength="1000" placeholder="例: testing で確認して / --light / ステータスを進行中にして"></textarea>
+      <textarea id="send-free" rows="2" maxlength="1000" placeholder="例: testing で確認して / --light / ステータスを進行中にして（スペースの後に / でコマンドの候補）"></textarea>
+      <div class="send-cmd-list" id="send-free-list" hidden></div>
       <div class="send-label">送り先（入力待ちの枠か、停止中の枠。停止中は起動してから送ります）</div>
       <div class="send-slots" id="send-slots"></div>
       <div class="send-launch" id="send-launch" hidden></div>
@@ -795,6 +800,7 @@ const ctxHtml = (s) => {
   return `<span class="cell-ctx${lv}" title="${esc(tip)}"><span class="ctx-bar"><span style="width:${w}%"></span></span><span class="ctx-num">${c.pct}%</span></span>`;
 };
 const PANE_STATES = { busy: "処理中", wait: "確認待ち", idle: "入力待ち", stopped: "停止" };
+const slotName = (n) => n === 0 ? "★ MAIN" : `[${n}]`;  // 0 は MAIN（hub）
 async function refreshPanes() {
   try {
     const d = await (await fetch("/api/panes")).json();
@@ -803,11 +809,21 @@ async function refreshPanes() {
     // どれかの枠が「処理中」から抜けたら（返答が終わった）、リンクをその場で集め直す
     if (prevStates && d.slots.some((s) => prevStates[s.slot] === "busy" && s.state !== "busy")) loadLinks(true);
     prevStates = Object.fromEntries(d.slots.map((s) => [s.slot, s.state]));
-    window.__slots = bySlot;
+    // MAIN（hub）は枠番号 0。詳細画面（画面・タイトル・起動停止・作業依頼）と送信欄で使う。mini.slots（ミニ表示）・連動先には入れない
+    const m = d.main;
+    const main0 = m ? { ...m, slot: 0, env: "hub", slot_kind: "claude", ticket: "" } : null;
+    window.__slots = main0 ? { ...bySlot, 0: main0 } : bySlot;
+    mini.main = main0;
     mini.slots = d.slots;
     renderMini();
-    if (modalSlot) { renderLink(); renderLabel(); }
-    $("panes").innerHTML = `<div class="grid">${Array.from({ length: 12 }, (_, i) => {
+    if (modalSlot !== null) { renderLink(); renderLabel(); }
+    // MAIN（hub）: [1]〜[12] を取りまとめる枠。グリッドの上に横いっぱいの1行で出す
+    const mainHtml = m ? `<div class="cell main ${m.state}" data-slot="0" title="MAIN（hub・~/www/ticket_v2_hub）${m.pane ? ` ${esc(m.pane)}` : ""}">
+        <span class="cell-name">★ MAIN hub ${esc(m.kind)}</span>
+        <span class="cell-state">${PANE_STATES[m.state] || esc(m.state)}${m.subagents ? `（サブ${m.subagents}）` : ""}</span>
+        ${ctxHtml(m)}
+        <span class="cell-task">${esc(m.label || "")}</span></div>` : "";
+    $("panes").innerHTML = `<div class="grid">${mainHtml}${Array.from({ length: 12 }, (_, i) => {
       const s = bySlot[i + 1];
       if (!s) return `<div class="cell stopped"><div class="cell-head">[${i + 1}]</div><div class="cell-state">なし</div></div>`;
       return `<div class="cell ${s.state}" data-slot="${s.slot}" title="${esc(cellTip(s))}">
@@ -1064,7 +1080,7 @@ document.querySelectorAll("details.sec").forEach((d) => {
 // 枠の画面を見る（見るだけ。開いている間は 3 秒ごとに更新。下までスクロールしているときだけ最新に追従）
 let modalSlot = null, modalTimer = null;
 async function loadPane() {
-  if (!modalSlot) return;
+  if (modalSlot === null) return;
   const body = $("modal-body");
   // 文字を選んでいる間は書き換えない（書き換えると選択が外れてコピーできない）
   const sel = window.getSelection();
@@ -1085,11 +1101,11 @@ async function loadPane() {
 }
 function openPane(slot) {
   // ブラウザの「戻る」でも閉じられるよう、開いたときに履歴を1つ積む
-  if (!modalSlot) { try { history.pushState({ pane: slot }, ""); } catch (e) {} }
+  if (modalSlot === null) { try { history.pushState({ pane: slot }, ""); } catch (e) {} }
   modalSlot = slot; actionsKey = ""; linkKey = ""; labelKey = "";
   $("modal-actions").innerHTML = "";
   renderLink(); renderLabel();
-  $("modal-title").textContent = `[${slot}]`;
+  $("modal-title").textContent = slotName(slot);
   $("modal-body").textContent = "読み込み中…";
   $("modal").classList.add("open");
   $("modal-body").scrollTop = 0;
@@ -1098,7 +1114,7 @@ function openPane(slot) {
 }
 function hidePane() { modalSlot = null; clearInterval(modalTimer); $("modal").classList.remove("open"); }
 // 戻るリンク・Esc・外側クリックは、積んだ履歴を戻して閉じる（ブラウザの戻ると同じ動き）
-function closePane() { if (!modalSlot) return; if (history.state && history.state.pane) history.back(); else hidePane(); }
+function closePane() { if (modalSlot === null) return; if (history.state && "pane" in history.state) history.back(); else hidePane(); }
 window.addEventListener("popstate", hidePane);
 $("panes").addEventListener("click", (e) => { const c = e.target.closest(".cell[data-slot]"); if (c) openPane(Number(c.dataset.slot)); });
 // 全部コピー。http（LAN の IP）では navigator.clipboard が使えないことがあるので、textarea 経由の方法も用意する
@@ -1120,7 +1136,7 @@ function linkHtml(s) {
 let linkKey = "";
 function renderLink() {
   const s = (window.__slots || {})[modalSlot];
-  if (!s) { $("modal-link").innerHTML = ""; linkKey = ""; return; }
+  if (!s || modalSlot === 0) { $("modal-link").innerHTML = ""; linkKey = ""; return; }  // MAIN（hub）に連動先は無い
   const cur = s.link ? s.link.slots : [];
   const key = `${modalSlot}|${cur.join(",")}|${s.link ? s.link.from : ""}|${s.skill}|${s.skill_done}`;
   if (key === linkKey) return;  // 変わったときだけ描き直す（選びかけの選択が戻らないように）
@@ -1241,7 +1257,7 @@ function labelCands(q) {
   }
   const words = t.toLowerCase().split(/\s+/).filter(Boolean);
   labelHist.filter((h) => !words.length || words.every((w) => h.toLowerCase().includes(w))).slice(0, 10)
-    .forEach((h, k) => out.push({ kind: "hist", text: h, head: k ? "" : `[${modalSlot}] に過去に付けたタイトル` }));
+    .forEach((h, k) => out.push({ kind: "hist", text: h, head: k ? "" : `${slotName(modalSlot)} に過去に付けたタイトル` }));
   return out;
 }
 
@@ -1261,12 +1277,12 @@ function renderActions(d) {
     ${busy ? `<span class="label">${esc(pendingCli)}…</span>` : ""}`;
   $("modal-actions").querySelectorAll("button[data-mode]").forEach((b) => b.onclick = () => cli("launch", b.dataset.kind, b.dataset.mode, b.title));
   const sb = $("modal-actions").querySelector("button[data-stop]"); if (sb) sb.onclick = () => cli("stop");
-  const sendBtn = $("modal-actions").querySelector("button[data-send]"); if (sendBtn) sendBtn.onclick = () => sndOpen(null, modalSlot, "/ct-");
+  const sendBtn = $("modal-actions").querySelector("button[data-send]"); if (sendBtn) sendBtn.onclick = () => sndOpen(null, modalSlot, modalSlot === 0 ? "/na-" : "/ct-");  // MAIN（hub）は /na-to・/na-list から
 }
 let pendingCli = "";
 async function cli(action, kind, mode, cmd) {
   const what = action === "stop" ? "停止" : `起動（${cmd}）`;
-  if (!confirm(`[${modalSlot}] を${what}します。よろしいですか？`)) return;
+  if (!confirm(`${slotName(modalSlot)} を${what}します。よろしいですか？`)) return;
   pendingCli = action === "stop" ? "停止中" : "起動中"; actionsKey = "";
   await loadPane();
   try {
@@ -2175,13 +2191,18 @@ function sndRenderCmds() {
   if (!sndCmdOpen) return;
   if (!sndSkills) { box.innerHTML = `<div class="empty">読み込んでいます…</div>`; return; }
   const words = sndCmdQ.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const rows = sndSkills.filter((k) => words.every((w) => `${k.cmd} ${k.desc}`.toLowerCase().includes(w)));
+  // hub だけにあるスキル（/na-to・/na-list）は MAIN 宛てのときだけ出す
+  const rows = sndSkills.filter((k) => (k.where !== "hub" || snd.slot === 0) && words.every((w) => `${k.cmd} ${k.desc}`.toLowerCase().includes(w)));
+  if (snd.slot === 0) rows.sort((a, b) => (a.where === "hub" ? 0 : 1) - (b.where === "hub" ? 0 : 1));  // MAIN 宛ては /na-to・/na-list を先頭に（sort は安定なので他の並びはそのまま）
   box.innerHTML = rows.map((k) => `<button class="send-cand" data-cmd="${esc(k.cmd)}" title="${esc(k.desc)}"><b>${esc(k.cmd)}</b> <span>${esc(k.desc)}</span></button>`).join("")
     || `<div class="empty">該当するコマンドはありません（このまま送ることもできます）</div>`;
   sndMark(box, sndCmdIdx);
 }
+let sndPickedAt = 0;  // 候補を選んだ時刻。選んだ Enter がそのまま「送る」に化けないよう、直後の Enter では送らない
 function sndPickCmd(cmd) {
-  $("send-cmd").value = cmd; sndCmdOpen = false; sndCmdIdx = -1; sndRenderCmds(); sndRender(); $("send-cmd").blur();
+  sndPickedAt = Date.now(); $("send-cmd").value = cmd; sndCmdOpen = false; sndCmdIdx = -1; sndRenderCmds(); sndRender();
+  // MAIN 宛て（/na-to 等）は続けて「枠番号 指示」を打つので自由入力へ。ほかは今までどおりフォーカスを外す（Enter で送れる）
+  if (snd.slot === 0) $("send-free").focus(); else $("send-cmd").blur();
 }
 function sndAdd(n) { n = String(n); if (/^\d{4,6}$/.test(n) && !snd.tickets.includes(n)) snd.tickets.push(n); }
 function sndRender() {
@@ -2196,28 +2217,28 @@ function sndRender() {
     || (words.length ? `<div class="empty">一覧に該当なし${/^\d{4,6}$/.test(snd.q.trim()) ? "（Enter でこの番号を足せます）" : ""}</div>` : "");
   sndMark($("send-cands"), sndTkIdx);
   // 送り先: 入力待ち（idle）か停止中（stopped）の枠を選べる。選んでいた枠がどちらでもなくなったら選択を外す
-  const slots = mini.slots || [], can = (s) => s.state === "idle" || s.state === "stopped";
-  if (snd.slot && !slots.some((s) => s.slot === snd.slot && can(s))) snd.slot = null;
+  const slots = [...(mini.main ? [mini.main] : []), ...(mini.slots || [])], can = (s) => s.state === "idle" || s.state === "stopped";
+  if (snd.slot != null && !slots.some((s) => s.slot === snd.slot && can(s))) snd.slot = null;
   $("send-slots").innerHTML = slots.length ? slots.map((s) =>
-    `<button class="send-slot${snd.slot === s.slot ? " on" : ""}${s.state === "stopped" ? " stopped" : ""}" data-slot="${s.slot}" ${can(s) ? "" : "disabled"} title="${esc(cellTip(s))}">[${s.slot}] ${esc(s.env)} ${esc(s.kind || "")}・${PANE_STATES[s.state] || esc(s.state)}${s.ticket ? ` #${esc(s.ticket)}` : ""}</button>`).join("")
+    `<button class="send-slot${snd.slot === s.slot ? " on" : ""}${s.state === "stopped" ? " stopped" : ""}" data-slot="${s.slot}" ${can(s) ? "" : "disabled"} title="${esc(cellTip(s))}">${slotName(s.slot)} ${esc(s.env)} ${esc(s.kind || "")}・${PANE_STATES[s.state] || esc(s.state)}${s.ticket ? ` #${esc(s.ticket)}` : ""}</button>`).join("")
     : `<div class="empty">tmux の枠が見つかりません</div>`;
   // 停止中の枠を選んだら、起動する CLI を選ぶ（既定はその枠の種類の新規）
   const sel = slots.find((s) => s.slot === snd.slot), stopped = !!sel && sel.state === "stopped";
   if (!stopped) snd.launch = null;
   else if (!snd.launch) snd.launch = { kind: String(sel.slot_kind || "").startsWith("codex") ? "codex" : "claude", mode: "new" };
   $("send-launch").hidden = !stopped;
-  $("send-launch").innerHTML = stopped ? `<span class="send-label" style="margin:0">[${sel.slot}] で起動する:</span>` + SND_LAUNCH.map(([k, m, label]) =>
+  $("send-launch").innerHTML = stopped ? `<span class="send-label" style="margin:0">${slotName(sel.slot)} で起動する:</span>` + SND_LAUNCH.filter(([k]) => sel.slot !== 0 || k === "claude").map(([k, m, label]) =>
     `<button data-lk="${k}" data-lm="${m}" class="${snd.launch.kind === k && snd.launch.mode === m ? "on" : ""}">${label}</button>`).join("") : "";
   $("send-preview").textContent = sndText() || "（コマンドを選ぶと、ここに送る文が出ます）";
   $("send-meta").textContent = snd.tickets.length ? `${snd.tickets.length} 件` : "";
   $("send-msg").textContent = snd.msg; $("send-msg").className = `np-msg ${snd.msgCls}`;
   const cmdOk = sndCmd() ? /^\/[a-z][a-z0-9:-]{1,40}$/.test(sndCmd()) && !/[-:]$/.test(sndCmd()) : !!sndFree();  // "/ct-" のような書きかけは送らない
-  $("send-go").disabled = snd.busy || !snd.slot || !cmdOk;
+  $("send-go").disabled = snd.busy || snd.slot == null || !cmdOk;
 }
 // slot = 枠の画面から開いたときの送り先。cmdPrefix = コマンド欄に入れておく書きかけ（枠の画面の「作業依頼」は "/ct-" で止めておく）
 function sndOpen(ticket, slot, cmdPrefix) {
-  snd.tickets = []; snd.q = ""; snd.msg = ""; snd.msgCls = ""; snd.slot = slot || null; snd.launch = null;
-  $("send-title").textContent = cmdPrefix ? `作業依頼${slot ? ` [${slot}]` : ""}` : "tmux の枠に送る";
+  snd.tickets = []; snd.q = ""; snd.msg = ""; snd.msgCls = ""; snd.slot = slot ?? null; snd.launch = null;
+  $("send-title").textContent = cmdPrefix ? `作業依頼${slot != null ? ` ${slotName(slot)}` : ""}` : "tmux の枠に送る";
   if (ticket) sndAdd(ticket);
   // Redmine・日報から開いたときはいつも /ct-redmine（前に送ったコマンドは引き継がない）
   const cmd = cmdPrefix || "/ct-redmine";
@@ -2257,7 +2278,56 @@ $("send-q").addEventListener("keydown", (e) => {
   if (items[sndTkIdx]) sndAdd(items[sndTkIdx].dataset.add); else if (/^\d{4,6}$/.test(v)) sndAdd(v); else if (items[0]) sndAdd(items[0].dataset.add); else return;
   snd.q = ""; sndTkIdx = -1; $("send-q").value = ""; sndRender();
 });
-$("send-free").addEventListener("input", sndRender);
+// 自由入力の途中の「/」補完: 先頭かスペースの後に「/」を打つと、コマンドの候補を出す（Claude Code の入力欄と同じ）。
+// 例: MAIN 宛てに /na-to → 自由入力「3 /ct-re」で /ct-redmine を選ぶ。途中の /… は送り先で動くので hub だけのスキルは出さない
+let sndFreeTok = null, sndFreeIdx = -1;
+function sndFreeToken() {
+  const ta = $("send-free"), pos = ta.selectionStart, m = ta.value.slice(0, pos).match(/(^|\s)(\/[a-z0-9:-]*)$/);
+  return m ? { start: pos - m[2].length, end: pos, q: m[2] } : null;
+}
+function sndRenderFree() {
+  const box = $("send-free-list");
+  sndFreeTok = sndFreeToken();
+  const rows = sndFreeTok && sndSkills ? sndSkills.filter((k) => k.where !== "hub" && k.cmd.startsWith(sndFreeTok.q.toLowerCase())).slice(0, 40) : [];
+  if (!rows.length) { box.hidden = true; sndFreeIdx = -1; return; }
+  box.innerHTML = rows.map((k) => `<button class="send-cand" data-cmd="${esc(k.cmd)}" title="${esc(k.desc)}"><b>${esc(k.cmd)}</b> <span>${esc(k.desc)}</span></button>`).join("");
+  box.hidden = false;
+  sndFreeIdx = Math.max(0, Math.min(sndFreeIdx, rows.length - 1));  // 先頭を選んだ状態にして、Enter / Tab ですぐ決められるようにする
+  sndMark(box, sndFreeIdx);
+}
+function sndPickFree(cmd) {
+  const ta = $("send-free"), t = sndFreeTok || sndFreeToken();
+  if (!t) return;
+  ta.value = ta.value.slice(0, t.start) + cmd + " " + ta.value.slice(t.end);
+  const p = t.start + cmd.length + 1;
+  ta.focus(); ta.setSelectionRange(p, p);
+  sndPickedAt = Date.now(); sndFreeIdx = -1; $("send-free-list").hidden = true; sndRender();
+}
+$("send-free").addEventListener("input", async () => {
+  sndRender(); sndFreeIdx = 0;
+  if (sndFreeToken()) await sndLoadSkills();
+  sndRenderFree();
+});
+$("send-free").addEventListener("keydown", (e) => {
+  const box = $("send-free-list");
+  // keyCode 229: Safari 等は変換確定の Enter でも isComposing が false のことがある
+  if (e.isComposing || e.keyCode === 229 || box.hidden) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault(); sndFreeIdx = sndMove(box, sndFreeIdx, e.key); sndMark(box, sndFreeIdx);
+  } else if (e.key === "Enter" || e.key === "Tab") {
+    // 候補が出ている間の Enter / Tab は候補を選ぶだけ。送信・改行・ほかの Enter の処理には渡さない
+    e.preventDefault(); e.stopImmediatePropagation();
+    const items = box.querySelectorAll("[data-cmd]"), pick = items[sndFreeIdx] || items[0];
+    if (pick) sndPickFree(pick.dataset.cmd);
+  } else if (e.key === "Escape") {
+    e.stopPropagation(); box.hidden = true; sndFreeIdx = -1;  // 候補だけ閉じる（画面は閉じない）
+  }
+});
+$("send-free").addEventListener("blur", () => setTimeout(() => { $("send-free-list").hidden = true; }, 200));  // 候補のクリックを先に通す
+$("send-free-list").addEventListener("mousedown", (e) => {
+  const b = e.target.closest("[data-cmd]"); if (!b) return;
+  e.preventDefault(); sndPickFree(b.dataset.cmd);
+});
 $("send-cmd").addEventListener("input", (e) => { sndCmdQ = e.target.value; sndCmdOpen = true; sndCmdIdx = -1; sndRenderCmds(); sndRender(); });
 $("send-cmd").addEventListener("keydown", (e) => {
   if (e.isComposing) return;
@@ -2276,7 +2346,11 @@ $("send-cmd").addEventListener("keydown", (e) => {
 });
 let sndKeepCmd = false;  // true のフォーカスは、欄の中身を選択せず、中身で候補を絞る（「作業依頼」で開いたとき）
 $("send-cmd").addEventListener("focus", (e) => {
-  if (sndKeepCmd) { sndKeepCmd = false; sndCmdQ = e.target.value; } else { sndCmdQ = ""; e.target.select(); }
+  // 中身が候補のどれかと完全に一致する（選び終えた）ときは今までどおり全部出して選択状態に。
+  // 「/na-」のような打ちかけのときは、その文字で絞ったまま続きを打てるようにする
+  const v = e.target.value.trim(), done = !v || (sndSkills || []).some((k) => k.cmd === v);
+  if (sndKeepCmd || !done) { sndKeepCmd = false; sndCmdQ = e.target.value; const n = e.target.value.length; e.target.setSelectionRange(n, n); }
+  else { sndCmdQ = ""; e.target.select(); }
   sndCmdIdx = -1; sndCmdOpen = true; sndLoadSkills(); sndRenderCmds();
 });
 $("send-cmd").addEventListener("blur", () => setTimeout(() => { sndCmdOpen = false; sndRenderCmds(); }, 200));  // 候補のクリックを先に通す
@@ -2295,7 +2369,9 @@ $("send-modal").addEventListener("click", (e) => {
 });
 // どこにもフォーカスが無いときの Enter は「送る」（入力欄・ボタンにフォーカスがある間は、その欄の Enter のまま）
 document.addEventListener("keydown", (e) => {
-  if (e.key !== "Enter" || e.isComposing || !snd.open || snd.busy) return;
+  if (e.key !== "Enter" || e.isComposing || !snd.open || snd.busy || e.defaultPrevented) return;
+  // コマンドの候補が出ている（または今閉じた）ときの Enter は候補を選ぶためのもの。送らない
+  if (!$("send-free-list").hidden || !$("send-cmd-list").hidden || Date.now() - sndPickedAt < 500) return;
   const a = document.activeElement;
   if (a && a !== document.body && a !== document.documentElement) return;
   if (!$("send-go").disabled) { e.preventDefault(); $("send-go").click(); }

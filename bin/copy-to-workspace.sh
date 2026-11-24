@@ -17,7 +17,7 @@ SOURCE_DASHBOARD="$HOME/.local/share/dev-dashboard"
 DEST_DASHBOARD="$HOME/workspace/.local/share/dev-dashboard/"
 
 # 確認プロンプトを表示
-read -p "設定ファイル (nvim, mcphub, bin, tmuxp, dev-dashboard) を workspace にコピーしますか？ [Y/n]: " CONFIRM
+read -p "設定ファイル (nvim, mcphub, bin, tmuxp, dev-dashboard, hub) を workspace にコピーしますか？ [Y/n]: " CONFIRM
 
 # 入力を大文字に変換して確認
 CONFIRM=${CONFIRM^^} # 小文字を大文字に変換
@@ -72,6 +72,16 @@ if [ -d "$SOURCE_DASHBOARD" ]; then
   rsync -av --exclude='.DS_Store' --exclude='config.json' --exclude='cache/' --exclude='backup/' \
     --exclude='server.log' --exclude='__pycache__/' \
     "$SOURCE_DASHBOARD/" "$DEST_DASHBOARD"
+fi
+
+# hub（~/www/ticket_v2_hub の取りまとめ用。README・hub_status.py・na_to.py・/na-to・/na-list のスキル本体）をコピー
+# hub 側の .claude/settings.local.json の hook と .claude/skills/na-* のシンボリックリンクは対象外（作り方は README）
+SOURCE_HUB="$HOME/.local/share/ticket-v2/hub"
+DEST_HUB="$HOME/workspace/.local/share/ticket-v2/hub/"
+if [ -d "$SOURCE_HUB" ]; then
+  echo "Copying $SOURCE_HUB to $DEST_HUB..."
+  mkdir -p "$DEST_HUB"
+  rsync -av --exclude='.DS_Store' --exclude='__pycache__/' "$SOURCE_HUB/" "$DEST_HUB"
 fi
 
 if [ $? -eq 0 ]; then

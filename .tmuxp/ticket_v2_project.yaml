@@ -10,7 +10,12 @@ windows:
   - ~/bin/claude-monitor --no-window --name vim -f ~/.tmuxp/ticket_v2_project/vim.txt -l left -w 55% -g 4x2
   window_name: vim
 - panes:
-  - ~/bin/claude-monitor --no-window --name monitor -f ~/.tmuxp/ticket_v2_project/monitor.txt -l left -w 65% -g 4x3
+  # 番号無しの枠（★ MAIN）は hub（~/www/ticket_v2_hub。12枠の取りまとめ役。説明は ~/.local/share/ticket-v2/hub/README.md）
+  # 他の枠と同じく自動では起動せず、起動コマンドを履歴に積むだけ（↑ = continue、↑↑ = new。先頭スペースで積む操作自体は履歴に残さない）
+  - shell_command:
+    - ~/bin/claude-monitor --no-window --name monitor -f ~/.tmuxp/ticket_v2_project/monitor.txt -l left -w 65% -g 4x3
+    - ' print -rs -- "bin/claude ticket_v2 ticket_v2_api --permission-mode auto"; print -rs -- "bin/claude ticket_v2 ticket_v2_api --permission-mode auto --continue"; clear'
+  start_directory: ~/www/ticket_v2_hub
   window_name: monitor
 - panes:
   - ~/bin/claude-monitor --no-window --name envs -f ~/.tmuxp/ticket_v2_project/envs.txt -l left -w 50% -g 2x2
