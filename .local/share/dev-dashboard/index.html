@@ -462,12 +462,14 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
 .cell.wait { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--bg)); } .cell.wait .cell-state { color: var(--bad); }
 .cell.idle .cell-state { color: var(--ok); }
 .cell.stopped { opacity: .55; } .cell.stopped .cell-state { color: var(--off); }
+.h-nippo { font: inherit; font-size: 12px; padding: 2px 10px; border: 1px solid var(--line, #ccc); border-radius: 4px; background: transparent; color: inherit; cursor: pointer; flex-shrink: 0; margin-left: auto; margin-right: 10px; align-self: center; }
+.h-nippo:hover, .h-nippo:focus-visible { border-color: var(--accent); color: var(--accent); }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <div class="head-row"><h1>開発ダッシュボード</h1><span class="hsrv" id="hsrv"></span><span class="updated" id="updated">読み込み中…</span></div>
+    <div class="head-row"><h1>開発ダッシュボード</h1><span class="hsrv" id="hsrv"></span><button type="button" class="h-nippo" id="h-nippo" title="今日の日報を開く（日報の欄の「今日の日報」と同じ）">日報</button><span class="updated" id="updated">読み込み中…</span></div>
     <div class="sys">
       <div class="gauge" id="g-cpu"><span class="gauge-label">CPU</span><div class="bar"><i style="width:0"></i></div><span class="gauge-val">–</span></div>
       <div class="gauge" id="g-mem"><span class="gauge-label">メモリ</span><div class="bar"><i style="width:0"></i></div><span class="gauge-val">–</span></div>
@@ -720,6 +722,9 @@ async function refresh() {
     $("updated").innerHTML = `<span class="err">Mac に接続できません</span>`;
   }
 }
+
+// ヘッダーの「日報」: 日報の欄の「今日の日報」と同じ動き（欄を閉じていても・下まで流さなくても開ける）
+$("h-nippo").addEventListener("click", () => $("np-open-today").click());
 
 // 実行ログ（local-server の出力）は普段は閉じておく。開閉はこのブラウザに記憶する
 let jobOpen = (() => { try { return localStorage.getItem("dd_job_open") === "1"; } catch (e) { return false; } })();

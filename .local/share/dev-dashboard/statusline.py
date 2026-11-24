@@ -109,6 +109,19 @@ def main():
     cdir = config_dir()
     key = hashlib.sha1(os.path.normpath(cdir).encode()).hexdigest()[:10]
     limits = data.get("rate_limits")
+    if isinstance(limits, dict) and limits:
+        # 受け取った値に 5時間・週 の項目が無いときは、前回の値を残す（リセット時刻を過ぎたものは捨てる）。
+        # 立ち上げ直後の Claude などで一部の項目だけ届き、ダッシュボードの 5h が消えることがあったため
+        try:
+            with open(os.path.join(CACHE, f"claude-{key}.json")) as f:
+                prev = json.load(f).get("rate_limits") or {}
+        except (OSError, ValueError):
+            prev = {}
+        now = time.time()
+        for name, w in prev.items():
+            r = w.get("resets_at") if isinstance(w, dict) else None
+            if name not in limits and isinstance(r, (int, float)) and r > now:
+                limits = {**limits, name: w}
     if limits:
         out = {
             "config_dir": cdir,
