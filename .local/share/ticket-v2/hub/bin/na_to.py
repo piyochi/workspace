@@ -186,7 +186,7 @@ def hook_main():
         except Exception as e:  # 描けなければ hook の文で出す
             text, msg = None, msg + f"\n（ポップアップを描けませんでした: {type(e).__name__}: {e}）"
         if text and show_popup(kind, text):
-            msg = f"{kind} → ポップアップで表示しました（q で閉じる）"
+            msg = f"{kind} → ポップアップで表示しました（q か Esc で閉じる）"
     print(json.dumps({"decision": "block", "reason": msg, "suppressOriginalPrompt": True}, ensure_ascii=False))
     reset_pane_state()
 
@@ -229,8 +229,9 @@ def show_popup(title, text):
         fd, path = tempfile.mkstemp(prefix="na-popup-", suffix=".txt")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text + "\n")
-        # -S: 長い行は折り返さず切る（←→ で横に動く）・-~: 末尾の ~ を出さない・-P: 下の案内
-        cmd = f"LESSCHARSET=utf-8 less -R -S -~ --mouse -P' q 閉じる  ↑↓ スクロール  ←→ 横 ' {path}; rm -f {path}"
+        # 自作のページャー（less は Esc を閉じるに割り当てると矢印キーまで閉じるため）。長い行は折り返さず切り、←→ で横に動く
+        pager = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hub_pager.py")
+        cmd = f"python3 -B {pager} {path} --delete"
         # 大きさは中身に合わせる（幅は最も長い行＋余白、高さは行数＋余白。クライアントの 92%・88% まで）
         import hub_popup as hp
         cw, ch = (int(x) for x in subprocess.run(["tmux", "display", "-p", "-c", clients[0], "#{client_width} #{client_height}"],
