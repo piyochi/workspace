@@ -66,12 +66,11 @@
     - Slack DM（`~/.claude/hooks/slack-dm.sh`）: 確認待ちに変わったとき・レビュー依頼が来た／修正依頼が付いたとき
     - 前回の状態は `hub/watch_notify.json`（watch*.json は copy-to-workspace / copy-to-home の対象外）
   - 確かめるときは `/api/watch?tickets=14926,14747`（固定の順を使わず判定だけ。記録・通知はしない）
-  - Docker の順番待ち（E）はまだ無い
 - 自動の依頼（2026-11-25〜。B 次のスキル・C 資料の後のコミット・F レビュー）。判定と送信はダッシュボードの同じ常駐ループ（1回に1件。送信は `na_to.py` なので、偶数枠・処理中・入力欄に文字がある枠・本番系の枠には送らない）
   - **`/na-next 番号 [枠] [sweep] [scope] [dry]`**: 止まっている所から次のスキルを頼み、以後そのチケットを自動の依頼の対象にする（固定しただけでは始めない）。枠を指定しなければ空いている Claude の枠（入力待ち・作業中のチケット無し・`/na-slot off` で外していない・他のチケットに割り当てていない）を、設計用の環境3・4 → 環境1・2 の順に選ぶ。1チケット1枠（作業中の枠と違う枠は指定できない）。`dry` は送らずに判定だけ
     - 次のスキル: なし→ct-redmine→ct-analyze→ct-architect→（sweep・scope を付けたら ct-sweep→ct-scope）→ct-planner→ct-issue-docs→コミット
     - 自動で進めるのは ct-redmine の後（→ct-analyze）・ct-sweep／ct-scope の後（→次）・ct-issue-docs の後（→コミット）。**ct-analyze・ct-architect・ct-planner の後は止めて確認待ち**として知らせる（`/na-next 番号` で次へ。architect の後に `sweep`・`scope` を付けて決める）。途中の質問も確認待ち。ct-ship-loop 以降は /na-go
-    - ct-analyze の依頼文には「初期調査はステージング（団体 naga3）・テスティングは団体 nagayoshi・ローカルの DB・Redis が要るときは使う前に質問して止まる」を添える（E ができたら順番待ちに置き換える）
+    - ct-analyze の依頼文には「初期調査はステージング（団体 naga3）・テスティングは団体 nagayoshi・ローカルの DB・Redis・サーバーが要るときだけ hub_docker.py wait で順番待ち」を添える
     - コミット（C）は `/ct-commit 番号 issue docs だけをコミット。ブランチは環境の CLAUDE.local.md の決まり（設計だけなら design/番号）。push しない` を1回だけ
     - 頼まないもの: 次のスキルがすでに動いた記録があるとき（終わったチケットで ct-redmine をコメントに使った等）・ブランチ／PR／03_progress.md があるのに流れの記録が足りないとき（記録の外で進めたチケット）・割り当てた枠と違う枠で作業しているとき
   - レビュー（F）: 固定していないチケットのレビュー依頼・修正依頼は知らせだけ（tmux・Slack DM。「/na-order で順番に入れると ct-pr-turn を自動で頼む」）。**固定したら** `/ct-pr-turn <PR の URL> #番号` を自動で頼む（作業中の枠、無ければ空いている枠。修正依頼は環境1・2の枠だけ）
@@ -79,12 +78,19 @@
   - **`/na-go 番号 [枠] [--branch 名前] [force] [dry]`**（D。2026-11-25〜）: 実装を始める。決まった依頼文2つ（設計ページ r1 q4 の補足のまま）を順に送る
     - 1つ目 `/ct-ship-loop 番号 コーディングはcodexで…ブランチ：feature/番号`（`--branch` で変える）。ct-ship-loop が終わったら（end_turn が質問でない）2つ目 `/ct-finish 番号 sweepは設計時に…アーティファクトにまとめて` を自動で送る。ct-finish が終わったら tmux と Slack DM で「完了」を知らせる（push はしない）
     - 枠: 作業中の枠（1チケット1枠）。無ければ指定した枠、無ければ空いている環境1・2の Claude の枠
-    - 止めるもの: ct-issue-docs の記録が無い（記録の外で設計したなら `force`）・ct-ship-loop／ct-finish の記録がある（やり直しは `force`）・処理中や確認待ち・**同じ環境のもう一方の Claude の枠が処理中／確認待ち**（同じリポジトリのブランチを切り替えるため）・**他のチケットの実装（ship-loop・finish）が動いている**（E ができるまで1件ずつ。tmux に知らせる）
+    - 止めるもの: ct-issue-docs の記録が無い（記録の外で設計したなら `force`）・ct-ship-loop／ct-finish の記録がある（やり直しは `force`）・処理中や確認待ち・**同じ環境のもう一方の Claude の枠が処理中／確認待ち**（同じリポジトリのブランチを切り替えるため）
     - 実装を始めたチケットは、流れの自動（redmine→analyze 等）の対象から外れる。状態は `autopilot.json` の `go`（stage: ship-loop → finish → done）。監視欄・/na-watch に「実装: ship-loop 中」等
     - API は `POST /api/watch/go {ticket, slot, branch, force, dry}`。スキル本体 `hub/skills/na-go`
   - **`/na-slot [off|on 枠…]`**: 自動で割り当てる枠から外す・戻す（例 `/na-slot off 11 12`。`hub/slots.json`）
   - 状態: `hub/autopilot.json`（開始したチケット・割り当てた枠・sweep/scope・処理済みの区切り・送信の記録）。`/na-watch` とダッシュボードの監視欄に「自動 [枠] スキル 送信/失敗 時刻」を出す
   - スキル本体 `hub/skills/na-next`・`na-slot`（hub の `.claude/skills/` からリンク。`.git/info/exclude` 済み）。API は `POST /api/watch/next {ticket, slot, sweep, scope, dry}`
+- 開発用サーバー（Docker）の順番待ち（E。2026-11-25〜）
+  - メモリの都合で、ローカルの api・app・sqs は同時に1環境だけ。**テスト・ブラウザでの確認・ローカルの DB/Redis を見る作業の直前に、各環境の Claude が `python3 ~/.local/share/ticket-v2/hub/bin/hub_docker.py wait <番号>`**（run_in_background。終了コード 0 = 使ってよい・3 = まだ待ち→もう一度・1 = 失敗）、終わったら `release <番号>`。コードを書く・読む作業は待たない（実装は同時に複数進めてよいので、/na-go の1件ずつの制限は外した）
+  - wait は順番が来たら、他の環境のサーバーを `~/bin/local-server down` し、自分の環境を `up` する（環境2も対象。2026-11-25 決定）。release ではサーバーを止めない（次の人の wait が切り替える）
+  - 順番は /na-order の順（固定したものが先）、固定していないものは来た順。同じチケットの wait は使用中ならすぐ返る。5分呼び直さない待ちは外す。環境は実行したフォルダから判定（hub では使えない。`--env envN` で指定可）
+  - 譲る: 使用中のチケットの枠が 30 分止まって（質問・入力待ち・枠が無い）いて待っている人がいれば、ダッシュボードの常駐ループが使用中を外し、tmux と Slack DM で知らせる（記録は docker.json の log。`hub_docker.py status` に直近3件）
+  - 手順は個人スキル `~/.claude/skills/ct-ship`・`ct-ship-loop`・`ct-finish`・`ct-pr-turn` の「開発用サーバーの順番待ち」の節に書いた（チーム共有の ct-analyze は書き換えず、依頼文で伝える）。編集前の控えは `~/.claude/tmp/skill-backup-20261125-docker/`
+  - 見る: `hub_docker.py status`・監視欄の先頭・/na-watch の2行目。状態は `hub/docker.json`・`docker.lock`（copy の対象外）
 - Claude の枠（奇数枠）への依頼の送付と完了待ち（2026-11-25 決定: hub が送るのは Claude の枠だけ）
   - **ユーザーが送るときは `/na-to <枠番号> <指示>`**（例: `/na-to 3 /ct-redmine 14926`）。hook が送信してプロンプトを止めるので、hub の Claude は動かず hub の会話を消費しない。結果は「UserPromptSubmit operation blocked by hook: na-to ✅ 送信しました …」と画面に出る（"blocked" は正常）。`/na-to 3 /ct-` のように途中で `/` を打つと候補が出る（途中の `/ct-…` は hub では実行されず、文字として送り先に届く）
     - 送らずに止めるもの: 偶数枠（Codex）・Claude 未起動・処理中・確認待ち・入力欄に未送信の文字がある枠・本番系の枠。入力欄の薄い文字（Claude Code の次の入力の候補）は未送信の扱いにしない

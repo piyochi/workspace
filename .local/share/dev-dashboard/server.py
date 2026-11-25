@@ -39,6 +39,7 @@ import shutil
 import subprocess
 import threading
 import time
+import fcntl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -3511,6 +3512,10 @@ def watch_once():
     d["auto"] = {k: {"slot": v.get("slot"), "plan": v.get("plan"), "go": v.get("go"), "last": (v.get("log") or [None])[-1]}
                  for k, v in _json_load(HUB_AUTO, {"tickets": {}}).get("tickets", {}).items()}
     d["notified"] = watch_notify(d["items"]) + review_notify(fv_items, set(d["order"]))
+    try:
+        d["docker"] = docker_check(slots)
+    except Exception as e:
+        print(f"{time.strftime('%F %T')} 開発用サーバーの順番待ちの確認に失敗: {e}", file=sys.stderr, flush=True)
     watch_cache.update(d)
     tmux_attention(d["attention"])
     try:
@@ -3547,7 +3552,9 @@ MANUAL_NEXT = {None: "ct-redmine", "ct-redmine": "ct-analyze", "ct-analyze": "ct
                "ct-sweep": "ct-planner", "ct-scope": "ct-planner", "ct-planner": "ct-issue-docs", "ct-issue-docs": "commit"}
 ANALYZE_NOTE = ("初期調査は release が対象なので、基本はステージング（https://group.corich.mobi/naga3/events 。団体 naga3 は自由に使ってよい）で確かめてください。"
                 "テスティングは https://group.test.corich.asia/nagayoshi/events （団体 nagayoshi は自由に使ってよい）。"
-                "ローカルの DB・Redis が必要なときは、開発用サーバーは同時に1台なので、使う前に質問して止まってください。")
+                "ローカルの DB・Redis・サーバーが必要なときだけ、開発用サーバーは同時に1台なので、使う前に "
+                "`python3 ~/.local/share/ticket-v2/hub/bin/hub_docker.py wait <番号>`（Bash の run_in_background で実行し、終了コード 0 で使ってよい・3 ならもう一度）で順番を待ち、"
+                "使い終わったら `hub_docker.py release <番号>` を実行してください。")
 auto_lock = threading.Lock()
 
 
@@ -3803,7 +3810,7 @@ GO_ACTIVE = ("ship-loop", "finish")
 def auto_go(n, slot=None, branch="", force=False, dry=False):
     """/na-go 番号 [枠] [--branch 名前] [force]: ct-ship-loop を頼み、終わったら ct-finish を自動で頼む。
 
-    E（開発用サーバーの順番待ち）ができるまでは1件ずつ: 他のチケットの実装（ship-loop・finish）が動いている間は止めて知らせる。
+    実装は同時に複数始めてよい。テスト・ブラウザでの確認は各枠の Claude が hub_docker.py wait で順番待ちをする（E）。
     """
     n = str(n)
     branch = branch or f"feature/{n}"
@@ -3817,13 +3824,8 @@ def auto_go(n, slot=None, branch="", force=False, dry=False):
     i = d["items"][0]
     with auto_lock:
         auto = _json_load(HUB_AUTO, {"tickets": {}})
-        other = [(k, v["go"]) for k, v in auto.get("tickets", {}).items() if k != n and (v.get("go") or {}).get("stage") in GO_ACTIVE]
-        if other:
-            k, g = other[0]
-            msg = (f"#{k} の実装（{g['stage']}・[{g.get('slot')}]）が動いているので、#{n} は始めません"
-                   f"（開発用サーバーの順番待ち（E）ができるまでは1件ずつ）。終わってからもう一度 /na-go {n}")
-            tmux_notify(f"⏸ {msg[:120]}")
-            return False, msg
+        # 2026-11-25 E（開発用サーバーの順番待ち hub_docker.py）ができたので、実装は同時に複数始めてよい。
+        # テスト・ブラウザでの確認だけ、各環境の Claude が hub_docker.py wait で順番待ちをする
         g = (auto.get("tickets", {}).get(n) or {}).get("go") or {}
         if g.get("stage") in GO_ACTIVE:
             return False, f"#{n} は実装を開始済みです（{g['stage']}・[{g.get('slot')}]）"
@@ -3890,6 +3892,65 @@ def go_step(auto, i, t):
         slack_dm(f"hub 監視\n✅ #{n} 実装と仕上げ（ct-finish）が終わりました。[{i['slot']}] で結果を確認してください（push はしていません）")
         return False
     return None
+
+
+# E: 開発用サーバーの順番待ち（hub/bin/hub_docker.py が docker.json を読み書きする）。ここは「譲る」だけを受け持つ
+HUB_DOCKER = os.path.join(HUB_STATE_DIR, "docker.json")
+HUB_DOCKER_LOCK = os.path.join(HUB_STATE_DIR, "docker.lock")
+DOCKER_YIELD = 30 * 60      # 使用中のチケットの枠がこの秒数止まって（質問・入力待ち）いて、待っている人がいれば譲る
+DOCKER_QUEUE_STALE = 300    # hub_docker.py の QUEUE_STALE と同じ
+
+
+def docker_check(slots):
+    """使用中のチケットの枠が 30 分止まっていて、待っている人がいれば使用中を外す（次の人の wait が切り替える）。docker.json の要約を返す。"""
+    try:
+        os.makedirs(HUB_STATE_DIR, exist_ok=True)
+        lf = open(HUB_DOCKER_LOCK, "a")
+    except OSError:
+        return None
+    yielded = None
+    with lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            d = _json_load(HUB_DOCKER, None)
+            if not d:
+                return {"holder": None, "queue": []}
+            now = time.time()
+            h = d.get("holder")
+            queue = [q for q in d.get("queue") or [] if now - q.get("seen", 0) < DOCKER_QUEUE_STALE]
+            changed = False
+            if h:
+                mine = [s for s in slots if s["kind"] == "claude" and s["env"] == h["env"] and s["state"] != "stopped"
+                        and h["ticket"] in (s.get("tickets") or [s.get("ticket")])]
+                if any(s["state"] == "busy" for s in mine):
+                    if h.get("idle_since"):
+                        h.pop("idle_since")
+                        changed = True
+                elif not h.get("idle_since"):
+                    h["idle_since"] = now
+                    changed = True
+                elif queue and now - h["idle_since"] >= DOCKER_YIELD:
+                    order = {str(x): k for k, x in enumerate(watch_order())}
+                    nxt = sorted(queue, key=lambda q: (order.get(q["ticket"], 10_000), q["since"]))[0]
+                    why = "枠が見つからない" if not mine else f"[{mine[0]['slot']}] が{WATCH_STATE_LABEL.get(mine[0]['state'], mine[0]['state'])}"
+                    why += f"のまま {int((now - h['idle_since']) // 60)} 分"
+                    d.setdefault("log", []).append({"at": now, "event": "yield", "ticket": h["ticket"], "env": h["env"], "to": nxt["ticket"], "why": why})
+                    del d["log"][:-50]
+                    d["holder"] = None
+                    yielded = (h, nxt, why)
+                    changed = True
+            if changed:
+                _json_save(HUB_DOCKER, d)
+            summary = {"holder": d.get("holder"), "queue": queue}
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
+    if yielded:
+        h, nxt, why = yielded
+        msg = (f"⏭ 開発用サーバーを #{h['ticket']}（{h['env']}）から #{nxt['ticket']}（{nxt['env']}）に譲りました（{why}）。"
+               f"#{h['ticket']} は次にサーバーを使う前に hub_docker.py wait で並び直します")
+        tmux_notify(msg[:150])
+        slack_dm("hub 監視\n" + msg)
+    return summary
 
 
 def review_notify(fv_items, order):

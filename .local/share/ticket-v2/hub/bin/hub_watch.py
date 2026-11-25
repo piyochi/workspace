@@ -35,10 +35,17 @@ def fetch(refresh=False):
 
 def compact_text(d):
     items = d.get("items") or []
+    dk = d.get("docker") or {}
+    dq = dk.get("queue") or []
+    dline = ""
+    if dk.get("holder") or dq:
+        h = dk.get("holder")
+        dline = ("開発用サーバー: " + (f"使用中 #{h['ticket']}（{h['env']}）" if h else "空き")
+                 + ("・待ち " + " → ".join(f"#{q['ticket']}（{q['env']}）" for q in dq) if dq else "") + "\n")
     if not items:
-        return "固定したチケットはありません（/na-order 番号 … で固定すると監視します）"
+        return dline + "固定したチケットはありません（/na-order 番号 … で固定すると監視します）"
     at = time.strftime("%H:%M:%S", time.localtime(d.get("at") or time.time()))
-    out = [f"{len(items)} 件・確認待ち {d.get('attention', 0)}（{at} 時点）"]
+    out = [f"{len(items)} 件・確認待ち {d.get('attention', 0)}（{at} 時点）"] + ([dline.rstrip()] if dline else [])
     for k, i in enumerate(items, 1):
         slot = f"[{i['slot']}] " if i.get("slot") is not None else ""
         skill = f" · {i['skill'].removeprefix('ct-')}" if i.get("skill") else ""
