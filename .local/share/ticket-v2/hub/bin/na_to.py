@@ -119,7 +119,7 @@ def hook_main():
                         or (len(args) > 1 and not args[1].isdigit()):
                     raise Refuse("書き方: /na-list（Claude の枠の一覧）・/na-list 枠 [行数]（例: /na-list 7・/na-list 7 60）")
                 n = min(int(args[1]), 150) if len(args) > 1 else 30
-                msg = f"na-list [{args[0].strip('[]')}]\n" + hs.detail_text(int(args[0].strip("[]")), n)
+                msg = f"na-list [{args[0].strip('[]')}]\n" + hs.detail_text(int(args[0].strip("[]")), n, color=True)
             else:
                 # hub が送るのは Claude の枠（奇数枠）だけなので、一覧も Claude の枠だけにする（2026-11-25 ユーザー指定）
                 rows = [r for r in hs.collect("monitor") if r["slot"] % 2 == 1]
@@ -179,8 +179,71 @@ def hook_main():
             msg = f"na-to ⛔ エラーで送っていません: {type(e).__name__}: {e}"
     else:
         return  # /na-to・/na-list・/na-redmine・/na-order・/na-watch・/na-next・/na-slot・/na-go 以外は何もしない（通常どおり Claude に渡す）
+    kind = msg.split(" ", 1)[0].split("\n", 1)[0].split("（", 1)[0]
+    if kind in POPUP_KINDS:
+        try:
+            text = popup_text(prompt, msg)
+        except Exception as e:  # 描けなければ hook の文で出す
+            text, msg = None, msg + f"\n（ポップアップを描けませんでした: {type(e).__name__}: {e}）"
+        if text and show_popup(kind, text):
+            msg = f"{kind} → ポップアップで表示しました（q で閉じる）"
     print(json.dumps({"decision": "block", "reason": msg, "suppressOriginalPrompt": True}, ensure_ascii=False))
     reset_pane_state()
+
+
+POPUP_KINDS = ("na-list", "na-watch", "na-redmine")  # 読むための表示だけポップアップに出す（送信・変更の結果は短いので今までどおり）
+
+
+def popup_text(prompt, msg):
+    """ポップアップに出す文（hub_popup がデータから組み立てる）。エラーのときは None（hook の文で出す）"""
+    if "⛔" in msg.split("\n", 1)[0]:
+        return None
+    import hub_popup as hp
+    if LIST_PREFIX.match(prompt):
+        args = (LIST_PREFIX.match(prompt).group(1) or "").split()
+        if args:
+            return hp.render_slot(int(args[0].strip("[]")), min(int(args[1]), 150) if len(args) > 1 else 30)
+        return hp.render_slots([r for r in hs.collect("monitor") if r["slot"] % 2 == 1])
+    if WATCH_PREFIX.match(prompt):
+        import hub_watch as hw
+        return hp.render_watch(hw.fetch(False))  # 判定し直し（refresh）は hook の文を作るときに済んでいる
+    if REDMINE_PREFIX.match(prompt):
+        return hp.render_redmine(msg.removeprefix("na-redmine ").strip())
+    return None
+
+
+def show_popup(title, text):
+    """hub の tmux のクライアントにポップアップで出す（hook の表示は必ず黄色で読みにくい。2026-11-25 ユーザー指定）。
+    ↑↓・PgUp/PgDn でスクロール、q で閉じる。出せなければ False（呼び出し側が hook の文で出す）"""
+    pane = os.environ.get("TMUX_PANE")
+    if not pane:
+        return False
+    try:
+        sess = subprocess.run(["tmux", "display", "-p", "-t", pane, "#{session_name}"], capture_output=True, text=True, timeout=5).stdout.strip()
+        clients = [l.split("\t")[0] for l in subprocess.run(["tmux", "list-clients", "-F", "#{client_name}\t#{session_name}"],
+                                                             capture_output=True, text=True, timeout=5).stdout.splitlines()
+                   if l.split("\t")[-1] == sess]
+        if not clients:
+            return False
+        import tempfile
+        fd, path = tempfile.mkstemp(prefix="na-popup-", suffix=".txt")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+        # -S: 長い行は折り返さず切る（←→ で横に動く）・-~: 末尾の ~ を出さない・-P: 下の案内
+        cmd = f"LESSCHARSET=utf-8 less -R -S -~ --mouse -P' q 閉じる  ↑↓ スクロール  ←→ 横 ' {path}; rm -f {path}"
+        # 大きさは中身に合わせる（幅は最も長い行＋余白、高さは行数＋余白。クライアントの 92%・88% まで）
+        import hub_popup as hp
+        cw, ch = (int(x) for x in subprocess.run(["tmux", "display", "-p", "-c", clients[0], "#{client_width} #{client_height}"],
+                                                 capture_output=True, text=True, timeout=5).stdout.split())
+        lines = text.splitlines()
+        pw = min(max((hp.dw(l) for l in lines), default=60) + 4, int(cw * 0.92))
+        ph = min(len(lines) + 4, int(ch * 0.88))
+        subprocess.Popen(["tmux", "display-popup", "-c", clients[0], "-w", str(max(pw, 60)), "-h", str(max(ph, 10)), "-b", "rounded",
+                          "-T", f" {title} ", "-E", cmd],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def reset_pane_state():

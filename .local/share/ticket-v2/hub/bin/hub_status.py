@@ -229,8 +229,8 @@ def compact_text(rows):
 RULE_RE = re.compile(r"^[─━]{10,}\s*$")
 
 
-def screen_body(lines, n):
-    """画面の末尾 n 行（入力欄の罫線から下・末尾の空行を除く）。/na-list 枠 の表示用"""
+def screen_rows(lines, n):
+    """画面の末尾 n 行の行番号（入力欄の罫線から下・末尾の空行・続く空行を除く）。/na-list 枠 の表示用"""
     end = len(lines)
     for k in range(len(lines) - 1, -1, -1):  # 最後の入力欄（罫線 → ❯/› の行）の上の罫線まで
         if RULE_RE.match(lines[k]) and k + 1 < len(lines) and re.match(r"^\s*[❯›]", lines[k + 1]):
@@ -241,22 +241,31 @@ def screen_body(lines, n):
             if re.match(r"^›", lines[k]):
                 end = k
                 break
-    body = lines[:end]
-    while body and not body[-1].strip():
-        body.pop()
-    out, blank = [], False
-    for line in body[-n * 2:]:  # 空行は続けて出さない
-        if not line.strip():
+    while end > 0 and not lines[end - 1].strip():
+        end -= 1
+    rows, blank = [], False
+    for k in range(max(0, end - n * 2), end):  # 空行は続けて出さない
+        if not lines[k].strip():
             if blank:
                 continue
             blank = True
         else:
             blank = False
-        out.append(line.rstrip())
-    return out[-n:]
+        rows.append(k)
+    return rows[-n:]
 
 
-def detail_text(slot, n=30, tab="monitor"):
+def screen_body(lines, n):
+    return [lines[k].rstrip() for k in screen_rows(lines, n)]
+
+
+def capture_color(pane_id, lines=80):
+    """capture と同じ行数で、色を残した行（ポップアップ用）と消した行の組"""
+    raw = tl.run(["tmux", "capture-pane", "-p", "-e", "-J", "-t", pane_id, "-S", f"-{lines}"]).splitlines()
+    return raw, [ANSI_RE.sub("", l) for l in raw]
+
+
+def detail_text(slot, n=30, tab="monitor", color=False):
     """/na-list 枠 [行数]: その枠の要約（ラベル付きの縦の形）・監視の状態（固定したチケットなら）・画面の末尾 n 行"""
     rows = [r for r in collect(tab) if r["slot"] == slot]
     if not rows:
@@ -280,7 +289,11 @@ def detail_text(slot, n=30, tab="monitor"):
         pass
     out.append("")
     out.append(f"── 画面（末尾 {n} 行・{r['id']}）" + "─" * 30)
-    out += screen_body(capture(r["id"], max(n * 3, 80)), n)
+    if color:  # 画面は枠の色のまま（範囲は色を消した行で決め、同じ行番号の色付きの行を出す）
+        raw, plain = capture_color(r["id"], max(n * 3, 80))
+        out += [raw[k] + "\x1b[0m" for k in screen_rows(plain, n)]
+    else:
+        out += screen_body(capture(r["id"], max(n * 3, 80)), n)
     return "\n".join(out)
 
 
