@@ -51,8 +51,7 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -1
 .fc b:hover { text-decoration: underline; }  /* 番号の部分は Redmine を開く */
 .fc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--off); flex: none; }
 .fc-dot.busy { background: #f97316; } .fc-dot.wait { background: var(--bad); } .fc-dot.idle { background: var(--ok); } .fc-dot.none { background: transparent; border: 1px solid var(--line); }
-.fc-stage { color: var(--muted); }
-.fc-env { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 0 3px; line-height: 13px; font-variant-numeric: tabular-nums; }
+.fc-stage { color: var(--muted); }.fc-env { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 0 3px; line-height: 13px; font-variant-numeric: tabular-nums; }
 .fc.b-mine, .fc.b-fix, .fc.b-review_in { border-color: var(--bad); }
 .fc.b-review_in { background: color-mix(in srgb, var(--bad) 10%, var(--card)); }
 .fc.b-done { opacity: .6; }
@@ -74,6 +73,12 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -1
 .fc-pop-title { display: flex; gap: 6px; align-items: flex-start; }
 .fc-pop-title > span { flex: 1; min-width: 0; }
 .fc-pop-title a { color: var(--accent); text-decoration: none; margin-right: 4px; }
+/* アイコンはタイトルの横ではなく、ステータス・優先度・担当の行の右端に置く（タイトルの幅を狭めないため）。
+   枠線なしの小さなアイコンにして、乗せたときだけ背景を付ける */
+.fc-pop-btns { margin-left: auto; flex: none; display: flex; gap: 1px; align-items: center; font-weight: 400; }
+.fc-pop .fc-pop-btns button { border: 0; background: none; color: var(--muted); font-size: 12px; line-height: 20px; padding: 0 6px; border-radius: 4px; }
+.fc-pop .fc-pop-btns button:hover { background: var(--bg); color: var(--text); }
+.fc-pop .fc-pop-btns button.nav-to { font-size: 11px; }
 .fc-pop-re { flex: none; font-size: 11px; padding: 0 6px; line-height: 18px; font-weight: 400; }
 .fc-pop-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; align-items: center; }
 .fc-pop-tags .who { color: var(--muted); font-size: 11px; }
@@ -188,6 +193,11 @@ mark.mv-hit { background: color-mix(in srgb, #facc15 55%, transparent); color: i
 .wt-head a { color: var(--accent); font-weight: 700; text-decoration: none; font-variant-numeric: tabular-nums; }
 .wt-subj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 200px; }
 .wt-pri { color: var(--muted); }
+.wt-head.rm-head { flex-wrap: nowrap; }
+button.wt-del { flex: none; font-size: 10px; padding: 0 5px; line-height: 16px; }
+/* 監視・メモ・Redmine 欄の行き来（同じチケットの別の欄へ移動） */
+button.nav-to { flex: none; font-size: 10px; padding: 0 5px; line-height: 16px; color: var(--muted); white-space: nowrap; }
+button.nav-to[hidden] { display: none; }  /* タイトルの行は Redmine 欄と同じく1行（長い件名は「…」） */
 .wt-pri.hi { color: var(--bad); font-weight: 700; }
 .wt-state { border-radius: 9px; padding: 0 7px; line-height: 17px; border: 1px solid var(--line); white-space: nowrap; }
 .wt-state.busy { border-color: #f97316; color: #ea580c; }
@@ -903,11 +913,19 @@ function focusPopHtml(i, here) {
   const arts = !artList.length ? "" : artLine(artList[0]) + (artList.length > 1
     ? `<details class="fc-more"><summary>他 ${artList.length - 1} 件</summary>${artList.slice(1).map(artLine).join("")}</details>` : "");
   return `<div class="fc-pop-title"><span>${i.url ? ext(i.url, `#${i.id}`) : `#${i.id}`}${esc(i.subject || "（件名なし）")}</span>`
-      + `<button type="button" class="fc-pop-re" data-re="${esc(i.id)}" title="覚えている分を使わずに、Redmine・GitHub・git から取り直す">↻</button></div>`
-    + (tags ? `<div class="fc-pop-tags">${tags}</div>` : "")
+      + `</div>`
+    + `<div class="fc-pop-tags">${tags}${fcPopBtnsHtml(i.id, i.subject || "", i.url || "",
+        `<button type="button" class="fc-pop-re" data-re="${esc(i.id)}" title="覚えている分を使わずに、Redmine・GitHub・git から取り直す">↻</button>`)}</div>`
     + `<dl>${row("tmux", slots)}${row("段階", stage)}${row("担当", ball)}${row("最新コメント", note)}${row("作業", work)}${row("ブランチ", brs)}${row("PR", prs)}${row("レビュー依頼", req)}${row("PR（会話）", prLinks)}${row("アーティファクト", arts)}</dl>`
     + (here ? "" : `<div class="fc-pop-foot">押すと Redmine 欄のその行を開きます（無ければ Redmine を開きます）</div>`);
 }
+// 吹き出しのアイコン（行には置かず、ステータスの行の右端にまとめる）: ⧉ コピー・▶ tmux の枠に送る・監視/☰ その欄の行へ移動。
+// 押したときの処理は document で拾う（button.rm-copy・button.rm-send・button.nav-to）。出した元の欄への移動ボタンは置かない
+let fcPopSelf = "";
+const fcPopBtnsHtml = (id, subject, url, tail = "") => `<span class="fc-pop-btns">`
+  + `<button type="button" class="rm-copy fc-pop-re" data-copy="${esc(`#${id}: ${subject}`)}" data-url="${esc(url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button>`
+  + `<button type="button" class="rm-send fc-pop-re" data-ticket="${esc(id)}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button>`
+  + navBtnsHtml(id, fcPopSelf) + tail + `</span>`;
 // チップに乗せたら吹き出しを出す。吹き出しの上にマウスを移しても消さない（中のリンクを押せるように）
 let fcPopTimer = 0, fcPopFor = null;
 // Redmine 欄・メモの見出しの分は、乗せたチケットだけサーバーに聞く（サーバーが Redmine 3 分・git 10 分覚える）。ここでも 1 分覚える
@@ -931,13 +949,15 @@ function showFocusPop(el) {
   if (!document.contains(el)) { el = document.querySelector(`[data-fc="${CSS.escape(id)}"]:hover`); if (!el) return; }
   clearTimeout(fcPopTimer);
   fcPopFor = el;
+  fcPopSelf = el.closest(".wt-row") ? "watch" : el.closest(".rm-row") ? "redmine" : "";
   const pop = $("fc-pop");
   const i = el.dataset.id ? focusItems.find((x) => x.id === id) : (fcCache[id] && Date.now() - fcCache[id].at < 60000 ? fcCache[id].item : null);
   if (i) {
     pop.innerHTML = focusPopHtml(i, !el.dataset.id);
   } else {
     const base = [...((rmData && rmData.issues) || []), ...((rmData && rmData.memo_extra) || [])].find((x) => String(x.id) === id);
-    pop.innerHTML = `<div class="fc-pop-title">#${esc(id)} ${esc(base ? base.subject : npSubject(id).replace(/^#\d+:?\s*/, ""))}</div><div class="fc-pop-foot">読み込み中…</div>`;
+    const subj = base ? base.subject : npSubject(id).replace(/^#\d+:?\s*/, "");
+    pop.innerHTML = `<div class="fc-pop-title"><span>#${esc(id)} ${esc(subj)}</span></div><div class="fc-pop-tags">${fcPopBtnsHtml(id, subj, base ? base.url || "" : "")}</div><div class="fc-pop-foot">読み込み中…</div>`;
     fetch(`/api/focus?ticket=${encodeURIComponent(id)}`).then((r) => r.json()).then((d) => {
       const it = d.items && d.items[0]; if (!it) return;
       fcCache[id] = { at: Date.now(), item: it };
@@ -966,7 +986,7 @@ async function refetchFocus(id, btn) {
     }
   } catch (e) { btn.disabled = false; btn.textContent = "↻ 失敗"; }
 }
-$("fc-pop").addEventListener("click", (e) => { const b = e.target.closest("button.fc-pop-re"); if (b) refetchFocus(b.dataset.re, b); });
+$("fc-pop").addEventListener("click", (e) => { const b = e.target.closest("button.fc-pop-re[data-re]"); if (b) refetchFocus(b.dataset.re, b); });
 const hideFocusPop = () => { clearTimeout(fcPopTimer); fcPopTimer = setTimeout(() => { $("fc-pop").hidden = true; }, 300); };  // 吹き出しへ移るまでの猶予
 // 対応中のチップ（.fc）と、Redmine 欄の件名・メモの見出し（[data-fc]）。少し止めてから出す（通り過ぎただけで取りに行かない）
 let fcHoverTimer = 0;
@@ -1030,31 +1050,68 @@ function focusOpenRedmine(b) {
 $("focus").addEventListener("click", (e) => {
   const b = e.target.closest(".fc"); if (!b) return;
   if (e.metaKey || e.ctrlKey || e.target.closest(".fc b")) { focusOpenRedmine(b); return; }
-  const row = document.querySelector(`#redmine .rm-row[data-id="${b.dataset.id}"]`);
-  if (!row) {  // 欄は先頭 10 件だけ。外れたものは「もっと見る」の画面で行を開き、そこにも無ければ Redmine を開く
-    const id = b.dataset.id, has = (l) => (l || []).some((i) => String(i.id) === id);
-    if (!rmData || !(has(rmData.issues) || has(rmData.today_extra))) { focusOpenRedmine(b); return; }
-    $("rm-cat").value = has(rmData.issues) ? "" : "s:today"; $("rm-q").value = "";
-    openRm();
-    const r = $("rm-all").querySelector(`.rm-row[data-id="${id}"]`);
-    if (!r) { closeRm(); focusOpenRedmine(b); return; }
-    if (!r.classList.contains("open") && !r.querySelector(".rm-tg.none")) r.querySelector(".rm-tg").click();
-    $("rm-all").querySelector(`.rm-row[data-id="${id}"]`)?.scrollIntoView({ block: "start" });
-    return;
-  }
-  const sec = document.querySelector('details.sec[data-key="redmine"]'); if (sec) sec.open = true;
-  if (!row.classList.contains("open") && !row.querySelector(".rm-tg.none")) row.querySelector(".rm-tg").click();
-  // 下へ移動するとヘッダーに小さい版（tmux 等）が出て高さが変わるので、移動し終えたら測り直して行の見出しがヘッダーに隠れないよう合わせる
-  // 小さい版（#mini-wrap）はヘッダーの下にはみ出して出る（position: absolute）ので、出ているときはその下端を使う
+  if (!jumpRedmine(b.dataset.id)) focusOpenRedmine(b);
+});
+// 要素をヘッダーに隠れない位置までスクロールする。
+// 下へ移動するとヘッダーに小さい版（tmux 等）が出て高さが変わるので、移動し終えたら測り直して合わせる
+// 小さい版（#mini-wrap）はヘッダーの下にはみ出して出る（position: absolute）ので、出ているときはその下端を使う
+function scrollUnderHeader(el) {
   const headBottom = () => {
     const h = document.querySelector("header").getBoundingClientRect().bottom, m = $("mini-wrap").getBoundingClientRect();
     return m.height ? Math.max(h, m.bottom) : h;
   };
-  const gap = () => row.getBoundingClientRect().top - headBottom() - 8;
+  const gap = () => el.getBoundingClientRect().top - headBottom() - 8;
   window.scrollBy({ top: gap(), behavior: "smooth" });
   let fixed = false;
   const fix = () => { if (fixed) return; fixed = true; window.removeEventListener("scrollend", fix); const d = gap(); if (Math.abs(d) > 1) window.scrollBy({ top: d }); };
   window.addEventListener("scrollend", fix); setTimeout(fix, 1200);
+}
+// 移動先で少しの間目立たせる（メモの見出しと同じ .mv-flash）
+function flashEl(el) { el.classList.remove("mv-flash"); void el.offsetWidth; el.classList.add("mv-flash"); }
+// ---- 監視・メモ・Redmine 欄の行き来（同じチケットの、別の欄の場所へ移動する） ----
+const rmHas = (id) => !!rmData && [rmData.issues, rmData.today_extra].some((l) => (l || []).some((i) => String(i.id) === String(id)));
+const watchHas = (id) => !!watchData && (watchData.items || []).some((i) => String(i.id) === String(id));
+// Redmine 欄のその行へ。欄は先頭 10 件だけなので、外れたものは「もっと見る」の画面で行を開く。どちらにも無ければ false
+function jumpRedmine(id) {
+  id = String(id);
+  const row = document.querySelector(`#redmine .rm-row[data-id="${id}"]`);
+  if (!row) {
+    if (!rmHas(id)) return false;
+    $("rm-cat").value = rmData.issues.some((i) => String(i.id) === id) ? "" : "s:today"; $("rm-q").value = "";
+    openRm();
+    const r = $("rm-all").querySelector(`.rm-row[data-id="${id}"]`);
+    if (!r) { closeRm(); return false; }
+    if (!r.classList.contains("open") && !r.querySelector(".rm-tg.none")) r.querySelector(".rm-tg").click();
+    $("rm-all").querySelector(`.rm-row[data-id="${id}"]`)?.scrollIntoView({ block: "start" });
+    return true;
+  }
+  const sec = document.querySelector('details.sec[data-key="redmine"]'); if (sec) sec.open = true;
+  if (!row.classList.contains("open") && !row.querySelector(".rm-tg.none")) row.querySelector(".rm-tg").click();
+  scrollUnderHeader(row); flashEl(row);
+  return true;
+}
+// 監視のその行へ。無ければ false
+function jumpWatch(id) {
+  const sec = document.querySelector('details.sec[data-key="watch"]'); if (sec) sec.open = true;
+  const row = document.querySelector(`#watch .wt-row[data-id="${String(id)}"]`);
+  if (!row) return false;
+  scrollUnderHeader(row); flashEl(row);
+  return true;
+}
+// 移動のボタン（監視・Redmine のうち自分の欄以外）。行き先にそのチケットが無いものは syncNavBtns で隠す
+// メモへは ✎→「済」で移動できるので、メモ行きのボタンは置かない。Redmine は横に長いので ☰（一覧）の記号にする
+const NAV_LABEL = { watch: "監視", memo: "メモ", redmine: "☰" };
+const NAV_NAME = { watch: "監視", memo: "メモ", redmine: "Redmine" };
+const navBtnsHtml = (id, self) => ["watch", "redmine"].filter((k) => k !== self)
+  .map((k) => `<button class="nav-to" data-to="${k}" data-n="${id}" title="${NAV_NAME[k]}のこのチケットへ移動"${navHas(k, id) ? "" : " hidden"}>${NAV_LABEL[k]}</button>`).join("");
+const navHas = (k, id) => k === "watch" ? watchHas(id) : k === "redmine" ? rmHas(id) : !!(window.__memoHas && window.__memoHas(String(id)));
+function syncNavBtns() {
+  document.querySelectorAll("button.nav-to").forEach((b) => { b.hidden = !navHas(b.dataset.to, b.dataset.n); });
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button.nav-to"); if (!b) return;
+  const n = b.dataset.n, ok = b.dataset.to === "watch" ? jumpWatch(n) : b.dataset.to === "redmine" ? jumpRedmine(n) : !!(window.__memoJump && window.__memoJump(n));
+  if (!ok) { b.textContent = "✗"; b.title = "見つかりませんでした"; setTimeout(() => { b.textContent = NAV_LABEL[b.dataset.to]; b.title = `${NAV_NAME[b.dataset.to]}のこのチケットへ移動`; }, 1500); }
 });
 // ホイールクリックも Redmine を開く（button は click が来ないので auxclick で受ける。mousedown で自動スクロールを止める）
 $("focus").addEventListener("mousedown", (e) => { if (e.button === 1 && e.target.closest(".fc")) e.preventDefault(); });
@@ -1063,21 +1120,33 @@ $("focus").addEventListener("auxclick", (e) => {
   e.preventDefault(); focusOpenRedmine(b);
 });
 // ---- 監視（hub の /na-order で固定したチケット）。/api/watch を 20 秒ごとに読む ----
+let watchData = null;
 async function loadWatch() {
   try {
-    const d = await (await fetch("/api/watch")).json();
+    watchData = await (await fetch("/api/watch")).json();
+    renderWatch();
+  } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
+}
+// 描画だけ（Redmine 欄でステータスを変更し始めたときも rmRerender から呼んで、同じ番号の行を合わせる）
+function renderWatch() {
+  const d = watchData; if (!d) return;
+  {
     const items = d.items || [];
     const t = d.at ? new Date(d.at * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
     $("watch-meta").textContent = items.length ? `${items.length} 件${d.attention ? `・確認待ち ${d.attention}` : ""}・${t} 時点` : "";
     // 開発用サーバーの順番待ち（hub_docker.py）。使用中か待ちがあれば先頭に1行出す
     const dk = d.docker || {}, dq = dk.queue || [];
     const dline = dk.holder || dq.length ? `<div class="wt-empty" title="hub_docker.py wait / release。30 分止まると次に譲る">開発用サーバー: ${dk.holder ? `使用中 #${esc(dk.holder.ticket)}（${esc(dk.holder.env)}）` : "空き"}${dq.length ? `・待ち ${dq.map((q) => `#${esc(q.ticket)}（${esc(q.env)}）`).join(" → ")}` : ""}</div>` : "";
-    if (!items.length) { $("watch").innerHTML = dline + `<div class="wt-empty">固定したチケットはありません（hub で <code>/na-order 番号 …</code>）</div>`; return; }
+    if (!items.length) { $("watch").innerHTML = dline + `<div class="wt-empty">固定したチケットはありません（hub で <code>/na-order 番号 …</code>）</div>`; syncNavBtns(); return; }
     $("watch").innerHTML = dline + items.map((i, k) => {
       const flow = (i.flow || []).map((x) => `<span class="wt-step ${x.mark || ""}${x.optional ? " opt" : ""}" title="${esc(x.skill)}${x.mark ? `：${{done: "済み", running: "実行中・途中", question: "質問中", skip: "実行の記録なし"}[x.mark] || x.mark}` : ""}">${esc(x.short)}</span>`).join("");
       const extra = [];
       if (i.phase) extra.push(`<span class="wt-extra" title="03_progress.md のフェーズ">フェーズ ${i.phase.done}/${i.phase.total}</span>`);
-      if (i.pr_turn) extra.push(`<span class="wt-extra">pr-turn ${i.pr_turn.result === "done" ? "済み" : "途中"}</span>`);
+      // ct-pr-turn は流れのスキル（WATCH_FLOW）の外で持つ（入れると自動の依頼の「次のスキル」と「前の段階は済み」の判定が変わる）ので、
+      // サーバーの pr_turn から finish の右に同じ形のアイコンを足す（印: 済み・実行中・質問中。記録が無ければ印なし）
+      const ptMark = i.pr_turn ? ({ done: "done", running: "running", question: "question" }[i.pr_turn.result] || "running") : "";
+      const ptTip = { done: "済み", running: "実行中・途中", question: "質問中" }[ptMark];
+      const prTurn = `<span class="wt-step ${ptMark}" title="ct-pr-turn${ptTip ? `：${ptTip}` : ""}">pr-turn</span>`;
       (i.prs || []).forEach((p) => extra.push(`<a class="wt-extra" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.repo || "")}#${p.number} ${esc(p.state || "")}</a>`));
       if (i.review) extra.push(`<span class="wt-extra rv" title="${esc(i.review.why)}">${esc(i.review.label)}</span>`);
       const a = (d.auto || {})[i.id];  // /na-next で開始したチケット（自動で次のスキルを頼む）
@@ -1087,16 +1156,34 @@ async function loadWatch() {
         if (a.go) extra.push(`<span class="wt-extra" title="/na-go（${esc(a.go.branch || "")}）">実装: ${{"ship-loop": "ship-loop 中", finish: "finish 中", done: "完了"}[a.go.stage] || esc(a.go.stage)}</span>`);
       }
       const slot = i.slot !== null && i.slot !== undefined ? `[${i.slot}] ` : "";
-      const hi = ["今すぐ", "急いで"].includes(i.priority);
-      return `<div class="wt-row${i.attention ? " att" : ""}"><span class="wt-no">${k + 1}</span>
-        <div class="wt-head"><a href="${esc(i.url)}" target="_blank" rel="noopener">#${esc(i.id)}</a>
-          <span class="wt-pri${hi ? " hi" : ""}">【${esc(i.priority || "?")}】</span><span class="wt-pri">${esc(i.status)}</span>
-          <span class="wt-state ${i.state}" title="${esc(i.skill)}">${esc(slot)}${esc(i.state_label)}${i.skill ? ` · ${esc(i.skill.replace(/^ct-/, ""))}` : ""}</span>
-          <span class="wt-subj" title="${esc(i.subject)}">${esc(i.subject)}</span></div>
-        <div class="wt-flow">${flow}${extra.join("")}</div></div>`;
+      // タイトルの行は Redmine 欄の行と同じ部品: 優先度・ステータス（押すと変更）・「#番号: 件名」（乗せると吹き出し。⧉・▶・移動は吹き出しの中）・✎
+      // ステータスの変更は rmSt（番号は数値）で持つので、番号を数値にして渡す
+      const r = { ...i, id: Number(i.id) };
+      return `<div class="wt-row${i.attention ? " att" : ""}" data-id="${r.id}"><span class="wt-no">${k + 1}</span>
+        <div class="rm-head wt-head">${i.priority ? `<span class="rm-tag ${RM_PRI[i.priority] || ""}">${esc(i.priority)}</span>` : ""}
+          ${rmStatusHtml(r)}
+          <span class="rm-subj" data-fc="${r.id}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${r.id}</a>: ${esc(i.subject)}</span>
+          ${memoBtnHtml(r)}
+          <button class="wt-del" data-ticket="${r.id}" title="監視から外す（hub の /na-order -${r.id} と同じ。Redmine には何もしない）">🗑</button></div>
+        <div class="wt-flow"><span class="wt-state ${i.state}" title="${esc(i.skill)}">${esc(slot)}${esc(i.state_label)}${i.skill ? ` · ${esc(i.skill.replace(/^ct-/, ""))}` : ""}</span>${flow}${prTurn}${extra.join("")}</div></div>`;
     }).join("");
-  } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
+  }
+  syncNavBtns();  // 監視の中身が変わったので、Redmine 欄・メモの「監視」ボタンも合わせる
 }
+// 🗑: 監視（hub の固定の順）から外す。確かめてから /api/watch/remove に送り、返ってきた一覧で描き直す
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("button.wt-del"); if (!b) return;
+  const n = b.dataset.ticket;
+  if (!confirm(`#${n} を監視から外しますか？（hub の /na-order -${n} と同じ。Redmine には何もしません）`)) return;
+  b.disabled = true;
+  let d;
+  try {
+    d = await (await fetch("/api/watch/remove", { method: "POST", headers: { "Content-Type": "application/json", "X-Dashboard": "1" },
+      body: JSON.stringify({ ticket: n }) })).json();
+  } catch (err) { d = { error: "Mac に接続できません" }; }
+  if (d.error) { b.disabled = false; alert(d.error); return; }
+  watchData = { ...watchData, ...d }; renderWatch();
+});
 loadWatch();
 setInterval(loadWatch, 20000);
 refreshFocus();
@@ -1441,7 +1528,7 @@ document.addEventListener("change", async (e) => {
   // すぐ見た目に反映してから、Redmine を取り直す（完了などにすると一覧から消える）
   [...rmData.issues, ...(rmData.today_extra || []), ...(rmData.memo_extra || [])].filter((i) => i.id === id).forEach((i) => { i.status = d.status; });
   rmSt = null; rmRerender();
-  loadRedmine(true);
+  loadRedmine(true); loadWatch();
   delete fcCache[String(id)]; refreshFocus();  // 吹き出し・対応中も取り直す（サーバー側の覚えている分は変更のときに捨ててある）
 });
 // Redmine の行: タイトル右のアイコンで「#番号: タイトル」をコピー
@@ -1460,6 +1547,7 @@ const memoBtnHtml = (i) => {
   return `<button class="rm-memo${has ? " done" : ""}" data-n="${i.id}" data-memo="${esc(`#${i.id}: ${i.subject}`)}" title="${has ? MEMO_DONE_TIP : MEMO_BTN_TIP}">${has ? "済" : "✎"}</button>`;
 };
 function syncMemoBtns() {
+  syncNavBtns();  // 移動のボタン（メモの見出しの有無も見る）も合わせる
   if (!window.__memoHas) return;
   document.querySelectorAll("button.rm-memo[data-n]").forEach((b) => {
     const has = window.__memoHas(b.dataset.n);
@@ -1632,6 +1720,7 @@ function rmRerender() {
   if (!rmData) return;
   $("redmine").innerHTML = rmRows(rmData.issues.slice(0, 10)); fitBr($("redmine"));
   if (rmOpen) renderRmAll();
+  renderWatch();  // 監視の行もステータスのボタンを同じ部品で出しているので合わせる
   if (window.__memoRender) window.__memoRender();  // メモの見出しのステータスも同じ表示にする
 }
 document.addEventListener("click", (e) => { const b = e.target.closest("button.rm-full"); if (b) rmFullSearch(Number(b.dataset.ticket)); });
@@ -1759,9 +1848,7 @@ function rmRows(items, opts = {}) {
         ${i.extra ? `<span class="rm-tag extra" title="今日作業したが、自分担当の未完了チケットではないもの">${i.closed ? "完了" : `担当外${i.assignee ? `: ${esc(i.assignee)}` : ""}`}</span>` : ""}
         ${rmStatusHtml(i)}
         <span class="rm-subj" data-fc="${i.id}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${i.id}</a>: ${esc(i.subject)}</span>
-        <button class="rm-copy" data-copy="${esc(`#${i.id}: ${i.subject}`)}" data-url="${esc(i.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button>
         ${memoBtnHtml(i)}
-        <button class="rm-send" data-ticket="${i.id}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button>
         ${!i.history.length && !full ? `<button class="rm-full" data-ticket="${i.id}" title="全期間で調べる: 直近${rmData ? rmData.history_days : 30}日に見つからなかったので、残っている Claude・Codex の記録全部と各環境の git のコミットから探す" aria-label="全期間で調べる">🔍</button>` : ""}</div>
       ${info.length ? `<div class="rm-info">${info.join("")}</div>` : ""}
       ${opts.todayLog && td ? todayLogHtml(td, i.id) : ""}
@@ -2776,8 +2863,6 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
         // ステータスは Redmine 欄と同じ部品（押すと選べるステータスを出し、選ぶと変更する）。その右に担当者
         h.firstChild.insertAdjacentHTML("beforebegin", `<span class="mv-meta"><span class="mv-st">${rmStatusHtml(iss)}</span>`
           + (iss.assignee ? `<span class="mv-who" title="担当者">${esc(iss.assignee)}</span>` : "") + `</span>`);
-        // Redmine 欄と同じ ⧉（「#番号: タイトル」をリンク付きでコピー）と ▶（tmux の枠に送る）
-        h.querySelector(".mv-btns").insertAdjacentHTML("afterbegin", `<button class="rm-copy" data-copy="${esc(`#${iss.id}: ${iss.subject}`)}" data-url="${esc(iss.url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button><button class="rm-send" data-ticket="${iss.id}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button>`);
         const box = document.createElement("div");
         box.className = "mv-tk" + cls;
         box.append(h);

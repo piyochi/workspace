@@ -11,6 +11,7 @@
   GET  /api/redmine  … 自分担当の未完了チケット（5分キャッシュ、refresh=1 で取り直し）と、各チケットの枠・ブランチ・issue docs、
                        今日（朝 4:00 以降）の作業（today）と、今日作業した担当外・完了済みのチケット（today_extra）
   GET  /api/watch    … hub の監視（/na-order で固定したチケットの枠・段階・状態。refresh=1 でその場で判定、tickets=番号… で確かめる）
+  POST /api/watch/remove … 監視から1件外す（{"ticket": 番号}。/na-order -番号 と同じ。order.json から消す）
   GET  /api/history  … 1 チケットを全期間で探す（Claude・Codex の記録全部と各環境の git のコミット）
   POST /api/link     … [n] の枠の連動先（@link_slot。「2,4」のように複数可）を付ける・外す
   POST /api/cli      … [n] の枠で Claude / Codex を起動（monitor.txt のコマンド）・停止（入力待ちのときだけ）
@@ -3287,6 +3288,27 @@ def watch_order():
         return []
 
 
+def watch_remove(n):
+    """監視（固定の順）から1件外す。hub の /na-order -番号 と同じ（書式は hub_redmine.py の save_order と同じ）。
+    watch_once は自動の依頼まで動かすので呼ばず、覚えている一覧からその行を除くだけ（20 秒後の判定で正式に入れ替わる）。"""
+    with watch_lock:
+        try:
+            with open(HUB_ORDER, encoding="utf-8") as f:
+                cur = json.load(f).get("order") or []
+        except (OSError, ValueError):
+            cur = []
+        order = [x for x in cur if str(x) != n]
+        if len(order) == len(cur):
+            return False
+        tmp = HUB_ORDER + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"order": order, "updated": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}, f, ensure_ascii=False)
+        os.replace(tmp, HUB_ORDER)
+        items = [i for i in watch_cache.get("items", []) if str(i.get("id")) != n]
+        watch_cache.update(items=items, attention=sum(1 for i in items if i.get("attention")), order=[str(x) for x in order])
+    return True
+
+
 def _watch_event(ticket, skill, ts):
     evs = watch_skills.setdefault(ticket, [])
     ev = {"skill": skill, "start": ts, "end": 0, "result": "running"}
@@ -4501,6 +4523,13 @@ class Handler(BaseHTTPRequestHandler):
             set_pane_label(p["id"], label)
             remember_label(slot, label[:LABEL_MAX])
             return self.send_json({"ok": True, "label": label[:LABEL_MAX]})
+        if self.path == "/api/watch/remove":  # 監視の行の 🗑（/na-order -番号 と同じ）
+            n = str(req.get("ticket") or "")
+            if not re.fullmatch(r"\d{4,6}", n):
+                return self.send_json({"error": "チケット番号が不正です"}, 400)
+            if not watch_remove(n):
+                return self.send_json({"error": f"#{n} は監視に入っていません"}, 404)
+            return self.send_json({"ok": True, **{k: v for k, v in watch_cache.items() if not k.startswith("_")}})
         if self.path == "/api/watch/go":
             n, slot, pre = watch_target(req)
             if n is None:
