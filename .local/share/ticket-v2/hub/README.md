@@ -45,6 +45,12 @@
 - 12枠の一覧と状態（実行中・入力待ち・空き）、各枠のチケット番号・段階の把握（`tmux_link.py list`・枠タイトル・開発ダッシュボードの「対応中」）
   - **ユーザーが見るときは `/na-list`**: Claude の枠（奇数枠）だけを1枠2行（状態・チケット・ブランチ・会話量・完了時刻／最後の応答の末尾）で画面に出す。`/na-to` と同じ hook（`na_to.py --hook`）が表示してプロンプトを止めるので、hub の会話を消費しない。スキル本体 `hub/skills/na-list/SKILL.md` を hub の `.claude/skills/na-list` からシンボリックリンク（`.git/info/exclude` 済み）
   - hub の Claude が見るときは `python3 ~/.local/share/ticket-v2/hub/bin/hub_status.py`（12枠を1行ずつ要約。--active で起動中だけ、--compact で /na-list と同じ形）。詳しく見る枠だけ `tmux_link.py read %ID`
+- Redmine のチケットの把握（2026-11-25〜）
+  - **ユーザーが見るときは `/na-redmine [件数] [優先度…] [全部] [再取得]`**: 自分担当の未完了（新規登録・進行中・フィードバック）とウォッチ中（終了・解決・却下以外。プロジェクトを問わない）を1件2行で画面に出す。1行目は【優先度】・ステータス・件名・作業中の枠（[n] 状態 スキル名）、2行目は待ち・ブロック先（未完了の相手だけ）・最終更新（自分/他・日時）・最新コメントの冒頭（自分のコメントなら「自:」）。`/na-list` と同じ hook が表示するので hub の会話を消費しない
+    - 優先度を指定しないときは、件がある優先度の上から2段だけ（今すぐ・急いで。今すぐが無ければ急いで・高め）。`/na-redmine 高め以上`・`/na-redmine 今すぐ 急いで 10`・`/na-redmine 全部`。並びはダッシュボードと同じ（枠で作業中→今日作業→優先度）
+    - データは開発ダッシュボードの `/api/redmine`（5分キャッシュ。`再取得` で取り直し）を localhost から読む。Redmine への問い合わせ・キャッシュ・枠との対応づけはダッシュボードの1か所だけ（hub は Redmine に直接問い合わせない）。ダッシュボードが止まっていると ⛔ を出す
+    - 構成: 整形 `hub/bin/hub_redmine.py`（hub の Claude が見るときも `python3 … hub_redmine.py [件数] [優先度…] [--json]`）。スキル本体 `hub/skills/na-redmine/SKILL.md` を hub の `.claude/skills/na-redmine` からシンボリックリンク（`.git/info/exclude` 済み）
+  - ダッシュボードの Redmine 欄にもウォッチ分（区切り「ウォッチ中」）と、もっと見るの絞り込みに優先度（〜以上も）を足した。ダッシュボードは全優先度を出す（上から2段に絞るのは `/na-redmine` だけ）
 - Claude の枠（奇数枠）への依頼の送付と完了待ち（2026-11-25 決定: hub が送るのは Claude の枠だけ）
   - **ユーザーが送るときは `/na-to <枠番号> <指示>`**（例: `/na-to 3 /ct-redmine 14926`）。hook が送信してプロンプトを止めるので、hub の Claude は動かず hub の会話を消費しない。結果は「UserPromptSubmit operation blocked by hook: na-to ✅ 送信しました …」と画面に出る（"blocked" は正常）。`/na-to 3 /ct-` のように途中で `/` を打つと候補が出る（途中の `/ct-…` は hub では実行されず、文字として送り先に届く）
     - 送らずに止めるもの: 偶数枠（Codex）・Claude 未起動・処理中・確認待ち・入力欄に未送信の文字がある枠・本番系の枠。入力欄の薄い文字（Claude Code の次の入力の候補）は未送信の扱いにしない

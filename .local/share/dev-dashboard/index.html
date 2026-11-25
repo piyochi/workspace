@@ -393,7 +393,13 @@ button.np-draft { font-size: 10px; padding: 0 4px; line-height: 18px; white-spac
   .np-row.head { display: none; }
   .np-row .np-check { grid-row: 1 / 3; }
 }
-.rm-sep { margin: 6px -12px 0; padding: 3px 12px; font-size: 11px; font-weight: 600; color: var(--muted); background: var(--bg); border-top: 1px solid var(--line); }
+.rm-sep { margin: 6px -12px 0; padding: 4px 12px; font-size: 12px; font-weight: 700; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card));
+  border-top: 1px solid var(--line); border-left: 4px solid var(--accent); }
+/* 「担当外・完了済み」の区切りは開閉ボタン（もっと見るで既定は閉じる） */
+button.rm-sep.fold { display: block; width: calc(100% + 24px); text-align: left; cursor: pointer; font-family: inherit; border-right: 0; border-bottom: 0;
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, var(--card)); border-left-color: var(--warn); }
+button.rm-sep.fold:hover { background: color-mix(in srgb, var(--warn) 24%, var(--card)); }
+.rm-row.rm-hide { display: none; }
 .rm-sep + .rm-row { border-top: 0; }
 /* 今日（朝 4:00 以降）作業したが、いまは枠に無いチケットは薄い緑 */
 .rm-row.today { background: color-mix(in srgb, var(--ok) 8%, var(--card)); margin: 0 -12px; padding: 5px 12px; }
@@ -1663,15 +1669,26 @@ document.addEventListener("click", (e) => {
   row.classList.toggle("open", rmRowOpen.has(id)); fitBr(row);
   try { localStorage.setItem("dd_rm_open", JSON.stringify([...rmRowOpen])); } catch (e) { /* 覚えられなくても表示は続ける */ }
 });
+// もっと見るの「担当外・完了済み」を開いているか。開くたびに閉じた状態から始める（2026-11-25 ユーザー指定）
+let rmRecentOpen = false;
+document.addEventListener("click", (e) => {
+  if (!e.target.closest('button.rm-sep[data-fold="recent"]')) return;
+  rmRecentOpen = !rmRecentOpen;
+  renderRmAll();
+});
 function rmRows(items, opts = {}) {
   return items.length ? items.map((i, idx) => {
     const { td, info, cls } = rmInfo(i), full = rmFull[i.id];
     // 担当外・完了済み（直近に作業したもの）の先頭に区切りを入れる
+    const sepText = `担当外・完了済み（直近${rmData ? rmData.history_days : 30}日に作業したもの・新しい順）`;
     const sep = i.recent && !(idx && items[idx - 1].recent)
-      ? `<div class="rm-sep">担当外・完了済み（直近${rmData ? rmData.history_days : 30}日に作業したもの・新しい順）</div>`
+      ? (opts.foldRecent
+        ? `<button class="rm-sep fold" data-fold="recent" aria-expanded="${rmRecentOpen}">${rmRecentOpen ? "▼" : "▶"} ${sepText}・${items.filter((x) => x.recent).length}件</button>`
+        : `<div class="rm-sep">${sepText}</div>`)
       : i.watch && !(idx && items[idx - 1].watch) ? `<div class="rm-sep">ウォッチ中（担当外・終了/解決/却下以外・更新の新しい順）</div>` : "";
     const has = info.length || (opts.todayLog && td), open = has && rmRowOpen.has(String(i.id));
-    return `${sep}<div class="rm-row${cls}${open ? " open" : ""}" data-id="${i.id}">
+    const hide = opts.foldRecent && i.recent && !rmRecentOpen ? " rm-hide" : "";
+    return `${sep}<div class="rm-row${cls}${open ? " open" : ""}${hide}" data-id="${i.id}">
       <div class="rm-head"><button class="rm-tg${has ? "" : " none"}" title="状況（セッション・ブランチ・履歴など）を開く／たたむ"></button>${i.priority ? `<span class="rm-tag ${RM_PRI[i.priority] || ""}">${esc(i.priority)}</span>` : ""}
         ${i.watch ? `<span class="rm-tag extra" title="ウォッチしているチケット（自分の担当ではない）">ウォッチ${i.assignee ? `: ${esc(i.assignee)}` : ""}</span>` : ""}
         ${i.extra ? `<span class="rm-tag extra" title="今日作業したが、自分担当の未完了チケットではないもの">${i.closed ? "完了" : `担当外${i.assignee ? `: ${esc(i.assignee)}` : ""}`}</span>` : ""}
@@ -1729,7 +1746,8 @@ function renderRmAll() {
   const fn = rmFilterFn(isToday ? "" : cat);
   const items = (isToday ? todayItems : rmData.issues).filter((i) => fn(i) && words.every((w) => rmText(i).includes(w)));
   const body = $("rm-all"), top = body.scrollTop;
-  body.innerHTML = rmRows(items, { todayLog: isToday }); fitBr(body);
+  // 「今日作業した」「担当外・完了済み」の絞り込みと、文字で探しているときは畳まない（探した行が隠れないように）
+  body.innerHTML = rmRows(items, { todayLog: isToday, foldRecent: !isToday && cat !== "s:recent" && !words.length }); fitBr(body);
   body.scrollTop = top;
   $("rm-modal-meta").textContent = isToday ? `${items.length} 件（${hm(rmData.today.start)} 以降）` : `${items.length} / ${rmData.issues.length} 件`;
 }
@@ -2423,6 +2441,7 @@ async function loadRedmine(force) {
 function openRm() {
   try { history.pushState({ rm: 1 }, ""); } catch (e) {}
   rmOpen = true;
+  rmRecentOpen = false;
   $("rm-modal").classList.add("open");
   $("rm-all").scrollTop = 0;
   renderRmAll();
