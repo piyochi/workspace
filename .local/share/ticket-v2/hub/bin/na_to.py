@@ -205,6 +205,9 @@ def tui_args(prompt):
     m = WATCH_PREFIX.match(prompt)
     if m:
         return ["watch"] + (m.group(1) or "").split()
+    m = ORDER_PREFIX.match(prompt)
+    if m:
+        return None if (m.group(1) or "").strip() else ["order"]  # 引数ありは順を変えて hook の文で出す
     m = REDMINE_PREFIX.match(prompt)
     if m:
         a = (m.group(1) or "").split()
@@ -234,7 +237,7 @@ def show_tui(args):
         tui = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hub_tui.py")
         # TMUX_PANE: monitor タブを hub と同じセッションで探すため（ポップアップの中には枠が無い）
         cmd = f"TMUX_PANE={shlex.quote(pane)} python3 -B {shlex.quote(tui)} " + " ".join(shlex.quote(a) for a in args)
-        title = {"list": "na-list", "slot": f"na-list [{args[1]}]" if len(args) > 1 else "na-list", "watch": "na-watch", "redmine": "na-redmine"}[args[0]]
+        title = {"list": "na-list", "slot": f"na-list [{args[1]}]" if len(args) > 1 else "na-list", "watch": "na-watch", "redmine": "na-redmine", "order": "na-order"}[args[0]]
         subprocess.Popen(["tmux", "display-popup", "-c", clients[0], "-w", "94%", "-h", "90%", "-b", "rounded", "-T", f" {title} ", "-E", cmd],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         return True

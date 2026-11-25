@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""hub のポップアップの中で動く、操作できる一覧（/na-list・/na-watch・/na-redmine）。
+"""hub のポップアップの中で動く、操作できる一覧（/na-list・/na-watch・/na-redmine・/na-order）。
 
   python3 hub_tui.py list            /na-list    枠の一覧 → Enter でその枠の詳細
   python3 hub_tui.py slot 7 [行数]    /na-list 7  枠の詳細（画面の末尾）
   python3 hub_tui.py watch           /na-watch   固定したチケット → Enter でチケットと枠の詳細
   python3 hub_tui.py redmine [引数…]  /na-redmine 自分のチケット → Enter で詳細（o でブラウザ）
+  python3 hub_tui.py order           /na-order   固定の順 → K J（Shift）で上下へ動かす・x で外す・Enter で詳細
 
 一覧のキー: ↑↓ j k 選ぶ / → l 選んだ行を全文に広げる / ← h たたむ / a 全部広げる・たたむ / Enter 詳細 /
           o ブラウザで開く / r 取り直す（一覧は 15 秒ごとにも取り直す） / g G 先頭・末尾 / q Esc 閉じる
@@ -102,8 +103,9 @@ class ListView:
     """選べる一覧。load() → (見出し, [項目])。項目: key・group（区切りの見出し）・row(width)→1行・full(width)→広げた行・enter()→画面・url"""
     auto = True
 
-    def __init__(self, load):
+    def __init__(self, load, keys=None, foot=""):
         self.load_fn, self.sel, self.top, self.open, self.title, self.items = load, 0, 0, set(), "", []
+        self.keys_fn, self.extra_foot = keys, foot  # keys(view, k) → True なら処理済み（一覧ごとの追加のキー）
         self.reload()
 
     def reload(self):
@@ -142,13 +144,15 @@ class ListView:
             self.top = min(sel_at[1] - h, sel_at[0])
         self.top = max(0, min(self.top, max(len(lines) - h, 0)))
         age = int(time.time() - self.loaded)
-        foot = f" ↑↓ 選ぶ  → 全文  ← たたむ  a 全部  Enter 詳細  o ブラウザ  r 取り直す  q Esc 閉じる   {self.sel + 1}/{len(self.items)} 件・{age} 秒前"
+        foot = f" {self.extra_foot}  ↑↓ 選ぶ  → 全文  ← たたむ  a 全部  Enter 詳細  o ブラウザ  r 取り直す  q Esc 閉じる   {self.sel + 1}/{len(self.items)} 件・{age} 秒前"
         return [hp.header(self.title, "", cols - 1)] + lines[self.top:self.top + h], foot
 
     def key(self, k, cols, rows):
         if not self.items:
             return "back" if k in ("ESC", "q") else None
         it = self.items[self.sel]
+        if self.keys_fn and self.keys_fn(self, k):
+            return None
         step = {"UP": -1, "k": -1, "WHEELUP": -1, "DOWN": 1, "j": 1, "WHEELDN": 1, "PGUP": -10, "PGDN": 10}.get(k)
         if step:
             self.sel = max(0, min(self.sel + step, len(self.items) - 1))
@@ -305,6 +309,56 @@ def redmine_view(args):
     return ListView(load)
 
 
+# ---- /na-order -----------------------------------------------------------------------------------
+
+def order_view():
+    """固定の順。J K（Shift）で1つ上下へ動かす・x で外す（hub/order.json にすぐ保存）"""
+    import hub_redmine as hr
+
+    def load():
+        d = hr.fetch()
+        if d.get("error"):
+            raise RuntimeError(d["error"])
+        known = hr.known_issues(d)
+        order = hr.load_order()
+        items = []
+        for k, n in enumerate(order, 1):
+            i = known.get(n) or hr.fetch_issue(n)
+            if i.get("error"):
+                items.append({"key": str(n), "row": lambda w, k=k, e=i["error"]: f"{k:>2}. " + c("red", e),
+                              "full": lambda w: [], "enter": None, "url": ""})
+                continue
+            it = redmine_item(i, "")
+            row = it["row"]
+            it["row"] = lambda w, k=k, row=row, out=(n not in known): c("cyan", f"{k:>2}. ") + row(w - 4 - (7 if out else 0)) + (c("gray", " [一覧外]") if out else "")
+            items.append(it)
+        if not items:
+            items = [{"key": "none", "row": lambda w: c("gray", "固定の順: なし（/na-order 14926 14921 で、この順で /na-redmine の先頭に固定）"),
+                      "full": lambda w: [], "enter": None, "url": ""}]
+        return f"固定の順  {len(order)} 件（/na-redmine の先頭・/na-watch の監視対象）   {time.strftime('%H:%M')}", items
+
+    def keys(v, k):
+        order = hr.load_order()
+        if not order or v.sel >= len(order) or v.items[v.sel]["key"] != str(order[v.sel]):
+            return False
+        n = order[v.sel]
+        if k in ("K", "J"):
+            to = v.sel + (-1 if k == "K" else 1)
+            if 0 <= to < len(order):
+                order.insert(to, order.pop(v.sel))
+                hr.save_order(order)
+                v.reload()
+                v.sel = to
+            return True
+        if k == "x":
+            hr.save_order([x for x in order if x != n])
+            v.open.discard(str(n))
+            v.reload()
+            return True
+        return False
+    return ListView(load, keys, "K J 上下へ動かす  x 外す ")
+
+
 def sessions_text(i):
     return " ".join(f"[{s['slot']}]{hp.short_state(hp_state(s.get('state')))}" + (f" {s['skill']}" if s.get("skill") else "")
                     for s in i.get("sessions") or [])
@@ -378,6 +432,8 @@ def main():
             stack = [watch_view()]
         elif kind == "redmine":
             stack = [redmine_view(a[1:])]
+        elif kind == "order":
+            stack = [order_view()]
         else:
             stack = [list_view()]
         while stack:
