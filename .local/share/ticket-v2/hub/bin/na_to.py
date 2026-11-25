@@ -40,7 +40,7 @@ class Refuse(Exception):
 
 def find_slot(slot):
     for p in tl.load_panes("monitor"):
-        m = hs.SLOT_RE.match(p["title"] or "")
+        m = hs.SLOT_RE.match(hs.slot_title(p["title"]))
         if m and int(m.group(1)) == slot:
             return p
     raise Refuse(f"monitor タブに [{slot}] の枠が見つかりません")

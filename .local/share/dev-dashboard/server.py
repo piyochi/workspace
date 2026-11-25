@@ -3408,7 +3408,7 @@ def watch_item(n, f, slots):
             "slot": slot["slot"] if slot else None, "env": slot["env"] if slot else "", "slots": [s["slot"] for s in mine],
             "state": state, "state_label": WATCH_STATE_LABEL[state], "attention": state in WATCH_ATTENTION or review,
             "skill": skill, "stage": stage, "flow": flow, "phase": f.get("phase"),
-            "pr_turn": {"result": pr_turn["result"], "start": pr_turn["start"]} if pr_turn else None,
+            "pr_turn": {"result": pr_turn["result"], "start": pr_turn["start"], "end": pr_turn.get("end")} if pr_turn else None,
             "review": {"kind": ball.get("kind"), "label": ball.get("label"), "why": ball.get("why"), "urls": rv_urls} if review else None,
             "last": ev(last), "last_flow": ev(last_flow),
             "ball": ball, "prs": [{"repo": p.get("repo"), "number": p.get("number"), "state": p.get("state"), "url": p.get("url"),
@@ -3580,6 +3580,37 @@ def _json_save(path, data):
 
 def slots_off():
     return {int(x) for x in _json_load(HUB_SLOTS, {}).get("off") or []}
+
+
+OTHER_PR_TTL = 300
+other_pr_cache = {}   # 番号 -> (取得した時刻, [{repo, number, url, author}])
+gh_me = {}
+
+
+def other_prs(n):
+    """そのチケットの、他の人のオープンな PR（タイトルに #番号）。GitHub でレビュアーに指定されていなくても、
+    Redmine で担当が回ってきたレビューのチケット（#15018 の PR#989 は [WIP] で reviewer 未指定だった）を見分けるために使う。5分キャッシュ。"""
+    now = time.time()
+    hit = other_pr_cache.get(n)
+    if hit and now - hit[0] < OTHER_PR_TTL:
+        return hit[1]
+    gh = shutil.which("gh") or "/opt/homebrew/bin/gh"
+    try:
+        if "login" not in gh_me:
+            gh_me["login"] = subprocess.run([gh, "api", "user", "-q", ".login"], capture_output=True, text=True, timeout=15).stdout.strip()
+        out = subprocess.run([gh, "search", "prs", f"{n} in:title", "--state=open", *[a for repo in REPO_NAMES for a in ("--repo", f"{GH_OWNER}/{repo}")],
+                              "--json", "number,title,repository,url,author", "--limit", "20"], capture_output=True, text=True, timeout=30)
+        rows = json.loads(out.stdout) if out.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        rows = None
+    if rows is None:
+        return hit[1] if hit else []
+    res = [{"repo": (r.get("repository") or {}).get("name", ""), "number": r["number"], "url": r["url"],
+            "author": (r.get("author") or {}).get("login", "")}
+           for r in rows if (m := TICKET.search(r.get("title", ""))) and m.group(1) == n
+           and (r.get("author") or {}).get("login", "") not in ("", gh_me.get("login"))]
+    other_pr_cache[n] = (now, res)
+    return res
 
 
 def auto_text(skill, n, item, plan=None):
@@ -3862,6 +3893,28 @@ def autopilot(d, slots):
                 continue  # 実装を開始したチケットは、流れの自動（redmine→analyze 等）の対象にしない
             if not t or i["state"] != "next" or i["slot"] is None:
                 continue
+            lf = i.get("last_flow") or {}
+            pt = i.get("pr_turn") or {}
+            # pr-turn が流れのスキルの後に始まった、または流れのスキルが pr-turn の中で動いた（ct-pr-turn は中で ct-sweep などを使う）
+            pr_after = bool(pt) and ((pt.get("start") or 0) > (lf.get("end") or 0) or
+                                     ((pt.get("start") or 0) <= (lf.get("start") or 0) and (pt.get("result") != "done" or (pt.get("end") or 0) >= (lf.get("end") or 0))))
+            if t.get("mode") == "review" or pr_after:
+                # レビューのチケットは ct-redmine の後に ct-pr-turn を1回だけ頼み、設計の流れ（ct-analyze…）は頼まない。
+                # 流れのスキルの後に pr-turn を手で始めた場合も、流れの自動の依頼はしない
+                rk = f"review-after-redmine@{int(lf.get('end') or 0)}"
+                if t.get("mode") == "review" and not pr_after and lf.get("skill") == "ct-redmine" and lf.get("result") == "done" \
+                        and (t.get("review") or {}).get("urls") and rk not in (t.get("handled") or []) \
+                        and (t.get("slot") is None or t["slot"] == i["slot"]):
+                    text = auto_text("pr-turn", n, {**i, "review": t["review"]})
+                    ok, msg = send_skill(i["slot"], "pr-turn", text, n, t)
+                    _auto_record(auto, n, i["slot"], "pr-turn", text, ok, msg, rk)
+                    changed = True
+                    if not ok:
+                        auto_fail(n, f"[{i['slot']}] に ct-pr-turn を送れません: {msg}", rk)
+                        continue
+                    sent = n
+                    break
+                continue
             last = i.get("last_flow") or {}
             key = f"{last.get('skill')}@{int(last.get('end') or 0)}"
             if key in (t.get("handled") or []):
@@ -3926,8 +3979,16 @@ def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, ef
             ("fix" if rv["kind"] == "fix" else "review") if rv else "design"))
         if use is None:
             return False, "空いている Claude の枠がありません（入力待ち・作業中のチケット無し・除外していない奇数枠）。枠を指定してください"
+        if not rv and not i.get("prs"):
+            # GitHub でレビュアーに指定されていなくても、他の人の PR があるチケットはレビュー（ct-pr-turn）。設計の流れには乗せない
+            op = other_prs(n)
+            if op:
+                rv = {"kind": "review_in", "urls": [x["url"] for x in op], "label": "他の人の PR"}
+                i = {**i, "review": rv}
         if rv:
-            nxt = "pr-turn"
+            # レビューのチケットも先に ct-redmine でチケットを読ませ、終わったら ct-pr-turn（autopilot が送る。2026-11-25 ユーザー指定）
+            redmine_done = any(x["skill"] == "ct-redmine" and x["mark"] == "done" for x in i["flow"])
+            nxt = "pr-turn" if redmine_done else "ct-redmine"
         else:
             nxt = next_skill(i, t.get("plan") or {}, manual=True)
         last = i.get("last_flow") or {}
@@ -3949,13 +4010,20 @@ def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, ef
             return True, f"🧪 dry-run: [{use}] ← " + (text if len(text) <= 160 else f"{text[:80]}…{text[-60:]}" if note else text[:80]) + f"（{mp[0]}・{mp[1]}" + (f"・{mp[2]}" if mp[2] else "") + "）"
         ok, msg = send_skill(use, nxt, text, n, t, {"model": model, "effort": effort})
         key = f"{last.get('skill')}@{int(last.get('end') or 0)}" if nxt != "pr-turn" else \
-            "review:" + ",".join(i["review"]["urls"]) + ":" + i["review"]["kind"]
+            "review:" + ",".join(rv["urls"]) + ":" + rv["kind"]
         _auto_record(auto, n, use, nxt, text, ok, msg, key)
         if ok:
             t["slot"] = use
+            if rv:
+                # レビューのチケット: ct-redmine の後は ct-pr-turn。ct-analyze… の設計の流れの自動の依頼はしない
+                t["mode"] = "review"
+                t["review"] = {"kind": rv["kind"], "urls": rv["urls"]}
         _json_save(HUB_AUTO, auto)
     if ok:
-        stop = "（この後は ct-analyze・ct-architect・ct-planner の後で止まります）" if nxt.startswith("ct-") else ""
+        if rv:
+            stop = "（レビューのチケット: ct-redmine が終わったら ct-pr-turn を自動で頼みます）" if nxt == "ct-redmine" else ""
+        else:
+            stop = "（この後は ct-analyze・ct-architect・ct-planner の後で止まります）" if nxt.startswith("ct-") else ""
         return True, f"{msg}{stop}"
     return False, msg
 

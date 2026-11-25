@@ -26,6 +26,14 @@ sys.path.insert(0, os.path.join(HUB_ROOT, ".claude/skills/ct-tmux-link/scripts")
 import tmux_link as tl  # noqa: E402
 
 SLOT_RE = re.compile(r"^\[(\d+)\]\s*(env\d)?\s*(.*)$")
+
+
+def slot_title(title):
+    """枠のタイトルを [n] … の形にそろえる。claude-monitor のフォーカス表示では、フォーカスした枠が「★ FOCUS [n] …」になり、
+    元の位置に移った別の枠（MAIN の hub など）が「[n] → left」になる。後者は [n] ではないので空にする
+    （2026-11-25 [1] 宛ての送信が hub の枠 %3 を [1] と取り違えた。hub が処理中だったので送られなかった）。"""
+    t = (title or "").replace("★ FOCUS ", "", 1)
+    return "" if "→ left" in t else t
 TICKET_RE = re.compile(r"#(\d{5})\b")
 RULE_RE = re.compile(r"^\s*─{10,}\s*$")
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
@@ -165,7 +173,7 @@ def collect(tab):
     panes = tl.load_panes(tab)
     rows = []
     for p in panes:
-        m = SLOT_RE.match(p["title"] or "")
+        m = SLOT_RE.match(slot_title(p["title"]))
         if not m:
             continue
         row = {"slot": int(m.group(1)), "env": m.group(2) or "", "role": m.group(3).strip(),

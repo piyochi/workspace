@@ -83,6 +83,8 @@
     - 会話の途中で `/model` を送ると「Switch model?（履歴を読み直すので遅くなる）」の確認が出るので、ダッシュボードが Enter で Yes を選ぶ
   - `/na-next`・`/na-go` の決まった引数の後ろに書いた文（例: `/na-next 15018 1 15026と内容が被ってるので先に確認して`）は「補足（hub から）: …」として依頼文の末尾に付けて送る。2つ目のチケット番号から後ろも補足になる
   - スキルの返答の最後が「？」のほか「〜か。」（進めますか。など）で終わったら質問とみなし、次へ進めずに確認待ち（質問）として知らせる
+  - **レビューのチケット**: `/na-next` で開始したチケットに自分の PR が無く、他の人のオープンな PR（タイトルに #番号）があれば、GitHub でレビュアーに指定されていなくてもレビューとみなす。レビューのチケット（レビュアー指定も含む）は **ct-redmine → ct-pr-turn** の順（ct-redmine が済んでいれば ct-pr-turn から）。ct-redmine が終わったら autopilot が ct-pr-turn を1回だけ頼み、設計の流れ（analyze→…）は頼まない（autopilot.json の `mode: review`・`review.urls`）。枠で ct-pr-turn を手で始めた場合と、ct-pr-turn の中で動いた ct-sweep なども、流れの自動の依頼をしない
+  - 枠の取り違え防止: claude-monitor のフォーカス表示で「[n] → left」になった枠（実体は MAIN など別の枠）は [n] とみなさない。「★ FOCUS [n]」は [n]
   - ct-redmine を送った枠には、hub が `~/bin/tmux-title --pane` で「#番号: 件名」のタイトルを直接付ける（枠の Claude に ct-tmux-title を頼まない。会話に残らないので `--continue` で起動し直したときは付け直されない）
   - **`/na-go 番号 [枠] [--branch 名前] [force] [dry]`**（D。2026-11-25〜）: 実装を始める。決まった依頼文2つ（設計ページ r1 q4 の補足のまま）を順に送る
     - 1つ目 `/ct-ship-loop 番号 コーディングはcodexで…ブランチ：feature/番号`（`--branch` で変える）。ct-ship-loop が終わったら（end_turn が質問でない）2つ目 `/ct-finish 番号 sweepは設計時に…アーティファクトにまとめて` を自動で送る。ct-finish が終わったら tmux と Slack DM で「完了」を知らせる（push はしない）
