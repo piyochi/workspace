@@ -3795,6 +3795,37 @@ def confirm_switch(slot):
     return "Switch model?" not in tmux("capture-pane", "-p", "-t", pane).stdout
 
 
+def watch_target(req):
+    """/na-next・/na-go の (チケット番号, 枠, 前置きの文)。誤りなら (None, None, 誤りの文)。
+    番号を省いて枠（1〜12）だけを指定したら、その枠で作業中のチケットを使う（2026-11-25 ユーザー指定）。
+    偶数の枠（Codex）は相方の Claude の枠（-1）に読み替える。"""
+    pre = ""
+    try:
+        slot = int(req["slot"]) if req.get("slot") not in (None, "") else None
+        n = str(int(req["ticket"])) if req.get("ticket") not in (None, "") else None
+    except (TypeError, ValueError):
+        return None, None, "番号・枠が不正です"
+    if slot is not None:
+        if not 1 <= slot <= 12:
+            return None, None, "枠は 1〜12 で指定してください"
+        if slot % 2 == 0:
+            pre = f"[{slot}] は Codex の枠なので、相方の Claude の枠 [{slot - 1}] に頼みます。"
+            slot -= 1
+    if n is None:
+        if slot is None:
+            return None, None, "番号か枠を指定してください（例: /na-next 14926・/na-next 7）"
+        s = next((x for x in ai_panes().get("slots", []) if x["slot"] == slot), None)
+        ts = [t for t in ((s or {}).get("tickets") or [(s or {}).get("ticket")]) if t]
+        if not ts:
+            return None, None, (f"[{slot}] で作業中のチケットが分かりません。その枠で /ct-tmux-title 番号 を実行するか、"
+                                f"/na-next 番号 {slot} で指定してください")
+        if len(ts) > 1:
+            return None, None, f"[{slot}] は複数のチケット（{'・'.join('#' + t for t in ts)}）で作業中です。/na-next 番号 {slot} で指定してください"
+        n = str(ts[0])
+        pre += f"[{slot}] の #{n}: "
+    return n, slot, pre
+
+
 def model_opts(req):
     """API の model・effort（/na-next・/na-go の model=・effort=）。(model, effort) か、誤りの文。"""
     m, e = (req.get("model") or None), (req.get("effort") or None)
@@ -4423,33 +4454,25 @@ class Handler(BaseHTTPRequestHandler):
             remember_label(slot, label[:LABEL_MAX])
             return self.send_json({"ok": True, "label": label[:LABEL_MAX]})
         if self.path == "/api/watch/go":
-            try:
-                n = str(int(req.get("ticket")))
-                slot = int(req["slot"]) if req.get("slot") not in (None, "") else None
-            except (TypeError, ValueError):
-                return self.send_json({"error": "ticket / slot が不正です"}, 400)
-            if slot is not None and (slot % 2 == 0 or not 1 <= slot <= 11):
-                return self.send_json({"ok": False, "msg": "枠は Claude の枠（奇数 1〜11）を指定してください"})
+            n, slot, pre = watch_target(req)
+            if n is None:
+                return self.send_json({"ok": False, "msg": pre})
             mo = model_opts(req)
             if isinstance(mo, str):
                 return self.send_json({"ok": False, "msg": mo})
             ok, msg = auto_go(n, slot, str(req.get("branch") or ""), bool(req.get("force")), bool(req.get("dry")), *mo,
                              note=str(req.get("note") or "")[:500])
-            return self.send_json({"ok": ok, "msg": msg})
+            return self.send_json({"ok": ok, "msg": pre + msg})
         if self.path == "/api/watch/next":
-            try:
-                n = str(int(req.get("ticket")))
-                slot = int(req["slot"]) if req.get("slot") not in (None, "") else None
-            except (TypeError, ValueError):
-                return self.send_json({"error": "ticket / slot が不正です"}, 400)
-            if slot is not None and (slot % 2 == 0 or not 1 <= slot <= 11):
-                return self.send_json({"ok": False, "msg": "枠は Claude の枠（奇数 1〜11）を指定してください"})
+            n, slot, pre = watch_target(req)
+            if n is None:
+                return self.send_json({"ok": False, "msg": pre})
             mo = model_opts(req)
             if isinstance(mo, str):
                 return self.send_json({"ok": False, "msg": mo})
             ok, msg = auto_start(n, slot, bool(req.get("sweep")), bool(req.get("scope")), bool(req.get("dry")), *mo,
                                  note=str(req.get("note") or "")[:500])
-            return self.send_json({"ok": ok, "msg": msg})
+            return self.send_json({"ok": ok, "msg": pre + msg})
         if self.path == "/api/link":
             try:
                 slot = int(req.get("slot"))

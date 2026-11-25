@@ -75,6 +75,7 @@
     - 頼まないもの: 次のスキルがすでに動いた記録があるとき（終わったチケットで ct-redmine をコメントに使った等）・ブランチ／PR／03_progress.md があるのに流れの記録が足りないとき（記録の外で進めたチケット）・割り当てた枠と違う枠で作業しているとき
   - レビュー（F）: 固定していないチケットのレビュー依頼・修正依頼は知らせだけ（tmux・Slack DM。「/na-order で順番に入れると ct-pr-turn を自動で頼む」）。**固定したら** `/ct-pr-turn <PR の URL> #番号` を自動で頼む（作業中の枠、無ければ空いている枠。修正依頼は環境1・2の枠だけ）
   - 自動の依頼の失敗（枠が無い・送れない）は tmux と Slack DM で1回だけ知らせる
+  - 番号を省いて枠だけ（`/na-next 7`・`/na-go 1`）を指定すると、その枠で作業中のチケットを使う（枠のタイトル `#番号` か会話の作業番号。複数・不明なら止まる）。偶数の枠（Codex）は相方の Claude の枠（-1）に読み替える
   - **モデルと思考の深さの自動選択**（2026-11-25〜）: 自動で頼むとき（/na-next・/na-go・続きの自動の依頼）は、スキルの前に `/model`・`/effort` を枠へ送る。表は `server.py` の `MODEL_TABLE`
     - ct-redmine は sonnet・medium。ただしチケットの説明・コメントに Google Slides の URL か、画像・PDF の添付があれば opus・high（画像を読むので）
     - ct-analyze・ct-architect・ct-planner・ct-pr-turn は opus・high。ct-issue-docs・ct-ship-loop・ct-finish は opus・medium。ct-sweep・ct-scope は sonnet・medium。コミットは sonnet・low

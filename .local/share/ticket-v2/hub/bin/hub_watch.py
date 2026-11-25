@@ -10,8 +10,8 @@
   印: ✓ 済み / ▶ 実行中・途中 / ? 質問中 / ✗ 記録なし（後の段階が先に動いた） / ・ 未実行（() は省略可の段階）
 
 使い方: python3 hub_watch.py [--refresh|refresh] [--json]
-      python3 hub_watch.py --next 番号 [枠] [sweep] [scope] [model=…] [effort=…] [dry] [補足の指示…]   … /na-next（止まっている所から次のスキルを頼み、以後は自動で頼む）
-      python3 hub_watch.py --go 番号 [枠] [--branch 名前] [force] [model=…] [effort=…] [dry] [補足の指示…] … /na-go（ct-ship-loop を頼み、終わったら ct-finish を自動で頼む）
+      python3 hub_watch.py --next 番号|枠 [枠] [sweep] [scope] [model=…] [effort=…] [dry] [補足の指示…]   … /na-next（止まっている所から次のスキルを頼み、以後は自動で頼む）
+      python3 hub_watch.py --go 番号|枠 [枠] [--branch 名前] [force] [model=…] [effort=…] [dry] [補足の指示…] … /na-go（ct-ship-loop を頼み、終わったら ct-finish を自動で頼む）
   モデルと思考の深さは送るスキルからダッシュボードが選ぶ（server.py の MODEL_TABLE）。model=・effort= はその1回だけ上書きする
       python3 hub_watch.py --slot [off|on 枠…]                     … /na-slot（自動で割り当てる枠から外す・戻す。引数なしで表示）
 """
@@ -127,9 +127,9 @@ def next_cmd(args):
     nums = [a for a in args if re.fullmatch(r"#?\d+", a)]
     tickets = [a.lstrip("#") for a in nums if len(a.lstrip("#")) >= 4]
     slots = [int(a) for a in nums if len(a.lstrip("#")) <= 2]
-    if len(tickets) != 1 or len(slots) > 1:
-        return "⛔ 書き方: /na-next 番号 [枠] [sweep] [scope] [補足の指示]（例: /na-next 14926・/na-next 14926 7・/na-next 14926 sweep scope）"
-    r = dash_post("/api/watch/next", {"ticket": tickets[0], "slot": slots[0] if slots else None,
+    if len(tickets) > 1 or len(slots) > 1 or (not tickets and not slots):
+        return "⛔ 書き方: /na-next 番号 [枠] [sweep] [scope] [補足の指示]・/na-next 枠（その枠の作業中のチケット）（例: /na-next 14926・/na-next 14926 7・/na-next 14926 sweep scope）"
+    r = dash_post("/api/watch/next", {"ticket": tickets[0] if tickets else None, "slot": slots[0] if slots else None,
                                      "sweep": "sweep" in args, "scope": "scope" in args, "dry": "dry" in args, "note": note, **opt})
     return r.get("msg") if r.get("ok") else f"⛔ 送っていません: {r.get('msg') or r.get('error')}"
 
@@ -150,9 +150,9 @@ def go_cmd(args):
     nums = [a for a in rest if re.fullmatch(r"#?\d+", a)]
     tickets = [a.lstrip("#") for a in nums if len(a.lstrip("#")) >= 4]
     slots = [int(a) for a in nums if len(a.lstrip("#")) <= 2]
-    if len(tickets) != 1 or len(slots) > 1:
-        return "⛔ 書き方: /na-go 番号 [枠] [--branch 名前] [force]（例: /na-go 14926・/na-go 14926 5 --branch feature/14926_2）"
-    r = dash_post("/api/watch/go", {"ticket": tickets[0], "slot": slots[0] if slots else None, "branch": branch,
+    if len(tickets) > 1 or len(slots) > 1 or (not tickets and not slots):
+        return "⛔ 書き方: /na-go 番号 [枠] [--branch 名前] [force]・/na-go 枠（その枠の作業中のチケット）（例: /na-go 14926・/na-go 14926 5 --branch feature/14926_2）"
+    r = dash_post("/api/watch/go", {"ticket": tickets[0] if tickets else None, "slot": slots[0] if slots else None, "branch": branch,
                                    "force": "force" in rest, "dry": "dry" in rest, "note": note, **opt})
     return r.get("msg") if r.get("ok") else f"⛔ 送っていません: {r.get('msg') or r.get('error')}"
 
