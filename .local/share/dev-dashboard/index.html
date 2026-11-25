@@ -1331,6 +1331,7 @@ $("modal-copy").onclick = async () => {
 };
 // Redmine の行: 優先度の色と、ステータスの変更
 const RM_PRI = { "今すぐ": "p-now", "急いで": "p-urgent", "高め": "p-high", "通常": "p-normal", "低め": "p-low" };
+const RM_PRI_ORDER = ["低め", "通常", "高め", "急いで", "今すぐ"];  // 低い順（「〜以上」の絞り込み用）
 let rmSt = null;  // ステータスを変更中のチケット: {id, loading, statuses, current, saving, error}
 function rmStatusHtml(i) {
   if (!rmSt || rmSt.id !== i.id) {
@@ -1667,10 +1668,12 @@ function rmRows(items, opts = {}) {
     const { td, info, cls } = rmInfo(i), full = rmFull[i.id];
     // 担当外・完了済み（直近に作業したもの）の先頭に区切りを入れる
     const sep = i.recent && !(idx && items[idx - 1].recent)
-      ? `<div class="rm-sep">担当外・完了済み（直近${rmData ? rmData.history_days : 30}日に作業したもの・新しい順）</div>` : "";
+      ? `<div class="rm-sep">担当外・完了済み（直近${rmData ? rmData.history_days : 30}日に作業したもの・新しい順）</div>`
+      : i.watch && !(idx && items[idx - 1].watch) ? `<div class="rm-sep">ウォッチ中（担当外・終了/解決/却下以外・更新の新しい順）</div>` : "";
     const has = info.length || (opts.todayLog && td), open = has && rmRowOpen.has(String(i.id));
     return `${sep}<div class="rm-row${cls}${open ? " open" : ""}" data-id="${i.id}">
       <div class="rm-head"><button class="rm-tg${has ? "" : " none"}" title="状況（セッション・ブランチ・履歴など）を開く／たたむ"></button>${i.priority ? `<span class="rm-tag ${RM_PRI[i.priority] || ""}">${esc(i.priority)}</span>` : ""}
+        ${i.watch ? `<span class="rm-tag extra" title="ウォッチしているチケット（自分の担当ではない）">ウォッチ${i.assignee ? `: ${esc(i.assignee)}` : ""}</span>` : ""}
         ${i.extra ? `<span class="rm-tag extra" title="今日作業したが、自分担当の未完了チケットではないもの">${i.closed ? "完了" : `担当外${i.assignee ? `: ${esc(i.assignee)}` : ""}`}</span>` : ""}
         ${rmStatusHtml(i)}
         <span class="rm-subj" data-fc="${i.id}"><a href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">#${i.id}</a>: ${esc(i.subject)}</span>
@@ -1688,12 +1691,16 @@ const RM_FILTERS = {
   "s:sess": ["セッションあり", (i) => i.sessions.length > 0],
   "s:wait": ["待ちあり（未完了）", (i) => i.relations.some((r) => r.kind === "wait" && !r.closed)],
   "s:branch": ["ブランチあり", (i) => i.branches.length > 0],
-  "s:mine": ["自分の担当（未完了）", (i) => !i.extra],
+  "s:mine": ["自分の担当（未完了）", (i) => !i.extra && !i.watch],
+  "s:watch": ["ウォッチ中", (i) => !!i.watch],
   "s:recent": ["担当外・完了済み（直近に作業）", (i) => !!i.recent],
 };
 function rmFilterFn(v) {
   if (!v) return () => true;
   if (RM_FILTERS[v]) return RM_FILTERS[v][1];
+  // 優先度: pr:名前 はその優先度だけ、pg:名前 はそれ以上（今すぐ＞急いで＞高め＞通常＞低め）
+  if (v.startsWith("pr:")) return (i) => i.priority === v.slice(3);
+  if (v.startsWith("pg:")) { const lv = RM_PRI_ORDER.indexOf(v.slice(3)); return (i) => RM_PRI_ORDER.indexOf(i.priority) >= lv && lv >= 0; }
   return (i) => i.status === v.slice(3);
 }
 function rmText(i) {
@@ -1712,7 +1719,12 @@ function renderRmAll() {
   $("rm-cat").innerHTML = [`<option value="">すべて（${rmData.issues.length}）</option>`,
     `<option value="s:today" ${cat === "s:today" ? "selected" : ""} title="朝 4:00 以降に作業したもの">今日作業した（${todayItems.length}）</option>`]
     .concat(Object.entries(RM_FILTERS).map(([k, [label, fn]]) => `<option value="${k}" ${k === cat ? "selected" : ""}>${label}（${count(fn)}）</option>`))
-    .concat(statuses.map((st) => `<option value="st:${esc(st)}" ${cat === `st:${st}` ? "selected" : ""}>ステータス: ${esc(st)}（${count((i) => i.status === st)}）</option>`)).join("");
+    .concat(statuses.map((st) => `<option value="st:${esc(st)}" ${cat === `st:${st}` ? "selected" : ""}>ステータス: ${esc(st)}（${count((i) => i.status === st)}）</option>`))
+    .concat([...RM_PRI_ORDER].reverse().flatMap((p) => {
+      const opts = [[`pr:${p}`, `優先度: ${p}`]];
+      if (p === "急いで" || p === "高め") opts.push([`pg:${p}`, `優先度: ${p}以上`]);
+      return opts.map(([v, label]) => { const n = count(rmFilterFn(v)); return n ? `<option value="${v}" ${cat === v ? "selected" : ""}>${label}（${n}）</option>` : ""; });
+    })).join("");
   const isToday = cat === "s:today";
   const fn = rmFilterFn(isToday ? "" : cat);
   const items = (isToday ? todayItems : rmData.issues).filter((i) => fn(i) && words.every((w) => rmText(i).includes(w)));
@@ -2401,10 +2413,10 @@ async function loadRedmine(force) {
     // 10 件以下でも、今日作業したもの（担当外・完了済みを含む）があれば詳細画面を開けるようにする
     $("redmine-more").style.display = d.issues.length > 10 || Object.keys((d.today || {}).tickets || {}).length ? "" : "none";
     const t = new Date(d.fetched_at * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
-    const mineN = d.mine_count ?? d.issues.length, recentN = d.issues.length - mineN;
+    const mineN = d.mine_count ?? d.issues.length, watchN = d.watch_count || 0, recentN = d.issues.length - mineN - watchN;
     // 下のボタンが1行に収まるよう短く出し、内訳はマウスを乗せたときに出す
-    $("redmine-meta").textContent = `${mineN}${recentN > 0 ? `＋${recentN}` : ""} 件・${t} 時点`;
-    $("redmine-meta").title = `自分の担当（未完了）${mineN} 件${recentN > 0 ? `＋担当外・完了済みで直近に作業したもの ${recentN} 件` : ""}。Redmine は ${t} 時点（5分ごとに取り直し）`;
+    $("redmine-meta").textContent = `${mineN}${watchN > 0 ? `＋👁${watchN}` : ""}${recentN > 0 ? `＋${recentN}` : ""} 件・${t} 時点`;
+    $("redmine-meta").title = `自分の担当（未完了）${mineN} 件${watchN > 0 ? `＋ウォッチ中 ${watchN} 件` : ""}${recentN > 0 ? `＋担当外・完了済みで直近に作業したもの ${recentN} 件` : ""}。Redmine は ${t} 時点（5分ごとに取り直し）`;
     if (rmOpen) renderRmAll();
   } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
 }

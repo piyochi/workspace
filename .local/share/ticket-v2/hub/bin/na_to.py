@@ -25,6 +25,7 @@ import hub_status as hs  # noqa: E402  （tmux_link の読み込みも hub_statu
 tl = hs.tl
 PREFIX = re.compile(r"^\s*/na-to(?:\s+|$)")
 LIST_PREFIX = re.compile(r"^\s*/na-list\s*$")
+REDMINE_PREFIX = re.compile(r"^\s*/na-redmine(?:\s+(.*))?$")
 DRY_RUN = "--dry-run" in sys.argv  # 送信の直前で止める（条件の確認用）
 
 
@@ -85,6 +86,14 @@ def hook_main():
             msg = "na-list（Claude の枠）\n" + hs.compact_text(rows)
         except Exception as e:
             msg = f"na-list ⛔ エラー: {type(e).__name__}: {e}"
+    elif REDMINE_PREFIX.match(prompt):
+        # /na-redmine [件数] [優先度…|高め以上] [再取得]: ダッシュボードの /api/redmine を読んで画面に出すだけ
+        args = (REDMINE_PREFIX.match(prompt).group(1) or "").split()
+        try:
+            import hub_redmine as hr
+            msg = "na-redmine " + hr.run(args)
+        except Exception as e:
+            msg = f"na-redmine ⛔ エラー（開発ダッシュボードが動いているか確認）: {type(e).__name__}: {e}"
     elif PREFIX.match(prompt):
         try:
             msg = "na-to " + send(PREFIX.sub("", prompt, count=1))
@@ -93,7 +102,7 @@ def hook_main():
         except Exception as e:  # hook が落ちてもプロンプトは Claude に渡さない
             msg = f"na-to ⛔ エラーで送っていません: {type(e).__name__}: {e}"
     else:
-        return  # /na-to・/na-list 以外は何もしない（通常どおり Claude に渡す）
+        return  # /na-to・/na-list・/na-redmine 以外は何もしない（通常どおり Claude に渡す）
     print(json.dumps({"decision": "block", "reason": msg, "suppressOriginalPrompt": True}, ensure_ascii=False))
     reset_pane_state()
 

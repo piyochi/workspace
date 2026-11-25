@@ -1545,15 +1545,31 @@ def journal_notes(get_one, issue_id, updated_on):
     if c and c["updated_on"] == updated_on:
         return c["notes"]
     try:
-        notes = [j.get("notes") or "" for j in get_one(issue_id).get("journals") or [] if j.get("notes")]
+        js = get_one(issue_id).get("journals") or []
     except Exception:
         return c["notes"] if c else []
-    journals_cache[issue_id] = {"updated_on": updated_on, "notes": notes}
+    notes = [j.get("notes") or "" for j in js if j.get("notes")]
+    # 最終更新（いちばん新しい journal。ステータス変更だけのものも含む）と、最新コメント。hub の /na-redmine が使う
+    last = {}
+    if js:
+        me = redmine_my_id()
+        lj = js[-1]
+        lc = next((j for j in reversed(js) if j.get("notes")), None)
+        last = {"me": me is not None and (lj.get("user") or {}).get("id") == me, "on": lj.get("created_on", ""),
+                "note": re.sub(r"\s+", " ", lc.get("notes") or "").strip()[:120] if lc else "",
+                "note_me": bool(lc) and me is not None and (lc.get("user") or {}).get("id") == me}
+    journals_cache[issue_id] = {"updated_on": updated_on, "notes": notes, "last": last}
     return notes
+
+
+def journal_last(issue_id):
+    """journal_notes が覚えた最終更新・最新コメント（無ければ {}）。"""
+    return (journals_cache.get(issue_id) or {}).get("last") or {}
 
 
 REDMINE_PROJECT_ID = 133  # tools/claude-corich/bin/redmine.sh の list と同じ（CoRichチケット！）
 REDMINE_OPEN = ("新規登録", "進行中", "フィードバック", "ﾌｨｰﾄﾞﾊﾞｯｸ")
+REDMINE_WATCH_EXCLUDE = ("終了", "解決", "却下")  # ウォッチ分で出さないステータス
 redmine_cache = {"at": 0, "data": None}
 REPO_NAMES = ("ticket_v2_api", "ticket_v2")
 
@@ -1807,6 +1823,14 @@ def redmine_issues():
     except Exception as e:
         return {"error": f"Redmine から取れませんでした: {e}"}
     issues = [i for i in issues if (i.get("status") or {}).get("name") in REDMINE_OPEN]
+    # ウォッチ中のチケット（担当分に無いもの）。担当分と違い、終了・解決・却下以外のステータスは全部出す（2026-11-25 ユーザー指定）。
+    # Redmine の「未完了」には「解決」が入る（is_closed が付いていない）ので名前で除く。プロジェクトは絞らない
+    try:
+        seen = {i["id"] for i in issues}
+        issues += [{**i, "watch": True} for i in get("/issues.json?watcher_id=me&status_id=open&sort=updated_on:desc&limit=100&include=relations")
+                   if i["id"] not in seen and (i.get("status") or {}).get("name") not in REDMINE_WATCH_EXCLUDE]
+    except Exception:
+        pass  # ウォッチが取れなくても担当分は出す
     # 待ち・関連: Redmine の関連（ブロック・先行）と、件名・説明の「#番号 待ち」。相手のチケットの状態も取る
     rels = {}
     for i in issues:
@@ -1852,7 +1876,7 @@ def redmine_issues():
     data = {"host": host, "fetched_at": time.time(), "issues": [
         {"id": i["id"], "subject": i.get("subject", ""), "status": (i.get("status") or {}).get("name", ""),
          "priority": (i.get("priority") or {}).get("name", ""), "updated_on": i.get("updated_on", ""),
-         "assignee": (i.get("assigned_to") or {}).get("name", ""),
+         "assignee": (i.get("assigned_to") or {}).get("name", ""), "watch": bool(i.get("watch")), "last": journal_last(i["id"]),
          "relations": [{**x, **info.get(x["id"], {})} for x in rels[i["id"]]]}
         for i in issues]}
     redmine_cache.update(at=time.time(), data=data)
@@ -2063,7 +2087,8 @@ def redmine_view():
                 "branches": branches, "docs": sorted(set(p["docs"])),
                 "history": [{"env": e, "last": t} for e, t in h]}
 
-    items = [item(i) for i in data["issues"]]
+    items = [item(i) for i in data["issues"] if not i.get("watch")]
+    watched = [item(i) for i in data["issues"] if i.get("watch")]  # ウォッチ分は担当分の後ろ（更新の新しい順のまま）
     tv = today_view()
 
     # 並び: ① tmux の枠で作業しているもの → ② 今日（朝 4:00 以降）作業したもの（最後に作業した時刻の新しい順）
@@ -2074,7 +2099,9 @@ def redmine_view():
         t = tv["tickets"].get(str(x["id"]))
         return (1, -t["last"]) if t else (2, 0)
     items.sort(key=order)
-    mine = {str(i["id"]) for i in data["issues"]}
+    mine_count = len(items)
+    items += watched
+    mine = {str(i["id"]) for i in data["issues"]}  # 担当分＋ウォッチ分（下の「担当外・完了済み」に重ねて出さない）
     host, key = redmine_creds()
     extra = [{**item(i), "extra": True} for i in today_extra_issues(set(tv["tickets"]) - mine, host, key)]
     # ④ 担当一覧に無い（担当外・完了済み）が、直近 HIST_DAYS 日に作業したチケット。一覧のいちばん下に、最後に作業した時刻の新しい順で置く
@@ -2092,7 +2119,7 @@ def redmine_view():
     listed = mine | {str(i["id"]) for i in extra + recent}
     memo_ids = {str(int(n)) for n in MEMO_HEAD_TICKET.findall(memo_read()["text"])} - listed
     memo_extra = [{**item(i), "extra": True} for i in today_extra_issues(memo_ids, host, key, memo_cache) if i["status"]]
-    return {"fetched_at": data["fetched_at"], "issues": items, "mine_count": len(mine), "history_days": HIST_DAYS, "pr_at": pr_cache["at"],
+    return {"fetched_at": data["fetched_at"], "issues": items, "mine_count": mine_count, "watch_count": len(watched), "history_days": HIST_DAYS, "pr_at": pr_cache["at"],
             "today": tv, "today_extra": extra, "memo_extra": memo_extra}
 
 
