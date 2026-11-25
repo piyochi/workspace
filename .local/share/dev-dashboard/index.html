@@ -922,12 +922,13 @@ function focusPopHtml(i, here) {
     + `<dl>${row("tmux", slots)}${row("段階", stage)}${row("担当", ball)}${row("最新コメント", note)}${row("作業", work)}${row("ブランチ", brs)}${row("PR", prs)}${row("レビュー依頼", req)}${row("PR（会話）", prLinks)}${row("アーティファクト", arts)}</dl>`
     + (here ? "" : `<div class="fc-pop-foot">押すと Redmine 欄のその行を開きます（無ければ Redmine を開きます）</div>`);
 }
-// 吹き出しのアイコン（行には置かず、ステータスの行の右端にまとめる）: ⧉ コピー・▶ tmux の枠に送る・監視/☰ その欄の行へ移動。
-// 押したときの処理は document で拾う（button.rm-copy・button.rm-send・button.nav-to）。出した元の欄への移動ボタンは置かない
+// 吹き出しのアイコン（行には置かず、ステータスの行の右端にまとめる）: ⧉ コピー・▶ tmux の枠に送る・✎ メモに足す・監視/☰ その欄の行へ移動。
+// 押したときの処理は document で拾う（button.rm-copy・button.rm-send・button.rm-memo・button.nav-to）。出した元の欄への移動ボタンは置かない
 let fcPopSelf = "";
 const fcPopBtnsHtml = (id, subject, url, tail = "") => `<span class="fc-pop-btns">`
   + `<button type="button" class="rm-copy fc-pop-re" data-copy="${esc(`#${id}: ${subject}`)}" data-url="${esc(url)}" title="「#番号: タイトル」をリンク付きでコピー">⧉</button>`
   + `<button type="button" class="rm-send fc-pop-re" data-ticket="${esc(id)}" title="この番号を tmux の枠に送る（/ct-redmine など）">▶</button>`
+  + memoBtnHtml({ id, subject })  // ✎ メモに見出しを足す（もうあれば「済」で、押すとメモのその見出しへ移動）
   + navBtnsHtml(id, fcPopSelf) + tail + `</span>`;
 // チップに乗せたら吹き出しを出す。吹き出しの上にマウスを移しても消さない（中のリンクを押せるように）
 let fcPopTimer = 0, fcPopFor = null;
