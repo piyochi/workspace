@@ -3943,10 +3943,16 @@ def next_skill(item, plan, manual):
         nxt = "ct-scope" if plan.get("scope") else "ct-planner"
     else:
         nxt = (MANUAL_NEXT if manual else AUTO_NEXT).get(sk)
-    # 次のスキルがすでに動いた記録があれば頼まない（終わったチケットで ct-redmine をコメントに使ったとき等）
-    marks = {x["skill"]: x["mark"] for x in item.get("flow") or []}
+    # 次のスキルがすでに動いた記録があり、その先の段階まで進んでいれば頼まない（終わったチケットで ct-redmine をコメントに使ったとき等）。
+    # 先の段階が無ければ頼む: planner の後で scope を回したときは、planner をもう一度頼む
+    # （2026-11-25 #15043: planner の途中で scope に移り、planner が「済み」扱いで /na-next が「次のスキルを決められません」になった）
+    flow = item.get("flow") or []
+    marks = {x["skill"]: x["mark"] for x in flow}
     if nxt and nxt.startswith("ct-") and marks.get(nxt) in ("done", "running", "question"):
-        return None
+        names = [x["skill"] for x in flow]
+        later = names[names.index(nxt) + 1:] if nxt in names else []
+        if any(marks.get(s) in ("done", "running", "question") for s in later):
+            return None
     return nxt
 
 
