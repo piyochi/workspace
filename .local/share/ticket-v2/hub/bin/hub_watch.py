@@ -10,8 +10,8 @@
   印: ✓ 済み / ▶ 実行中・途中 / ? 質問中 / ✗ 記録なし（後の段階が先に動いた） / ・ 未実行（() は省略可の段階）
 
 使い方: python3 hub_watch.py [--refresh|refresh] [--json]
-      python3 hub_watch.py --next 番号 [枠] [sweep] [scope] [model=…] [effort=…] [dry]   … /na-next（止まっている所から次のスキルを頼み、以後は自動で頼む）
-      python3 hub_watch.py --go 番号 [枠] [--branch 名前] [force] [model=…] [effort=…] [dry] … /na-go（ct-ship-loop を頼み、終わったら ct-finish を自動で頼む）
+      python3 hub_watch.py --next 番号 [枠] [sweep] [scope] [model=…] [effort=…] [dry] [補足の指示…]   … /na-next（止まっている所から次のスキルを頼み、以後は自動で頼む）
+      python3 hub_watch.py --go 番号 [枠] [--branch 名前] [force] [model=…] [effort=…] [dry] [補足の指示…] … /na-go（ct-ship-loop を頼み、終わったら ct-finish を自動で頼む）
   モデルと思考の深さは送るスキルからダッシュボードが選ぶ（server.py の MODEL_TABLE）。model=・effort= はその1回だけ上書きする
       python3 hub_watch.py --slot [off|on 枠…]                     … /na-slot（自動で割り当てる枠から外す・戻す。引数なしで表示）
 """
@@ -99,21 +99,44 @@ def model_args(args):
     return opt, rest
 
 
+def split_note(args, words):
+    """先頭から決まった形の引数（番号・枠・words・model=・effort=・--branch 名前・branch=）を読み、
+    最初に形の違う語が出た所から後ろを「補足の指示」として返す。(引数, 補足)。
+    例: /na-next 15018 1 15026と内容が被ってるので先にそれを確認して → 補足は「15026と内容が…」（2026-11-25 補足が [1] に届かなかった）"""
+    head, seen = [], set()
+    for k, a in enumerate(args):
+        if re.fullmatch(r"#?\d+", a):
+            kind = "ticket" if len(a.lstrip("#")) >= 4 else "slot"
+            if kind in seen:  # 2つ目の番号（/na-next 15018 1 15026 と被ってる）は補足の一部
+                return head, " ".join(args[k:])
+            seen.add(kind)
+            head.append(a)
+        elif a in words or a.split("=", 1)[0] in ("model", "effort", "branch", "--branch"):
+            head.append(a)
+        elif head and head[-1] == "--branch":
+            head.append(a)
+        else:
+            return head, " ".join(args[k:])
+    return head, ""
+
+
 def next_cmd(args):
-    """/na-next 番号 [枠] [sweep] [scope] [model=…] [effort=…] [dry]"""
+    """/na-next 番号 [枠] [sweep] [scope] [model=…] [effort=…] [dry] [補足の指示…]"""
+    args, note = split_note(args, ("sweep", "scope", "dry"))
     opt, args = model_args(args)
     nums = [a for a in args if re.fullmatch(r"#?\d+", a)]
     tickets = [a.lstrip("#") for a in nums if len(a.lstrip("#")) >= 4]
     slots = [int(a) for a in nums if len(a.lstrip("#")) <= 2]
     if len(tickets) != 1 or len(slots) > 1:
-        return "⛔ 書き方: /na-next 番号 [枠] [sweep] [scope]（例: /na-next 14926・/na-next 14926 7・/na-next 14926 sweep scope）"
+        return "⛔ 書き方: /na-next 番号 [枠] [sweep] [scope] [補足の指示]（例: /na-next 14926・/na-next 14926 7・/na-next 14926 sweep scope）"
     r = dash_post("/api/watch/next", {"ticket": tickets[0], "slot": slots[0] if slots else None,
-                                     "sweep": "sweep" in args, "scope": "scope" in args, "dry": "dry" in args, **opt})
+                                     "sweep": "sweep" in args, "scope": "scope" in args, "dry": "dry" in args, "note": note, **opt})
     return r.get("msg") if r.get("ok") else f"⛔ 送っていません: {r.get('msg') or r.get('error')}"
 
 
 def go_cmd(args):
-    """/na-go 番号 [枠] [--branch 名前|branch=名前] [force] [model=…] [effort=…] [dry]"""
+    """/na-go 番号 [枠] [--branch 名前|branch=名前] [force] [model=…] [effort=…] [dry] [補足の指示…]"""
+    args, note = split_note(args, ("force", "dry"))
     opt, args = model_args(args)
     branch, rest = "", []
     it = iter(args)
@@ -130,7 +153,7 @@ def go_cmd(args):
     if len(tickets) != 1 or len(slots) > 1:
         return "⛔ 書き方: /na-go 番号 [枠] [--branch 名前] [force]（例: /na-go 14926・/na-go 14926 5 --branch feature/14926_2）"
     r = dash_post("/api/watch/go", {"ticket": tickets[0], "slot": slots[0] if slots else None, "branch": branch,
-                                   "force": "force" in rest, "dry": "dry" in rest, **opt})
+                                   "force": "force" in rest, "dry": "dry" in rest, "note": note, **opt})
     return r.get("msg") if r.get("ok") else f"⛔ 送っていません: {r.get('msg') or r.get('error')}"
 
 

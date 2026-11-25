@@ -428,9 +428,13 @@ def read_new_lines(path, st):
 
 
 def is_question(text):
-    """返答の最後の行が質問（？・? で終わる）か。スキルが答えを待っているのか、終わったのかの見分けに使う。"""
+    """返答の最後の行が質問か。スキルが答えを待っているのか、終わったのかの見分けに使う。
+    ？・? のほか、「レビューに進みますか。」のような「か。」で終わる日本語の問いも質問とみなす（2026-11-25 #15018 で次へ進めてしまった）。"""
     lines = [l for l in (text or "").strip().splitlines() if l.strip()]
-    return bool(lines) and lines[-1].strip().rstrip("*_`)）」』 ").endswith(("？", "?"))
+    if not lines:
+        return False
+    last = lines[-1].strip().rstrip("*_`)）」』 ")
+    return last.endswith(("？", "?")) or last.rstrip("。.").endswith(("か", "ですか", "ますか"))
 
 
 def claude_session_info(pane_id):
@@ -3742,6 +3746,20 @@ def _restore_claude_settings(before):
     os.replace(tmp, CLAUDE_SETTINGS)
 
 
+def confirm_switch(slot):
+    """会話の途中で /model を送ると「Switch model?（履歴を読み直すので遅くなる）」の確認が出るので、Enter で 1（Yes）を選ぶ。
+    出ていなければ何もしない。閉じられたら True（2026-11-25 #15018 で確認のまま止まった）。"""
+    pane = (slot_pane(slot) or {}).get("id")
+    if not pane:
+        return False
+    for _ in range(3):
+        if "Switch model?" not in tmux("capture-pane", "-p", "-t", pane).stdout:
+            return True
+        tmux("send-keys", "-t", pane, "Enter")  # 1. Yes が選ばれた状態で出る
+        time.sleep(1.5)
+    return "Switch model?" not in tmux("capture-pane", "-p", "-t", pane).stdout
+
+
 def model_opts(req):
     """API の model・effort（/na-next・/na-go の model=・effort=）。(model, effort) か、誤りの文。"""
     m, e = (req.get("model") or None), (req.get("effort") or None)
@@ -3766,6 +3784,8 @@ def send_skill(slot, skill, text, n, t, override=None):
             if not ok:
                 return False, f"{cmd} を送れません: {msg}"
             time.sleep(1.0)
+            if cmd.startswith("/model") and not confirm_switch(slot):
+                return False, f"{cmd} の「Switch model?」の確認を閉じられません。その枠の画面を確認してください"
     finally:
         _restore_claude_settings(before)
     ok, msg = na_to_send(slot, text)
@@ -3882,7 +3902,7 @@ def auto_fail(n, msg, key=None):
     slack_dm(f"hub 監視\n⚠️ #{n} 自動の依頼に失敗: {msg}")
 
 
-def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, effort=None):
+def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, effort=None, note=""):
     """/na-next 番号 [枠] [sweep] [scope]: 止まっている所から次のスキルを頼み、以後の自動の依頼の対象にする。"""
     n = str(n)
     scan_watch_skills()
@@ -3923,10 +3943,10 @@ def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, ef
                            f"{last.get('skill') or 'なし'} までです。{nxt} を頼むのは止めました。その枠で直接頼んでください")
         if nxt == "commit" and any(x.get("skill") == "commit" and x.get("ok") for x in t.get("log") or []):
             return False, f"#{n} は issue docs のコミットを頼み済みです。実装の開始は /na-go {n}"
-        text = auto_text(nxt, n, i)
+        text = auto_text(nxt, n, i) + (f" 補足（hub から）: {note}" if note else "")
         if dry:
             mp = model_plan(nxt, n, t, {"model": model, "effort": effort})
-            return True, f"🧪 dry-run: [{use}] ← {text[:80]}（{mp[0]}・{mp[1]}" + (f"・{mp[2]}" if mp[2] else "") + "）"
+            return True, f"🧪 dry-run: [{use}] ← " + (text if len(text) <= 160 else f"{text[:80]}…{text[-60:]}" if note else text[:80]) + f"（{mp[0]}・{mp[1]}" + (f"・{mp[2]}" if mp[2] else "") + "）"
         ok, msg = send_skill(use, nxt, text, n, t, {"model": model, "effort": effort})
         key = f"{last.get('skill')}@{int(last.get('end') or 0)}" if nxt != "pr-turn" else \
             "review:" + ",".join(i["review"]["urls"]) + ":" + i["review"]["kind"]
@@ -3948,7 +3968,7 @@ GO_TEXT2 = ("/ct-finish {n} sweepは設計時に作ってたらそれを使う�
 GO_ACTIVE = ("ship-loop", "finish")
 
 
-def auto_go(n, slot=None, branch="", force=False, dry=False, model=None, effort=None):
+def auto_go(n, slot=None, branch="", force=False, dry=False, model=None, effort=None, note=""):
     """/na-go 番号 [枠] [--branch 名前] [force]: ct-ship-loop を頼み、終わったら ct-finish を自動で頼む。
 
     実装は同時に複数始めてよい。テスト・ブラウザでの確認は各枠の Claude が hub_docker.py wait で順番待ちをする（E）。
@@ -3992,7 +4012,7 @@ def auto_go(n, slot=None, branch="", force=False, dry=False, model=None, effort=
         if sib:
             return False, (f"[{use}] と同じ {me['env']} の [{sib[0]['slot']}] が {WATCH_STATE_LABEL.get(sib[0]['state'], sib[0]['state'])}"
                            f"（#{sib[0].get('ticket') or '番号なし'}）です。同じリポジトリのブランチを切り替えるので、終わってから始めてください")
-        text = GO_TEXT1.format(n=n, branch=branch)
+        text = GO_TEXT1.format(n=n, branch=branch) + (f" 補足（hub から）: {note}" if note else "")
         if dry:
             mp = model_plan("ct-ship-loop", n, auto.get("tickets", {}).get(n), {"model": model, "effort": effort})
             return True, f"🧪 dry-run: [{use}] ← {text[:90]}…（{mp[0]}・{mp[1]}。ct-ship-loop が終わったら ct-finish を自動で頼む）"
@@ -4341,7 +4361,8 @@ class Handler(BaseHTTPRequestHandler):
             mo = model_opts(req)
             if isinstance(mo, str):
                 return self.send_json({"ok": False, "msg": mo})
-            ok, msg = auto_go(n, slot, str(req.get("branch") or ""), bool(req.get("force")), bool(req.get("dry")), *mo)
+            ok, msg = auto_go(n, slot, str(req.get("branch") or ""), bool(req.get("force")), bool(req.get("dry")), *mo,
+                             note=str(req.get("note") or "")[:500])
             return self.send_json({"ok": ok, "msg": msg})
         if self.path == "/api/watch/next":
             try:
@@ -4354,7 +4375,8 @@ class Handler(BaseHTTPRequestHandler):
             mo = model_opts(req)
             if isinstance(mo, str):
                 return self.send_json({"ok": False, "msg": mo})
-            ok, msg = auto_start(n, slot, bool(req.get("sweep")), bool(req.get("scope")), bool(req.get("dry")), *mo)
+            ok, msg = auto_start(n, slot, bool(req.get("sweep")), bool(req.get("scope")), bool(req.get("dry")), *mo,
+                                 note=str(req.get("note") or "")[:500])
             return self.send_json({"ok": ok, "msg": msg})
         if self.path == "/api/link":
             try:

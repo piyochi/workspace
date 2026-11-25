@@ -80,6 +80,9 @@
     - ct-analyze・ct-architect・ct-planner・ct-pr-turn は opus・high。ct-issue-docs・ct-ship-loop・ct-finish は opus・medium。ct-sweep・ct-scope は sonnet・medium。コミットは sonnet・low
     - `sweep`・`scope` 付きのチケットは ct-architect・ct-planner を xhigh に。同じスキルを頼み直したら1段上げる（sonnet→opus、深さ +1）。`model=fable`・`effort=xhigh` を付けるとその1回だけ上書き
     - `/model`・`/effort` は `~/.claude/settings.json` の既定（model・modelSettings）も書き換えるので、送った直後にダッシュボードが元へ戻す（戻しても枠の会話のモデルはそのまま）
+    - 会話の途中で `/model` を送ると「Switch model?（履歴を読み直すので遅くなる）」の確認が出るので、ダッシュボードが Enter で Yes を選ぶ
+  - `/na-next`・`/na-go` の決まった引数の後ろに書いた文（例: `/na-next 15018 1 15026と内容が被ってるので先に確認して`）は「補足（hub から）: …」として依頼文の末尾に付けて送る。2つ目のチケット番号から後ろも補足になる
+  - スキルの返答の最後が「？」のほか「〜か。」（進めますか。など）で終わったら質問とみなし、次へ進めずに確認待ち（質問）として知らせる
   - ct-redmine を送った枠には、hub が `~/bin/tmux-title --pane` で「#番号: 件名」のタイトルを直接付ける（枠の Claude に ct-tmux-title を頼まない。会話に残らないので `--continue` で起動し直したときは付け直されない）
   - **`/na-go 番号 [枠] [--branch 名前] [force] [dry]`**（D。2026-11-25〜）: 実装を始める。決まった依頼文2つ（設計ページ r1 q4 の補足のまま）を順に送る
     - 1つ目 `/ct-ship-loop 番号 コーディングはcodexで…ブランチ：feature/番号`（`--branch` で変える）。ct-ship-loop が終わったら（end_turn が質問でない）2つ目 `/ct-finish 番号 sweepは設計時に…アーティファクトにまとめて` を自動で送る。ct-finish が終わったら tmux と Slack DM で「完了」を知らせる（push はしない）
