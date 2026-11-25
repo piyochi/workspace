@@ -91,7 +91,10 @@ header { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -1
 .fc-pop .st-busy { color: #ea580c; font-weight: 700; } .fc-pop .st-wait { color: var(--bad); font-weight: 700; } .fc-pop .st-idle { color: var(--ok); }
 .fc-pop .ok { color: var(--ok); font-weight: 600; } .fc-pop .ng { color: var(--bad); font-weight: 600; }
 .fc-pop-foot { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
-.mini-wrap { position: absolute; left: 0; right: 0; top: 100%; background: var(--bg); padding: 0 16px 5px; border-bottom: 1px solid var(--line); }
+/* Claude・Codex の使用率は常に出すのでヘッダーの中に置く（下の欄に重ならない）。
+   tmux の処理中の枠はスクロールしたときだけ出るので、ヘッダーの高さを変えないよう下にはみ出して出す */
+.mini-wrap { padding: 0; }
+#mini-panes { position: absolute; left: 0; right: 0; top: 100%; margin-top: 0; background: var(--bg); padding: 4px 16px 5px; border-bottom: 1px solid var(--line); }
 .mini { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 4px; font-size: 11px; }
 .mini-src { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .mini-name { color: var(--muted); font-weight: 600; }
@@ -1054,10 +1057,10 @@ $("focus").addEventListener("click", (e) => {
 });
 // 要素をヘッダーに隠れない位置までスクロールする。
 // 下へ移動するとヘッダーに小さい版（tmux 等）が出て高さが変わるので、移動し終えたら測り直して合わせる
-// 小さい版（#mini-wrap）はヘッダーの下にはみ出して出る（position: absolute）ので、出ているときはその下端を使う
+// 小さい版の tmux の枠（#mini-panes）はヘッダーの下にはみ出して出る（position: absolute）ので、出ているときはその下端を使う
 function scrollUnderHeader(el) {
   const headBottom = () => {
-    const h = document.querySelector("header").getBoundingClientRect().bottom, m = $("mini-wrap").getBoundingClientRect();
+    const h = document.querySelector("header").getBoundingClientRect().bottom, m = $("mini-panes").getBoundingClientRect();
     return m.height ? Math.max(h, m.bottom) : h;
   };
   const gap = () => el.getBoundingClientRect().top - headBottom() - 8;
@@ -1188,8 +1191,8 @@ loadWatch();
 setInterval(loadWatch, 20000);
 refreshFocus();
 setInterval(refreshFocus, 30000);
-// ヘッダーの小さい版。元の欄（Claude・Codex・tmux）が画面に見えている間は出さず、
-// 下にスクロールして見えなくなったとき（または欄を閉じたとき）だけ出す
+// ヘッダーの小さい版。Claude・Codex の使用率は常に出す（2026-11-25）。
+// tmux の処理中の枠は、元の欄が画面に見えている間は出さず、下にスクロールして見えなくなったとき（または欄を閉じたとき）だけ出す
 const mini = { usage: null, slots: null, visible: { claude: true, codex: true, tmux: true } };
 const miniBar = (p) => `<span class="bar"><i class="${p >= 90 ? "bad" : p >= 70 ? "warn" : ""}" style="width:${p}%"></i></span>`;
 function miniUsage(name, rows) {
@@ -1206,7 +1209,7 @@ function miniUsage(name, rows) {
 }
 function renderMini() {
   const u = mini.usage, v = mini.visible;
-  const usage = u ? (v.claude ? "" : miniUsage("Claude", u.claude)) + (v.codex ? "" : miniUsage("Codex", u.codex)) : "";
+  const usage = u ? miniUsage("Claude", u.claude) + miniUsage("Codex", u.codex) : "";
   $("mini-usage").innerHTML = usage;
   $("mini-usage").hidden = !usage;
   const act = v.tmux || !mini.slots ? [] : mini.slots.filter((s) => s.state === "busy" || s.state === "wait");
