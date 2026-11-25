@@ -2,11 +2,11 @@
 """hub の監視の表示（/na-watch・hub の Claude 用）。
 
 判定は開発ダッシュボードの常駐ループ（server.py の watch_loop。20 秒ごと）が行い、/api/watch と
-~/.local/share/ticket-v2/hub/watch.json に書く。ここはそれを読んで 1 件 2 行に整えるだけ。
+~/.local/share/ticket-v2/hub/watch.json に書く。ここはそれを読んで、1件を見出し＋ラベル付きの行（件名・流れ・実装・PR・自動）に整えるだけ。
 対象は /na-order で固定したチケット（hub/order.json）。
 
-1行目: 順・#番号【優先度】ステータス [枠] 状態 · スキル 件名
-2行目: 流れ（redmine→analyze→architect→(sweep)→(scope)→planner→issue-docs→ship-loop→finish）の印・フェーズ・PR・レビュー
+見出し: 順・#番号【優先度】ステータス [枠] 状態 · スキル。流れは3段ずつ折り返す
+流れ（redmine→analyze→architect→(sweep)→(scope)→planner→issue-docs→ship-loop→finish）の印・フェーズ・PR・レビュー
   印: ✓ 済み / ▶ 実行中・途中 / ? 質問中 / ✗ 記録なし（後の段階が先に動いた） / ・ 未実行（() は省略可の段階）
 
 使い方: python3 hub_watch.py [--refresh|refresh] [--json]
@@ -34,6 +34,48 @@ def fetch(refresh=False):
     return hr.dash_get("/api/watch" + ("?refresh=1" if refresh else ""))
 
 
+def pad(text, width):
+    """全角を2桁として width 桁まで空白で埋める（ラベルの縦をそろえる）"""
+    import unicodedata
+    w = sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text)
+    return text + " " * max(width - w, 0)
+
+
+def flow_lines(flow, per=3):
+    """流れの印を per 個ずつの行に分ける（1行に並べると折り返して読みにくい。2026-11-25 ユーザー指定で縦に整形）"""
+    marks = [(f"({x['short']}" if x["optional"] else x["short"]) + MARK.get(x["mark"], "") + (")" if x["optional"] else "")
+             for x in flow or []]
+    return [" ".join(marks[k:k + per]) for k in range(0, len(marks), per)]
+
+
+def item_block(i, d, k=None):
+    """1チケット分を「見出し＋ラベル付きの行」で返す。/na-watch と /na-list 枠 で使う"""
+    slot = f" [{i['slot']}]" if i.get("slot") is not None else ""
+    head = ("👀 " if i.get("attention") else "") + (f"{k}. " if k else "")
+    out = [f"{head}#{i['id']}【{i.get('priority') or '?'}】{i.get('status', '')}{slot} {i['state_label']}"
+           + (f" · {i['skill'].removeprefix('ct-')}" if i.get("skill") else "")]
+    row = lambda label, text: out.append(f"  {pad(label, 6)}{text}")
+    row("件名", hr_trim(i.get("subject", ""), 48))
+    for n, ln in enumerate(flow_lines(i.get("flow"))):
+        row("流れ" if n == 0 else "", ln)
+    if i.get("phase"):
+        row("実装", f"フェーズ {i['phase']['done']}/{i['phase']['total']}")
+    if i.get("pr_turn"):
+        row("PR", "pr-turn " + ("済み" if i["pr_turn"]["result"] == "done" else "途中"))
+    for p in i.get("prs") or []:
+        row("PR", f"{p.get('repo', '')}#{p.get('number')} {p.get('state', '')}")
+    if i.get("review"):
+        row("依頼", i["review"]["label"])
+    a = (d.get("auto") or {}).get(i["id"])
+    if a:
+        last = a.get("last") or {}
+        when = time.strftime("%H:%M", time.localtime(last.get("at") or 0)) if last else ""
+        row("自動", f"[{a.get('slot')}] " + (f"{last.get('skill', '').removeprefix('ct-')} {'送信' if last.get('ok') else '失敗'} {when}" if last else "開始"))
+        if a.get("go"):
+            row("", "実装: " + {"ship-loop": "ship-loop 中", "finish": "finish 中", "done": "完了"}.get(a["go"].get("stage"), a["go"].get("stage", "")))
+    return out
+
+
 def compact_text(d):
     items = d.get("items") or []
     dk = d.get("docker") or {}
@@ -42,35 +84,14 @@ def compact_text(d):
     if dk.get("holder") or dq:
         h = dk.get("holder")
         dline = ("開発用サーバー: " + (f"使用中 #{h['ticket']}（{h['env']}）" if h else "空き")
-                 + ("・待ち " + " → ".join(f"#{q['ticket']}（{q['env']}）" for q in dq) if dq else "") + "\n")
+                 + ("・待ち " + " → ".join(f"#{q['ticket']}（{q['env']}）" for q in dq) if dq else ""))
     if not items:
-        return dline + "固定したチケットはありません（/na-order 番号 … で固定すると監視します）"
-    at = time.strftime("%H:%M:%S", time.localtime(d.get("at") or time.time()))
-    out = [f"{len(items)} 件・確認待ち {d.get('attention', 0)}（{at} 時点）"] + ([dline.rstrip()] if dline else [])
+        return (dline + "\n" if dline else "") + "固定したチケットはありません（/na-order 番号 … で固定すると監視します）"
+    at = time.strftime("%H:%M", time.localtime(d.get("at") or time.time()))
+    out = [f"{len(items)} 件・確認待ち {d.get('attention', 0)}（{at} 時点）"] + ([dline] if dline else [])
     for k, i in enumerate(items, 1):
-        slot = f"[{i['slot']}] " if i.get("slot") is not None else ""
-        skill = f" · {i['skill'].removeprefix('ct-')}" if i.get("skill") else ""
-        head = "👀" if i.get("attention") else "  "
-        out.append(f"{head}{k}. #{i['id']}【{i.get('priority') or '?'}】{i.get('status', '')} {slot}{i['state_label']}{skill}  {hr_trim(i.get('subject', ''), 36)}")
-        flow = " ".join((f"({x['short']}" if x["optional"] else x["short"]) + MARK.get(x["mark"], "") + (")" if x["optional"] else "")
-                        for x in i.get("flow") or [])
-        extra = []
-        if i.get("phase"):
-            extra.append(f"フェーズ {i['phase']['done']}/{i['phase']['total']}")
-        if i.get("pr_turn"):
-            extra.append("pr-turn " + ("済み" if i["pr_turn"]["result"] == "done" else "途中"))
-        for p in i.get("prs") or []:
-            extra.append(f"{p.get('repo', '')}#{p.get('number')} {p.get('state', '')}")
-        if i.get("review"):
-            extra.append(i["review"]["label"])
-        a = (d.get("auto") or {}).get(i["id"])
-        if a:
-            last = a.get("last") or {}
-            when = time.strftime("%H:%M", time.localtime(last.get("at") or 0)) if last else ""
-            extra.append(f"自動: [{a.get('slot')}] " + (f"{last.get('skill', '').removeprefix('ct-')} {'送信' if last.get('ok') else '失敗'} {when}" if last else "開始"))
-            if a.get("go"):
-                extra.append("実装: " + {"ship-loop": "ship-loop 中", "finish": "finish 中", "done": "完了"}.get(a["go"].get("stage"), a["go"].get("stage", "")))
-        out.append("     " + flow + ("  " + "・".join(extra) if extra else ""))
+        out.append("")
+        out += item_block(i, d, k if len(items) > 1 else None)
     return "\n".join(out)
 
 

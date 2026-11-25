@@ -108,7 +108,7 @@
   - 手順は個人スキル `~/.claude/skills/ct-ship`・`ct-ship-loop`・`ct-finish`・`ct-pr-turn` の「開発用サーバーの順番待ち」の節に書いた（チーム共有の ct-analyze は書き換えず、依頼文で伝える）。編集前の控えは `~/.claude/tmp/skill-backup-20261125-docker/`
   - 見る: `hub_docker.py status`・監視欄の先頭・/na-watch の2行目。状態は `hub/docker.json`・`docker.lock`（copy の対象外）
 - Claude の枠（奇数枠）への依頼の送付と完了待ち（2026-11-25 決定: hub が送るのは Claude の枠だけ）
-  - **ユーザーが送るときは `/na-to <枠番号> <指示>`**（例: `/na-to 3 /ct-redmine 14926`）。hook が送信してプロンプトを止めるので、hub の Claude は動かず hub の会話を消費しない。結果は「UserPromptSubmit operation blocked by hook: na-to ✅ 送信しました …」と画面に出る（"blocked" は正常）。`/na-to 3 /ct-` のように途中で `/` を打つと候補が出る（途中の `/ct-…` は hub では実行されず、文字として送り先に届く）
+  - **ユーザーが送るときは `/na-to <枠番号> <指示>`**（例: `/na-to 3 /ct-redmine 14926`）。hook が送信してプロンプトを止めるので、hub の Claude は動かず hub の会話を消費しない。結果は「UserPromptSubmit operation blocked by hook: na-to ✅ 送信しました …」と画面に出る（"blocked" は正常）。`/na-to 3 /ct-` のように途中で `/` を打つと候補が出る（途中の `/ct-…` は hub では実行されず、文字として送り先に届く）。**処理中の枠にも送れる**（Claude Code は処理中の入力を今の処理の途中で読む。2026-11-25〜）。送らないのは確認待ち（確認の画面に文字を打つと選択肢を選んでしまう）・入力欄に未送信の文字がある・未起動・本番系の枠。自動の依頼（`/na-next`・`/na-go`・autopilot）は先に `/model`・`/effort` を送るので、これまでどおり入力待ちが3秒続くときだけ送る
     - 送らずに止めるもの: 偶数枠（Codex）・Claude 未起動・処理中・確認待ち・入力欄に未送信の文字がある枠・本番系の枠。入力欄の薄い文字（Claude Code の次の入力の候補）は未送信の扱いにしない
     - 構成: 本体 `hub/bin/na_to.py`（`--hook` で hook 用、`--dry-run` で送信直前まで判定だけ）。スキル本体 `hub/skills/na-to/SKILL.md`（「/」の候補に出すためだけ。`disable-model-invocation: true`）を hub の `.claude/skills/na-to` からシンボリックリンク（`.git/info/exclude` 済み）。hook は hub の `.claude/settings.local.json` の `UserPromptSubmit`
     - 受け付けの判定は「入力欄が空になったか」（tmux_link.py send の「処理中が見えるまで最大36秒」は、すぐ終わる返答で待ち切るため使わない）

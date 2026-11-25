@@ -257,24 +257,29 @@ def screen_body(lines, n):
 
 
 def detail_text(slot, n=30, tab="monitor"):
-    """/na-list 枠 [行数]: その枠の1枠2行の要約・監視の状態（固定したチケットなら）・画面の末尾 n 行"""
+    """/na-list 枠 [行数]: その枠の要約（ラベル付きの縦の形）・監視の状態（固定したチケットなら）・画面の末尾 n 行"""
     rows = [r for r in collect(tab) if r["slot"] == slot]
     if not rows:
         return f"⛔ {tab} タブに [{slot}] の枠がありません"
     r = rows[0]
-    out = compact_text([r]).splitlines()[:2]
+    import hub_watch as hw
+    row = lambda label, text: out.append(f"  {hw.pad(label, 10)}{text}") if text else None
+    lock = " 🔒本番" if r["prod"] else ""
+    out = [f"[{r['slot']}] {r['state']}" + (f" #{r['ticket']}" if r.get("ticket") else "") + f" {r['env']} {r['role']}{lock}"]
     if r["kind"] not in ("claude", "codex"):
         return "\n".join(out)
+    row("ブランチ", short_branch(r["branch"]))
+    row("会話", " ".join(x for x in (r["ctx"], f"完了 {r['done']}" if r["done"] else "") if x))
+    row("未送信", clip_tail(r["pending"], 60) if r["pending"] else "")
     try:  # 監視（/na-order で固定したチケット）に載っていれば流れの段階も出す。ダッシュボードが止まっていても画面は出す
-        import hub_watch as hw
         d = hw.fetch()
         mine = [i for i in d.get("items") or [] if i.get("slot") == slot or (r["ticket"] and str(i["id"]) == str(r["ticket"]))]
-        if mine:
-            d = {**d, "items": mine, "docker": {}}
-            out += ["監視: " + ln for ln in hw.compact_text(d).splitlines()[1:]]
+        for i in mine:
+            out += ["", "監視"] + hw.item_block(i, d)
     except Exception:
         pass
-    out.append(f"── 画面の末尾 {n} 行（{r['id']}）──")
+    out.append("")
+    out.append(f"── 画面（末尾 {n} 行・{r['id']}）" + "─" * 30)
     out += screen_body(capture(r["id"], max(n * 3, 80)), n)
     return "\n".join(out)
 

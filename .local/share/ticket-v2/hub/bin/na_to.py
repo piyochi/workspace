@@ -59,7 +59,9 @@ def mark_sent(pane, text):
         pass  # 印が書けなくても送信は止めない（過去のセッションの確認が出ないだけ）
 
 
-def send(args_text):
+def send(args_text, busy_ok=False):
+    """busy_ok: 処理中の枠にも送る（/na-to で手で打った指示。Claude Code は処理中の入力を今の処理の途中で読む。2026-11-25 ユーザー指定）。
+    自動の依頼（/na-next・/na-go・autopilot）は /model・/effort を先に送るので、入力待ちのときだけ送る"""
     m = re.match(r"^(\d+)\s+(.+)$", args_text.strip(), re.DOTALL)
     if not m:
         raise Refuse("書き方: /na-to <枠番号> <指示>（例: /na-to 3 /ct-redmine 14926）")
@@ -73,14 +75,15 @@ def send(args_text):
     if p["state"] != "claude":
         raise Refuse(f"{label} で Claude が起動していません（状態: {p['state']}）")
     info = hs.parse_claude(hs.capture(p["id"]))
-    if info["state"] != "⏸ 入力待ち":
-        raise Refuse(f"{label} は {info['state']} なので送りません")
+    busy = busy_ok and info["state"] == "🔄 処理中"
+    if info["state"] != "⏸ 入力待ち" and not busy:
+        raise Refuse(f"{label} は {info['state']} なので送りません" + ("（確認の画面に文字を打つと選択肢を選んでしまうため。その枠で答えてください）" if "確認" in info["state"] else ""))
     if info["pending"]:
         raise Refuse(f"{label} の入力欄に未送信の文字「{hs.clip_tail(info['pending'], 30)}」が残っています。"
                      f"その枠で消すか送ってから、もう一度送ってください")
     # 入力待ちが続いているかを確かめる。処理の合間に一瞬だけ入力待ちに見えることがあり、そこで送ると「Queued」になる
     # （2026-11-25 [7] の ct-analyze の途中で本番精査の依頼が予約になった）。3 秒の間、1 秒ごとに入力待ち・入力欄が空のままかを見る
-    for _ in range(3):
+    for _ in range(0 if busy else 3):
         time.sleep(1.0)
         again = hs.parse_claude(hs.capture(p["id"]))
         if again["state"] != "⏸ 入力待ち":
@@ -99,7 +102,7 @@ def send(args_text):
         for _ in range(8):
             time.sleep(0.5)
             if not hs.parse_claude(hs.capture(p["id"]))["pending"]:
-                return f"✅ 送信しました: {label} ← {hs.clip_tail(text, 60)}"
+                return (f"✅ 送信しました{'（処理中の枠へ。今の処理の途中で読まれます）' if busy else ''}: {label} ← {hs.clip_tail(text, 60)}")
     raise Refuse(f"{label} に貼り付けましたが、入力欄に残ったままです。その枠の画面を確認してください")
 
 
@@ -169,7 +172,7 @@ def hook_main():
             msg = f"{name} ⛔ エラー（開発ダッシュボードが動いているか確認）: {type(e).__name__}: {e}"
     elif PREFIX.match(prompt):
         try:
-            msg = "na-to " + send(PREFIX.sub("", prompt, count=1))
+            msg = "na-to " + send(PREFIX.sub("", prompt, count=1), busy_ok=True)
         except Refuse as e:
             msg = f"na-to ⛔ 送っていません: {e}"
         except Exception as e:  # hook が落ちてもプロンプトは Claude に渡さない
