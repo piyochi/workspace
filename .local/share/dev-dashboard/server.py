@@ -3613,6 +3613,10 @@ def other_prs(n):
     return res
 
 
+PR_TURN_NOTE = ("ブラウザでの動作確認をしてください。DB・Redis・ログは監視しつつ、スクショ・録画してアーティファクトにまとめてください"
+                "（ct-pr-turn の「ブラウザでの動作確認（必須）」。2026-11-25 ユーザー指示）。")
+
+
 def auto_text(skill, n, item, plan=None):
     """枠に送る依頼文。skill は ct-… か commit・pr-turn。"""
     if skill == "ct-analyze":
@@ -3622,7 +3626,7 @@ def auto_text(skill, n, item, plan=None):
                 f"ブランチはこの環境の CLAUDE.local.md の決まり（設計だけをして別の環境で実装するなら design/{n}）に従ってください。push はしないでください。")
     if skill == "pr-turn":
         urls = " ".join((item.get("review") or {}).get("urls") or [])
-        return f"/ct-pr-turn {urls} #{n}".replace("  ", " ")
+        return (f"/ct-pr-turn {urls} #{n}".replace("  ", " ") + " " + PR_TURN_NOTE)
     return f"/{skill} {n}"
 
 
