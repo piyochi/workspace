@@ -1,7 +1,7 @@
 ---
 name: na-next
 description: 固定したチケットを止まっている所から次のスキルへ進め、以後は自動で頼む対象にする（ct-analyze・ct-architect・ct-planner の後で止まる）。処理は hub の UserPromptSubmit hook が行う
-argument-hint: "番号|枠 [枠] [sweep] [scope] [model=…] [effort=…] [dry] [補足の指示…]"
+argument-hint: "番号|枠 [枠] [sweep] [scope] [prod|noprod] [model=…] [effort=…] [dry] [補足の指示…]"
 disable-model-invocation: true
 ---
 

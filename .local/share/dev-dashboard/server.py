@@ -3617,10 +3617,49 @@ PR_TURN_NOTE = ("ブラウザでの動作確認をしてください。DB・Redi
                 "（ct-pr-turn の「ブラウザでの動作確認（必須）」。2026-11-25 ユーザー指示）。")
 
 
-def auto_text(skill, n, item, plan=None):
-    """枠に送る依頼文。skill は ct-… か commit・pr-turn。"""
+PROD_WORDS = re.compile(r"本番|障害|負荷|急増|検知|アラート|発報|ECPU|CPU|メモリ|タイムアウト|遅延|遅い|重い|エラー|問い合わせ|production", re.I)
+PROD_NOTE = ("このチケットは本番で起きている問題（負荷・障害・本番だけの不具合・利用者からの問い合わせ）と読めるので、"
+             "ステージングだけでなく本番の DB・Redis・ログも読み取り専用で精査してください（ct-ssh-host-production の決まりに従う: "
+             "調査の runner は bat01、複数シャードは読み取りでも release: true、並列化・ループ全体のトランザクションはしない。"
+             "Redis は読み取りのコマンドだけ。ログは ct-log-download・ct-log-grep）。いつ・何回・どのデータで起きたかを本番の記録から数字で示し、"
+             "書き込み・設定の変更はしないでください。")
+
+
+def is_prod_issue(n):
+    """件名・説明が本番の問題（負荷・障害・本番だけの不具合・問い合わせ）と読めるか（2026-11-25 ユーザー指定: 自動で判断）。取れなければ False。"""
+    try:
+        i = redmine_call(f"/issues/{n}.json").get("issue", {})
+    except Exception:
+        return False
+    return bool(PROD_WORDS.search((i.get("subject") or "") + "\n" + (i.get("description") or "")))
+
+
+def prod_pending(n, t):
+    """本番の問題と自動で判断したが、まだユーザーに確かめていない（そのチケットで最初の1回だけ確かめる。2026-11-25 ユーザー指定）。"""
+    return (t or {}).get("prod") is None and is_prod_issue(n)
+
+
+def ask_prod(n, slot):
+    """本番の精査を含めるかを tmux と Slack で1回だけ聞く。"""
+    msg = (f"#{n} は本番の問題（負荷・障害・問い合わせ等）と自動で判断しました。ct-analyze に本番の DB・Redis・ログの精査を含めるなら "
+           f"/na-next {n} prod、含めないなら /na-next {n} noprod（[{slot}] にはまだ送っていません）")
+    seen = _json_load(HUB_AUTO + ".fail", {})
+    if seen.get(n) == "prod-ask":
+        return msg
+    seen[n] = "prod-ask"
+    try:
+        _json_save(HUB_AUTO + ".fail", seen)
+    except OSError:
+        pass
+    tmux_notify(f"❓ {msg[:90]}")
+    slack_dm(f"hub 監視\n❓ {msg}")
+    return msg
+
+
+def auto_text(skill, n, item, plan=None, t=None):
+    """枠に送る依頼文。skill は ct-… か commit・pr-turn。ct-analyze は t["prod"]（ユーザーが確かめた本番の精査の要否）で本番の精査を足す。"""
     if skill == "ct-analyze":
-        return f"/ct-analyze {n} {ANALYZE_NOTE}"
+        return f"/ct-analyze {n} {ANALYZE_NOTE}" + (f" {PROD_NOTE}" if (t or {}).get("prod") else "")
     if skill == "commit":
         return (f"/ct-commit {n} ct-issue-docs で作った issue docs（docs/issues/active/{n}_*/）だけをコミットしてください。"
                 f"ブランチはこの環境の CLAUDE.local.md の決まり（設計だけをして別の環境で実装するなら design/{n}）に従ってください。push はしないでください。")
@@ -3961,7 +4000,10 @@ def autopilot(d, slots):
                 continue
             if t.get("slot") is not None and t["slot"] != i["slot"]:
                 continue  # 割り当てた枠と違う枠で作業している（手で動かした）ときは触らない
-            text = auto_text(nxt, n, i)
+            if nxt == "ct-analyze" and prod_pending(n, t):
+                ask_prod(n, i["slot"])  # 確かめるまで送らない（handled にしないので、答えた後の /na-next か次の回で送る）
+                continue
+            text = auto_text(nxt, n, i, t=t)
             ok, msg = send_skill(i["slot"], nxt, text, n, t)
             _auto_record(auto, n, i["slot"], nxt, text, ok, msg, key)
             changed = True
@@ -3990,7 +4032,7 @@ def auto_fail(n, msg, key=None):
     slack_dm(f"hub 監視\n⚠️ #{n} 自動の依頼に失敗: {msg}")
 
 
-def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, effort=None, note=""):
+def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, effort=None, note="", prod=None):
     """/na-next 番号 [枠] [sweep] [scope]: 止まっている所から次のスキルを頼み、以後の自動の依頼の対象にする。"""
     n = str(n)
     scan_watch_skills()
@@ -4039,7 +4081,13 @@ def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, ef
                            f"{last.get('skill') or 'なし'} までです。{nxt} を頼むのは止めました。その枠で直接頼んでください")
         if nxt == "commit" and any(x.get("skill") == "commit" and x.get("ok") for x in t.get("log") or []):
             return False, f"#{n} は issue docs のコミットを頼み済みです。実装の開始は /na-go {n}"
-        text = auto_text(nxt, n, i) + (f" 補足（hub から）: {note}" if note else "")
+        if prod is not None:
+            t["prod"] = prod
+            if not dry:
+                _json_save(HUB_AUTO, auto)
+        if nxt == "ct-analyze" and prod_pending(n, t):
+            return False, ask_prod(n, use)
+        text = auto_text(nxt, n, i, t=t) + (f" 補足（hub から）: {note}" if note else "")
         if dry:
             mp = model_plan(nxt, n, t, {"model": model, "effort": effort})
             return True, f"🧪 dry-run: [{use}] ← " + (text if len(text) <= 160 else f"{text[:80]}…{text[-60:]}" if note else text[:80]) + f"（{mp[0]}・{mp[1]}" + (f"・{mp[2]}" if mp[2] else "") + "）"
@@ -4471,7 +4519,8 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(mo, str):
                 return self.send_json({"ok": False, "msg": mo})
             ok, msg = auto_start(n, slot, bool(req.get("sweep")), bool(req.get("scope")), bool(req.get("dry")), *mo,
-                                 note=str(req.get("note") or "")[:500])
+                                 note=str(req.get("note") or "")[:500],
+                                 prod=req.get("prod") if isinstance(req.get("prod"), bool) else None)
             return self.send_json({"ok": ok, "msg": pre + msg})
         if self.path == "/api/link":
             try:

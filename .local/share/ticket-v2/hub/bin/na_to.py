@@ -65,6 +65,15 @@ def send(args_text):
     if info["pending"]:
         raise Refuse(f"{label} の入力欄に未送信の文字「{hs.clip_tail(info['pending'], 30)}」が残っています。"
                      f"その枠で消すか送ってから、もう一度送ってください")
+    # 入力待ちが続いているかを確かめる。処理の合間に一瞬だけ入力待ちに見えることがあり、そこで送ると「Queued」になる
+    # （2026-11-25 [7] の ct-analyze の途中で本番精査の依頼が予約になった）。3 秒の間、1 秒ごとに入力待ち・入力欄が空のままかを見る
+    for _ in range(3):
+        time.sleep(1.0)
+        again = hs.parse_claude(hs.capture(p["id"]))
+        if again["state"] != "⏸ 入力待ち":
+            raise Refuse(f"{label} は {again['state']} なので送りません（入力待ちが続いていません）")
+        if again["pending"]:
+            raise Refuse(f"{label} の入力欄に未送信の文字「{hs.clip_tail(again['pending'], 30)}」が残っています")
     if DRY_RUN:
         return f"🧪 dry-run（送っていません）: {label} ← {hs.clip_tail(text, 60)}"
     # tmux_link.py send は「処理中」の表示が出るまで Enter を押し直して最大36秒待つ。

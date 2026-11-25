@@ -121,8 +121,9 @@ def split_note(args, words):
 
 
 def next_cmd(args):
-    """/na-next 番号 [枠] [sweep] [scope] [model=…] [effort=…] [dry] [補足の指示…]"""
-    args, note = split_note(args, ("sweep", "scope", "dry"))
+    """/na-next 番号 [枠] [sweep] [scope] [prod|noprod] [model=…] [effort=…] [dry] [補足の指示…]
+    prod・noprod: ct-analyze に本番の DB・Redis・ログの精査を含めるか（本番の問題と自動で判断したチケットは、最初の1回だけ聞いて止まる）"""
+    args, note = split_note(args, ("sweep", "scope", "dry", "prod", "noprod"))
     opt, args = model_args(args)
     nums = [a for a in args if re.fullmatch(r"#?\d+", a)]
     tickets = [a.lstrip("#") for a in nums if len(a.lstrip("#")) >= 4]
@@ -130,7 +131,8 @@ def next_cmd(args):
     if len(tickets) > 1 or len(slots) > 1 or (not tickets and not slots):
         return "⛔ 書き方: /na-next 番号 [枠] [sweep] [scope] [補足の指示]・/na-next 枠（その枠の作業中のチケット）（例: /na-next 14926・/na-next 14926 7・/na-next 14926 sweep scope）"
     r = dash_post("/api/watch/next", {"ticket": tickets[0] if tickets else None, "slot": slots[0] if slots else None,
-                                     "sweep": "sweep" in args, "scope": "scope" in args, "dry": "dry" in args, "note": note, **opt})
+                                     "sweep": "sweep" in args, "scope": "scope" in args, "dry": "dry" in args, "note": note,
+                                     "prod": True if "prod" in args else (False if "noprod" in args else None), **opt})
     return r.get("msg") if r.get("ok") else f"⛔ 送っていません: {r.get('msg') or r.get('error')}"
 
 
