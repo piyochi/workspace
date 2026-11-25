@@ -226,6 +226,59 @@ def compact_text(rows):
     return "\n".join(out)
 
 
+RULE_RE = re.compile(r"^[─━]{10,}\s*$")
+
+
+def screen_body(lines, n):
+    """画面の末尾 n 行（入力欄の罫線から下・末尾の空行を除く）。/na-list 枠 の表示用"""
+    end = len(lines)
+    for k in range(len(lines) - 1, -1, -1):  # 最後の入力欄（罫線 → ❯/› の行）の上の罫線まで
+        if RULE_RE.match(lines[k]) and k + 1 < len(lines) and re.match(r"^\s*[❯›]", lines[k + 1]):
+            end = k
+            break
+    else:  # Codex の入力欄は罫線が無い: 最後の › の行から下を除く
+        for k in range(len(lines) - 1, -1, -1):
+            if re.match(r"^›", lines[k]):
+                end = k
+                break
+    body = lines[:end]
+    while body and not body[-1].strip():
+        body.pop()
+    out, blank = [], False
+    for line in body[-n * 2:]:  # 空行は続けて出さない
+        if not line.strip():
+            if blank:
+                continue
+            blank = True
+        else:
+            blank = False
+        out.append(line.rstrip())
+    return out[-n:]
+
+
+def detail_text(slot, n=30, tab="monitor"):
+    """/na-list 枠 [行数]: その枠の1枠2行の要約・監視の状態（固定したチケットなら）・画面の末尾 n 行"""
+    rows = [r for r in collect(tab) if r["slot"] == slot]
+    if not rows:
+        return f"⛔ {tab} タブに [{slot}] の枠がありません"
+    r = rows[0]
+    out = compact_text([r]).splitlines()[:2]
+    if r["kind"] not in ("claude", "codex"):
+        return "\n".join(out)
+    try:  # 監視（/na-order で固定したチケット）に載っていれば流れの段階も出す。ダッシュボードが止まっていても画面は出す
+        import hub_watch as hw
+        d = hw.fetch()
+        mine = [i for i in d.get("items") or [] if i.get("slot") == slot or (r["ticket"] and str(i["id"]) == str(r["ticket"]))]
+        if mine:
+            d = {**d, "items": mine, "docker": {}}
+            out += ["監視: " + ln for ln in hw.compact_text(d).splitlines()[1:]]
+    except Exception:
+        pass
+    out.append(f"── 画面の末尾 {n} 行（{r['id']}）──")
+    out += screen_body(capture(r["id"], max(n * 3, 80)), n)
+    return "\n".join(out)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--tab", default="monitor")

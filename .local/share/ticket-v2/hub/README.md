@@ -44,6 +44,8 @@
 やること:
 - 12枠の一覧と状態（実行中・入力待ち・空き）、各枠のチケット番号・段階の把握（`tmux_link.py list`・枠タイトル・開発ダッシュボードの「対応中」）
   - **ユーザーが見るときは `/na-list`**: Claude の枠（奇数枠）だけを1枠2行（状態・チケット・ブランチ・会話量・完了時刻／最後の応答の末尾）で画面に出す。`/na-to` と同じ hook（`na_to.py --hook`）が表示してプロンプトを止めるので、hub の会話を消費しない。スキル本体 `hub/skills/na-list/SKILL.md` を hub の `.claude/skills/na-list` からシンボリックリンク（`.git/info/exclude` 済み）
+  - **1枠だけ詳しく見るときは `/na-list 枠 [行数]`**（例 `/na-list 7`・`/na-list 7 60`。偶数の Codex の枠も可）: その枠の1枠2行の要約、監視（`/na-order` で固定したチケット）に載っていれば流れの印と自動の依頼の状況、画面の末尾（入力欄から下を除く。既定 30 行・最大 150 行）を出す。実装は `hub_status.py` の `detail_text`・`screen_body`
+  - **ct-redmine の前の過去のセッションの確認**（個人の `~/.claude/settings.json` の UserPromptSubmit hook → `~/.local/share/ticket-v2/bin/ticket_sessions.py --hook`。全環境の Claude に効く。Codex は対象外）: hub（MAIN）から `/na-to`・`/na-next`・自動の依頼で `/ct-redmine 番号`（参照だけ）を送ったときだけ（`na_to.py` が `hub/sent/pane-<n>.json` に送った印を書き、hook が2分以内・同じ文なら hub からと判断。枠で直接打ったときは聞かない）、`~/.claude/history.jsonl` からその番号が出てくる過去のセッション（hub の会話・`/na-` の指示は除く）と `~/.claude/tmp/ct-handoff/番号_session_handoff.md` を探し、見つかれば Redmine を読む前に「開き直す（C-r の ctrl-o 相当。同じ workspace で、いま別の枠で開いていないものだけ）・会話を読み込んでから続ける（ctrl-t 相当。`handoff` で直近 10 往復を書き出す）・引き継ぎを読む・使わずに新しく読む」を聞く。hub から送ったときもその枠で質問になって止まる（`/na-watch` は質問中）
   - hub の Claude が見るときは `python3 ~/.local/share/ticket-v2/hub/bin/hub_status.py`（12枠を1行ずつ要約。--active で起動中だけ、--compact で /na-list と同じ形）。詳しく見る枠だけ `tmux_link.py read %ID`
 - Redmine のチケットの把握（2026-11-25〜）
   - **ユーザーが見るときは `/na-redmine [件数] [優先度…] [全部] [再取得]`**: 自分担当の未完了（新規登録・進行中・フィードバック）とウォッチ中（終了・解決・却下以外。プロジェクトを問わない）を1件2行で画面に出す。1行目は【優先度】・ステータス・件名・作業中の枠（[n] 状態 スキル名）、2行目は待ち・ブロック先（未完了の相手だけ）・最終更新（自分/他・日時）・最新コメントの冒頭（自分のコメントなら「自:」）。`/na-list` と同じ hook が表示するので hub の会話を消費しない

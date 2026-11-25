@@ -24,7 +24,7 @@ import hub_status as hs  # noqa: E402  （tmux_link の読み込みも hub_statu
 
 tl = hs.tl
 PREFIX = re.compile(r"^\s*/na-to(?:\s+|$)")
-LIST_PREFIX = re.compile(r"^\s*/na-list\s*$")
+LIST_PREFIX = re.compile(r"^\s*/na-list(?:\s+(.*))?$")
 REDMINE_PREFIX = re.compile(r"^\s*/na-redmine(?:\s+(.*))?$")
 ORDER_PREFIX = re.compile(r"^\s*/na-order(?:\s+(.*))?$")
 WATCH_PREFIX = re.compile(r"^\s*/na-watch(?:\s+(.*))?$")
@@ -44,6 +44,19 @@ def find_slot(slot):
         if m and int(m.group(1)) == slot:
             return p
     raise Refuse(f"monitor タブに [{slot}] の枠が見つかりません")
+
+
+SENT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sent")  # hub/sent/pane-<n>.json
+
+
+def mark_sent(pane, text):
+    """hub（MAIN）から送った印。枠の UserPromptSubmit hook（ticket_sessions.py）が「hub から来た指示か」を見分けるのに使う"""
+    try:
+        os.makedirs(SENT_DIR, exist_ok=True)
+        with open(os.path.join(SENT_DIR, f"pane-{pane.lstrip('%')}.json"), "w", encoding="utf-8") as f:
+            json.dump({"pane": pane, "text": text, "at": time.time()}, f, ensure_ascii=False)
+    except OSError:
+        pass  # 印が書けなくても送信は止めない（過去のセッションの確認が出ないだけ）
 
 
 def send(args_text):
@@ -78,6 +91,7 @@ def send(args_text):
         return f"🧪 dry-run（送っていません）: {label} ← {hs.clip_tail(text, 60)}"
     # tmux_link.py send は「処理中」の表示が出るまで Enter を押し直して最大36秒待つ。
     # すぐ終わる返答だと待ち切ってしまうので、ここでは「入力欄が空になったか」で受け付けを判定する
+    mark_sent(p["id"], text)
     tl.paste(p["id"], text)
     time.sleep(1.0)
     for attempt in range(2):  # 1回目の Enter が「/」の候補選択に使われた場合だけ、もう1回押す
@@ -94,10 +108,21 @@ def hook_main():
     prompt = data.get("prompt", "")
     if LIST_PREFIX.match(prompt):
         # /na-list: 12枠の要約を画面に出すだけ（reason は会話に入らない）
+        args = (LIST_PREFIX.match(prompt).group(1) or "").split()
         try:
-            # hub が送るのは Claude の枠（奇数枠）だけなので、一覧も Claude の枠だけにする（2026-11-25 ユーザー指定）
-            rows = [r for r in hs.collect("monitor") if r["slot"] % 2 == 1]
-            msg = "na-list（Claude の枠）\n" + hs.compact_text(rows)
+            if args:
+                # /na-list 枠 [行数]: その枠だけを詳しく（要約・監視の状態・画面の末尾。既定 30 行・最大 150 行）
+                if not args[0].lstrip("[").rstrip("]").isdigit() or not 1 <= int(args[0].strip("[]")) <= 12 \
+                        or (len(args) > 1 and not args[1].isdigit()):
+                    raise Refuse("書き方: /na-list（Claude の枠の一覧）・/na-list 枠 [行数]（例: /na-list 7・/na-list 7 60）")
+                n = min(int(args[1]), 150) if len(args) > 1 else 30
+                msg = f"na-list [{args[0].strip('[]')}]\n" + hs.detail_text(int(args[0].strip("[]")), n)
+            else:
+                # hub が送るのは Claude の枠（奇数枠）だけなので、一覧も Claude の枠だけにする（2026-11-25 ユーザー指定）
+                rows = [r for r in hs.collect("monitor") if r["slot"] % 2 == 1]
+                msg = "na-list（Claude の枠）\n" + hs.compact_text(rows)
+        except Refuse as e:
+            msg = f"na-list ⛔ {e}"
         except Exception as e:
             msg = f"na-list ⛔ エラー: {type(e).__name__}: {e}"
     elif REDMINE_PREFIX.match(prompt):

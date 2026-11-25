@@ -81,7 +81,7 @@ DEST_HUB="$HOME/workspace/.local/share/ticket-v2/hub/"
 if [ -d "$SOURCE_HUB" ]; then
   echo "Copying $SOURCE_HUB to $DEST_HUB..."
   mkdir -p "$DEST_HUB"
-  rsync -av --exclude='.DS_Store' --exclude='__pycache__/' --exclude='order.json*' --exclude='watch.json*' --exclude='watch_notify.json*' --exclude='autopilot.json*' --exclude='slots.json*' --exclude='docker.json*' --exclude='docker.lock' "$SOURCE_HUB/" "$DEST_HUB"  # order.json は /na-order の固定の順、watch*.json・autopilot.json・slots.json・docker.* は監視・自動の依頼・順番待ちの状態（個人の作業状態）
+  rsync -av --exclude='.DS_Store' --exclude='__pycache__/' --exclude='order.json*' --exclude='watch.json*' --exclude='watch_notify.json*' --exclude='autopilot.json*' --exclude='slots.json*' --exclude='docker.json*' --exclude='docker.lock' --exclude='sent/' "$SOURCE_HUB/" "$DEST_HUB"  # order.json は /na-order の固定の順、watch*.json・autopilot.json・slots.json・docker.*・sent/ は監視・自動の依頼・順番待ち・hub から送った印の状態（個人の作業状態）
 fi
 
 if [ $? -eq 0 ]; then
