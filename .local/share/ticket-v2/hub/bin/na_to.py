@@ -27,6 +27,7 @@ PREFIX = re.compile(r"^\s*/na-to(?:\s+|$)")
 LIST_PREFIX = re.compile(r"^\s*/na-list\s*$")
 REDMINE_PREFIX = re.compile(r"^\s*/na-redmine(?:\s+(.*))?$")
 ORDER_PREFIX = re.compile(r"^\s*/na-order(?:\s+(.*))?$")
+WATCH_PREFIX = re.compile(r"^\s*/na-watch(?:\s+(.*))?$")
 DRY_RUN = "--dry-run" in sys.argv  # 送信の直前で止める（条件の確認用）
 
 
@@ -103,6 +104,14 @@ def hook_main():
             msg = "na-order " + hr.order_cmd(args)
         except Exception as e:
             msg = f"na-order ⛔ エラー（開発ダッシュボードが動いているか確認）: {type(e).__name__}: {e}"
+    elif WATCH_PREFIX.match(prompt):
+        # /na-watch [再取得]: 固定したチケットの枠・段階・状態（判定はダッシュボードの常駐ループ）
+        args = (WATCH_PREFIX.match(prompt).group(1) or "").split()
+        try:
+            import hub_watch as hw
+            msg = "na-watch " + hw.run(args)
+        except Exception as e:
+            msg = f"na-watch ⛔ エラー（開発ダッシュボードが動いているか確認）: {type(e).__name__}: {e}"
     elif PREFIX.match(prompt):
         try:
             msg = "na-to " + send(PREFIX.sub("", prompt, count=1))
@@ -111,7 +120,7 @@ def hook_main():
         except Exception as e:  # hook が落ちてもプロンプトは Claude に渡さない
             msg = f"na-to ⛔ エラーで送っていません: {type(e).__name__}: {e}"
     else:
-        return  # /na-to・/na-list・/na-redmine・/na-order 以外は何もしない（通常どおり Claude に渡す）
+        return  # /na-to・/na-list・/na-redmine・/na-order・/na-watch 以外は何もしない（通常どおり Claude に渡す）
     print(json.dumps({"decision": "block", "reason": msg, "suppressOriginalPrompt": True}, ensure_ascii=False))
     reset_pane_state()
 

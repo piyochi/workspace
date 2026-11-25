@@ -74,14 +74,14 @@ if [ -d "$SOURCE_DASHBOARD" ]; then
     "$SOURCE_DASHBOARD/" "$DEST_DASHBOARD"
 fi
 
-# hub（~/www/ticket_v2_hub の取りまとめ用。README・hub_status.py・na_to.py・hub_redmine.py・/na-to・/na-list・/na-redmine・/na-order のスキル本体）をコピー
+# hub（~/www/ticket_v2_hub の取りまとめ用。README・hub_status.py・na_to.py・hub_redmine.py・hub_watch.py・/na-to・/na-list・/na-redmine・/na-order・/na-watch のスキル本体）をコピー
 # hub 側の .claude/settings.local.json の hook と .claude/skills/na-* のシンボリックリンクは対象外（作り方は README）
 SOURCE_HUB="$HOME/.local/share/ticket-v2/hub"
 DEST_HUB="$HOME/workspace/.local/share/ticket-v2/hub/"
 if [ -d "$SOURCE_HUB" ]; then
   echo "Copying $SOURCE_HUB to $DEST_HUB..."
   mkdir -p "$DEST_HUB"
-  rsync -av --exclude='.DS_Store' --exclude='__pycache__/' --exclude='order.json*' "$SOURCE_HUB/" "$DEST_HUB"  # order.json は /na-order の固定の順（個人の作業状態）
+  rsync -av --exclude='.DS_Store' --exclude='__pycache__/' --exclude='order.json*' --exclude='watch.json*' --exclude='watch_notify.json*' "$SOURCE_HUB/" "$DEST_HUB"  # order.json は /na-order の固定の順、watch*.json は監視の状態（個人の作業状態）
 fi
 
 if [ $? -eq 0 ]; then

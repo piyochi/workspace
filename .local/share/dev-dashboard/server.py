@@ -10,6 +10,7 @@
   GET  /api/links    … AI（Claude / Codex）が出した文章の URL（直近7日・新しい順。cat=種類・q=フリーワード）
   GET  /api/redmine  … 自分担当の未完了チケット（5分キャッシュ、refresh=1 で取り直し）と、各チケットの枠・ブランチ・issue docs、
                        今日（朝 4:00 以降）の作業（today）と、今日作業した担当外・完了済みのチケット（today_extra）
+  GET  /api/watch    … hub の監視（/na-order で固定したチケットの枠・段階・状態。refresh=1 でその場で判定、tickets=番号… で確かめる）
   GET  /api/history  … 1 チケットを全期間で探す（Claude・Codex の記録全部と各環境の git のコミット）
   POST /api/link     … [n] の枠の連動先（@link_slot。「2,4」のように複数可）を付ける・外す
   POST /api/cli      … [n] の枠で Claude / Codex を起動（monitor.txt のコマンド）・停止（入力待ちのときだけ）
@@ -3249,6 +3250,271 @@ def nippo_save(req):
     return {"error": "HRMOS が登録を受け付けませんでした: " + (" / ".join(errs) if errs else "理由は画面から読み取れませんでした（HRMOS の画面で確かめてください）")}, 409
 
 
+# ---- hub の監視（/na-order で固定したチケット。2026-11-25〜） ----
+# 固定したチケットごとに、担当の枠・スキル単位の段階・状態（処理中・確認待ち…）を 20 秒ごとに判定し、
+# ~/.local/share/ticket-v2/hub/watch.json に書く（hub の /na-watch が読む）。確認待ち・レビューに変わったら
+# tmux（ステータス行の件数・数秒のメッセージ）と Slack DM で知らせる。固定の順は hub が order.json に持つ（hub_redmine.py の /na-order）
+HUB_STATE_DIR = os.path.join(HOME, ".local", "share", "ticket-v2", "hub")
+HUB_ORDER = os.path.join(HUB_STATE_DIR, "order.json")
+HUB_WATCH = os.path.join(HUB_STATE_DIR, "watch.json")
+HUB_NOTIFY = os.path.join(HUB_STATE_DIR, "watch_notify.json")  # 前回の状態（変わったときだけ知らせる）
+SLACK_DM = os.path.join(HOME, ".claude", "hooks", "slack-dm.sh")
+WATCH_FLOW = ["ct-redmine", "ct-analyze", "ct-architect", "ct-sweep", "ct-scope", "ct-planner", "ct-issue-docs", "ct-ship-loop", "ct-finish"]
+WATCH_OPTIONAL = {"ct-sweep", "ct-scope"}
+WATCH_SHORT = {s: s.removeprefix("ct-") for s in WATCH_FLOW}
+WATCH_DAYS = 14
+WATCH_INTERVAL = 20
+WATCH_ATTENTION = {"wait", "question", "next"}  # 確認待ち（ユーザーが見る番）
+WATCH_STATE_LABEL = {"busy": "処理中", "wait": "確認待ち（許可）", "question": "確認待ち（質問）", "next": "確認待ち（次の指示）",
+                     "idle": "入力待ち", "stopped": "停止中", "none": "枠なし"}
+WATCH_STATUS_FMT = "#{?@hub_attention,#[fg=black#,bg=yellow] 確認待ち #{@hub_attention} #[default] ,}"
+watch_lock = threading.Lock()
+watch_files = {}   # 記録ファイル -> {"offset", "cwd", "ticket", "open"}（追記分だけ読む）
+watch_skills = {}  # チケット番号 -> [{"skill", "start", "end", "result"}]（result: running / done / question）
+watch_cache = {"at": 0, "items": [], "attention": 0}
+
+
+def watch_order():
+    try:
+        with open(HUB_ORDER, encoding="utf-8") as f:
+            return [str(n) for n in json.load(f).get("order") or []]
+    except (OSError, ValueError):
+        return []
+
+
+def _watch_event(ticket, skill, ts):
+    evs = watch_skills.setdefault(ticket, [])
+    ev = {"skill": skill, "start": ts, "end": 0, "result": "running"}
+    evs.append(ev)
+    del evs[:-60]
+    return ev
+
+
+def _watch_lines(st, lines, skills):
+    """Claude の記録の追記分から、チケット番号付きのスキル実行と、その終わり（end_turn。質問で終わったか）を拾う。"""
+    for line in lines:
+        is_user = '"type":"user"' in line
+        has_skill_tool = '"name":"Skill"' in line
+        is_end = '"end_turn"' in line and '"assistant"' in line
+        if not (is_user or has_skill_tool or is_end or ('"cwd"' in line and not st.get("cwd"))):
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        st["cwd"] = d.get("cwd") or st.get("cwd", "")
+        if env_of(st.get("cwd")) not in ENV_DIRS.values():
+            continue  # 環境1〜4の作業フォルダのセッションだけ（hub・一時フォルダは数えない）
+        ts = iso_ts(d.get("timestamp"))
+        if not ts or d.get("isMeta") or d.get("isCompactSummary") or d.get("isSidechain"):
+            continue  # 圧縮後に差し込まれる「前に使ったスキル」の一覧・サブエージェントの会話は数えない
+        if is_user:
+            tks = claude_work_tickets(d)
+            if tks:
+                st["ticket"] = tks[0]
+            if "<command-name>" in line:
+                for name in SKILL_CMD.findall(json.dumps(d.get("message", {}), ensure_ascii=False)):
+                    if name.startswith("ct-") and name in skills:
+                        tk = tks[0] if tks else st.get("ticket", "")
+                        if tk:
+                            st["open"] = _watch_event(tk, name, ts)
+        if has_skill_tool:
+            for b in (d.get("message") or {}).get("content") or []:
+                if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Skill":
+                    inp = b.get("input") or {}
+                    name = inp.get("skill", "")
+                    if not name.startswith("ct-"):
+                        continue
+                    tk = main_ticket(str(inp.get("args") or "")) or st.get("ticket", "")
+                    if tk:
+                        st["open"] = _watch_event(tk, name, ts)
+        if is_end and st.get("open") and st["open"]["result"] != "done":
+            msg = d.get("message") or {}
+            if msg.get("stop_reason") == "end_turn":
+                text = "\n".join(b.get("text", "") for b in msg.get("content") or [] if isinstance(b, dict) and b.get("type") == "text")
+                st["open"]["end"] = ts
+                st["open"]["result"] = "question" if is_question(text) else "done"
+
+
+def scan_watch_skills():
+    skills = known_skills()
+    limit = time.time() - WATCH_DAYS * 86400
+    files = sorted(glob.glob(os.path.join(HOME, ".claude", "projects", "*", "*.jsonl")), key=os.path.getmtime)
+    for path in files:
+        try:
+            if os.path.getmtime(path) < limit:
+                continue
+            st = watch_files.setdefault(path, {"offset": 0, "cwd": ""})
+            lines = read_new_lines(path, st)
+        except OSError:
+            continue
+        if lines:
+            with watch_lock:
+                _watch_lines(st, lines, skills)
+
+
+def watch_flow(n):
+    """スキル単位の段階: 流れの各スキルの印（done 済み / running 実行中 / question 質問中 / "" 未実行）と、最後のスキル。"""
+    with watch_lock:
+        evs = sorted(watch_skills.get(n, []), key=lambda e: e["start"])  # ファイルの読む順は時刻順ではない
+    marks = {ev["skill"]: ev["result"] for ev in evs if ev["skill"] in WATCH_SHORT}  # 同じスキルは最後の実行の結果
+    last = next((ev for ev in reversed(evs) if ev["skill"] in WATCH_SHORT), None)
+    # 後の段階が始まっていれば、前の段階は済んだものとみなす（ct-ship-loop の中で ct-finish が動く等）
+    reached = max((WATCH_FLOW.index(s) for s in marks), default=-1)
+    flow = []
+    for i, s in enumerate(WATCH_FLOW):
+        m = marks.get(s, "")
+        if not m and i < reached and s not in WATCH_OPTIONAL:
+            m = "skip"
+        if m in ("running", "question") and last and last["skill"] != s:
+            m = "done"  # 途中で別のスキルに移った（終わりの区切りが無いまま）
+        flow.append({"skill": s, "short": WATCH_SHORT[s], "mark": m, "optional": s in WATCH_OPTIONAL})
+    pr_turn = [ev for ev in evs if ev["skill"] == "ct-pr-turn"]
+    lastf = next((ev for ev in reversed(evs) if ev["skill"] in WATCH_SHORT or ev["skill"] == "ct-pr-turn"), None)
+    return flow, lastf, (pr_turn[-1] if pr_turn else None)
+
+
+def watch_item(n, f, slots):
+    flow, last, pr_turn = watch_flow(n)
+    mine = [s for s in slots if s["kind"] == "claude" and s["state"] != "stopped" and n in (s.get("tickets") or [s.get("ticket")])]
+    rank = {"wait": 4, "busy": 3, "idle": 2}
+    slot = max(mine, key=lambda s: rank.get(s["state"], 0)) if mine else None
+    skill = (last or {}).get("skill") or (slot or {}).get("skill", "")
+    if not slot:
+        state = "none"
+    elif slot["state"] in ("busy", "wait"):
+        state = slot["state"]
+    elif (slot.get("skill") and not slot.get("skill_done")) or (last and last["result"] == "question"):
+        state = "question"  # スキルの返答が質問で終わっている（答え待ち。ct-handoff など流れの外のスキルも含む）
+    elif last and last["result"] == "done":
+        state = "next"      # 流れのスキルが終わり、次の指示待ち
+    else:
+        state = "idle"
+    ball = (f.get("ball") or {})
+    review = ball.get("kind") in ("review_in", "fix")
+    stage = next((x["short"] for x in reversed(flow) if x["mark"] in ("done", "running", "question")), "")
+    return {"id": n, "subject": f.get("subject", ""), "status": f.get("status", ""), "priority": f.get("priority", ""),
+            "url": f.get("url", ""), "closed": f.get("ball", {}).get("kind") == "done",
+            "slot": slot["slot"] if slot else None, "env": slot["env"] if slot else "", "slots": [s["slot"] for s in mine],
+            "state": state, "state_label": WATCH_STATE_LABEL[state], "attention": state in WATCH_ATTENTION or review,
+            "skill": skill, "stage": stage, "flow": flow, "phase": f.get("phase"),
+            "pr_turn": {"result": pr_turn["result"], "start": pr_turn["start"]} if pr_turn else None,
+            "review": {"kind": ball.get("kind"), "label": ball.get("label"), "why": ball.get("why")} if review else None,
+            "ball": ball, "prs": [{"repo": p.get("repo"), "number": p.get("number"), "state": p.get("state"), "url": p.get("url"),
+                                    "decision": p.get("decision")} for p in f.get("prs") or []]}
+
+
+def watch_build(order=None):
+    order = order if order is not None else watch_order()
+    if not order:
+        return {"at": time.time(), "items": [], "attention": 0, "order": []}
+    panes = ai_panes()
+    slots = panes.get("slots", [])
+    fv = {str(i["id"]): i for i in focus_view()["items"]}
+    items = []
+    for n in order:
+        f = fv.get(n)
+        if f is None:
+            one = focus_view(only=n)["items"]
+            f = one[0] if one else {}
+        items.append(watch_item(n, f, slots))
+    return {"at": time.time(), "items": items, "attention": sum(1 for i in items if i["attention"]), "order": order}
+
+
+def tmux_notify(msg):
+    try:
+        clients = tmux("list-clients", "-t", TMUX_SESSION, "-F", "#{client_name}").stdout.split()
+        for c in clients:
+            tmux("display-message", "-c", c, "-d", "6000", msg)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def tmux_attention(count):
+    """ステータス行の右に「確認待ち N」を出す（@hub_attention）。tmuxp を読み直すと書式が戻るので、毎回確かめて足す。"""
+    try:
+        tmux("set-option", "-t", TMUX_SESSION, "@hub_attention", str(count) if count else "")
+        cur = tmux("show-options", "-v", "-t", TMUX_SESSION, "status-right").stdout.rstrip("\n")
+        if "@hub_attention" not in cur:
+            if not cur:
+                cur = tmux("show-options", "-gv", "status-right").stdout.rstrip("\n")
+            tmux("set-option", "-t", TMUX_SESSION, "status-right", WATCH_STATUS_FMT + cur)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def slack_dm(msg):
+    if os.access(SLACK_DM, os.X_OK):
+        try:
+            subprocess.run([SLACK_DM, msg, "hub 監視"], capture_output=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def watch_notify(items):
+    """前回から変わった「確認待ち」「レビュー」だけを知らせる。初回（前回の記録が無い）は記録だけして知らせない。"""
+    try:
+        with open(HUB_NOTIFY, encoding="utf-8") as f:
+            prev = json.load(f)
+        first = False
+    except (OSError, ValueError):
+        prev, first = {}, True
+    now = {}
+    msgs = []
+    for i in items:
+        key = f"{i['state']}:{i['skill']}" if i["state"] in WATCH_ATTENTION else ""
+        rkey = (i.get("review") or {}).get("kind") or ""
+        now[i["id"]] = {"state": key, "review": rkey}
+        if i["id"] not in prev:
+            continue  # 固定したばかりのチケットは、今の状態を覚えるだけ（固定した直後に知らせない）
+        p = prev[i["id"]]
+        where = f"[{i['slot']}] " if i["slot"] is not None else ""
+        if key and key != p.get("state"):
+            what = {"wait": "許可の確認", "question": f"{WATCH_SHORT.get(i['skill'], i['skill'])} の質問",
+                    "next": f"{WATCH_SHORT.get(i['skill'], i['skill'])} 完了・次の指示"}[i["state"]]
+            msgs.append(f"👀 #{i['id']} {where}{what}（{i['subject'][:30]}）")
+        if rkey and rkey != p.get("review"):
+            msgs.append(f"#{i['id']} {i['review']['label']}（{i['review']['why'][:60]}）")
+    try:
+        tmp = HUB_NOTIFY + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(now, f, ensure_ascii=False)
+        os.replace(tmp, HUB_NOTIFY)
+    except OSError:
+        pass
+    if first or not msgs:
+        return []
+    tmux_notify(" / ".join(msgs))
+    slack_dm("hub 監視\n" + "\n".join(msgs))
+    return msgs
+
+
+def watch_once():
+    scan_watch_skills()
+    d = watch_build()
+    d["notified"] = watch_notify(d["items"])
+    watch_cache.update(d)
+    tmux_attention(d["attention"])
+    try:
+        os.makedirs(HUB_STATE_DIR, exist_ok=True)
+        tmp = HUB_WATCH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False)
+        os.replace(tmp, HUB_WATCH)
+    except OSError:
+        pass
+    return d
+
+
+def watch_loop():
+    while True:
+        try:
+            watch_once()
+        except Exception as e:  # 失敗しても次の回でやり直す
+            print(f"{time.strftime('%F %T')} 監視の判定に失敗: {e}", file=sys.stderr, flush=True)
+        time.sleep(WATCH_INTERVAL)
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
@@ -3365,6 +3631,15 @@ class Handler(BaseHTTPRequestHandler):
                 redmine_cache["at"] = 0
                 refresh_prs()
             self.send_json(redmine_view())
+        elif self.path == "/api/watch":
+            only = self.query.get("tickets", [""])[0]
+            if only:  # 確かめる用: 固定の順を使わず、指定した番号で判定する（記録・通知はしない）
+                scan_watch_skills()
+                self.send_json(watch_build([t for t in re.findall(r"\d{4,6}", only)]))
+            elif self.query.get("refresh", [""])[0] == "1" or not watch_cache["at"]:
+                self.send_json(watch_once())
+            else:
+                self.send_json(watch_cache)
         elif self.path == "/api/commands":
             self.send_json(command_list())
         elif self.path == "/api/skills":
@@ -3546,6 +3821,7 @@ def main():
     threading.Thread(target=pane_label_loop, daemon=True).start()
     threading.Thread(target=today_loop, daemon=True).start()
     threading.Thread(target=pr_loop, daemon=True).start()
+    threading.Thread(target=watch_loop, daemon=True).start()
     httpd = ThreadingHTTPServer((cfg["bind"], cfg["port"]), Handler)
     print(f"dev-dashboard: {cfg['bind']}:{cfg['port']} 許可: {', '.join(cfg['allow_ips'])}", flush=True)
     httpd.serve_forever()

@@ -54,6 +54,19 @@
     - データは開発ダッシュボードの `/api/redmine`（5分キャッシュ。`再取得` で取り直し）を localhost から読む。Redmine への問い合わせ・キャッシュ・枠との対応づけはダッシュボードの1か所だけ（hub は Redmine に直接問い合わせない）。ダッシュボードが止まっていると ⛔ を出す
     - 構成: 整形 `hub/bin/hub_redmine.py`（hub の Claude が見るときも `python3 … hub_redmine.py [件数] [優先度…] [--json]`）。スキル本体 `hub/skills/na-redmine/SKILL.md` を hub の `.claude/skills/na-redmine` からシンボリックリンク（`.git/info/exclude` 済み）
   - ダッシュボードの Redmine 欄にもウォッチ分（区切り「ウォッチ中」）と、もっと見るの絞り込みに優先度（〜以上も）を足した。ダッシュボードは全優先度を出す（上から2段に絞るのは `/na-redmine` だけ）
+- 固定したチケットの監視（2026-11-25〜。設計は https://claude.ai/artifact/83S9a5vy7eEcttdDvrL9jz の「A 見る」）
+  - 対象は `/na-order` で固定したチケット。判定は開発ダッシュボードの常駐ループ（server.py の `watch_loop`。20 秒ごと）が行い、結果を `/api/watch` と `hub/watch.json` に書く。hub の Claude は常駐しない
+  - 判定するもの: 担当の枠（Claude の枠のうち、そのチケットを作業中のもの）・状態・スキル単位の段階・03_progress.md のフェーズ・PR・レビュー
+    - 状態: 処理中 / 確認待ち（許可）/ 確認待ち（質問。スキルの返答が質問で終わった）/ 確認待ち（次の指示。流れのスキルが終わった）/ 入力待ち / 枠なし
+    - 段階: 環境1〜4の Claude の会話ログ（`~/.claude/projects/*/*.jsonl`。直近14日）から、チケット番号付きのスキル実行（`/ct-… 番号`・Skill ツール）とその終わり（end_turn が質問かどうか）を拾い、流れ redmine→analyze→architect→(sweep)→(scope)→planner→issue-docs→ship-loop→finish の各段に印を付ける。後の段が動いていて記録の無い必須の段は「✗ 記録なし」
+  - 見る場所: ダッシュボードの先頭の「監視（/na-order）」欄（20 秒ごとに更新。確認待ちの行は黄色）と、hub の **`/na-watch [refresh]`**（同じ hook で表示。会話を消費しない。CLI は `hub_watch.py [--json]`）
+  - 通知（状態が変わったときだけ。固定した直後とダッシュボードの起動直後は今の状態を記録するだけ）:
+    - tmux のステータス行の右に「確認待ち N」（`@hub_attention`。セッションの `status-right` の先頭に書式を足す。tmuxp を読み直して消えても次の判定で足し直す）
+    - tmux の各クライアントに数秒のメッセージ（`display-message`）
+    - Slack DM（`~/.claude/hooks/slack-dm.sh`）: 確認待ちに変わったとき・レビュー依頼が来た／修正依頼が付いたとき
+    - 前回の状態は `hub/watch_notify.json`（watch*.json は copy-to-workspace / copy-to-home の対象外）
+  - 確かめるときは `/api/watch?tickets=14926,14747`（固定の順を使わず判定だけ。記録・通知はしない）
+  - 自動で次のスキルを頼む（B）・資料後のコミット（C）・/na-go（D）・Docker の順番待ち（E）はまだ無い
 - Claude の枠（奇数枠）への依頼の送付と完了待ち（2026-11-25 決定: hub が送るのは Claude の枠だけ）
   - **ユーザーが送るときは `/na-to <枠番号> <指示>`**（例: `/na-to 3 /ct-redmine 14926`）。hook が送信してプロンプトを止めるので、hub の Claude は動かず hub の会話を消費しない。結果は「UserPromptSubmit operation blocked by hook: na-to ✅ 送信しました …」と画面に出る（"blocked" は正常）。`/na-to 3 /ct-` のように途中で `/` を打つと候補が出る（途中の `/ct-…` は hub では実行されず、文字として送り先に届く）
     - 送らずに止めるもの: 偶数枠（Codex）・Claude 未起動・処理中・確認待ち・入力欄に未送信の文字がある枠・本番系の枠。入力欄の薄い文字（Claude Code の次の入力の候補）は未送信の扱いにしない

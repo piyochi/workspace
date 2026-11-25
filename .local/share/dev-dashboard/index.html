@@ -180,6 +180,29 @@ mark.mv-hit { background: color-mix(in srgb, #facc15 55%, transparent); color: i
 .mv-url { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .mv-more { padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
 .mv-more:hover { text-decoration: underline; }
+.wt-row { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; padding: 5px 0; border-top: 1px solid var(--line); font-size: 12px; }
+.wt-row:first-child { border-top: 0; }
+.wt-row.att { background: color-mix(in srgb, var(--warn) 12%, var(--card)); margin: 0 -12px; padding: 5px 12px; }
+.wt-no { color: var(--muted); font-variant-numeric: tabular-nums; }
+.wt-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.wt-head a { color: var(--accent); font-weight: 700; text-decoration: none; font-variant-numeric: tabular-nums; }
+.wt-subj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 200px; }
+.wt-pri { color: var(--muted); }
+.wt-pri.hi { color: var(--bad); font-weight: 700; }
+.wt-state { border-radius: 9px; padding: 0 7px; line-height: 17px; border: 1px solid var(--line); white-space: nowrap; }
+.wt-state.busy { border-color: #f97316; color: #ea580c; }
+.wt-state.wait, .wt-state.question, .wt-state.next { border-color: var(--warn); background: var(--warn); color: #fff; font-weight: 700; }
+.wt-state.idle { color: var(--ok); } .wt-state.none, .wt-state.stopped { color: var(--muted); }
+.wt-flow { grid-column: 2; display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
+.wt-step { font-size: 11px; border-radius: 3px; padding: 0 4px; line-height: 15px; border: 1px solid var(--line); color: var(--muted); }
+.wt-step.opt { border-style: dashed; }
+.wt-step.done { background: color-mix(in srgb, var(--ok) 18%, var(--card)); border-color: transparent; color: var(--text); }
+.wt-step.skip { text-decoration: line-through; }
+.wt-step.running { border-color: #f97316; color: #ea580c; font-weight: 700; }
+.wt-step.question { border-color: var(--warn); background: var(--warn); color: #fff; font-weight: 700; }
+.wt-extra { color: var(--muted); font-size: 11px; margin-left: 4px; }
+.wt-extra.rv { color: var(--bad); font-weight: 700; }
+.wt-empty { color: var(--muted); font-size: 12px; }
 .sec { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
 .sec > summary { list-style: none; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
 .sec > summary::-webkit-details-marker { display: none; }
@@ -492,6 +515,11 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
   </header>
   <!-- 吹き出しはヘッダーの外に置く（ヘッダーの中だと、モーダル（日報など）の下に隠れる） -->
   <div class="fc-pop" id="fc-pop" hidden></div>
+
+  <details class="sec" data-key="watch" open>
+    <summary><h2>監視（/na-order）</h2> <span class="label" id="watch-meta"></span></summary>
+    <div id="watch"></div>
+  </details>
 
   <details class="sec" data-key="claude" open>
     <summary><h2>Claude</h2></summary>
@@ -1034,6 +1062,34 @@ $("focus").addEventListener("auxclick", (e) => {
   const b = e.button === 1 && e.target.closest(".fc"); if (!b) return;
   e.preventDefault(); focusOpenRedmine(b);
 });
+// ---- 監視（hub の /na-order で固定したチケット）。/api/watch を 20 秒ごとに読む ----
+async function loadWatch() {
+  try {
+    const d = await (await fetch("/api/watch")).json();
+    const items = d.items || [];
+    const t = d.at ? new Date(d.at * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
+    $("watch-meta").textContent = items.length ? `${items.length} 件${d.attention ? `・確認待ち ${d.attention}` : ""}・${t} 時点` : "";
+    if (!items.length) { $("watch").innerHTML = `<div class="wt-empty">固定したチケットはありません（hub で <code>/na-order 番号 …</code>）</div>`; return; }
+    $("watch").innerHTML = items.map((i, k) => {
+      const flow = (i.flow || []).map((x) => `<span class="wt-step ${x.mark || ""}${x.optional ? " opt" : ""}" title="${esc(x.skill)}${x.mark ? `：${{done: "済み", running: "実行中・途中", question: "質問中", skip: "実行の記録なし"}[x.mark] || x.mark}` : ""}">${esc(x.short)}</span>`).join("");
+      const extra = [];
+      if (i.phase) extra.push(`<span class="wt-extra" title="03_progress.md のフェーズ">フェーズ ${i.phase.done}/${i.phase.total}</span>`);
+      if (i.pr_turn) extra.push(`<span class="wt-extra">pr-turn ${i.pr_turn.result === "done" ? "済み" : "途中"}</span>`);
+      (i.prs || []).forEach((p) => extra.push(`<a class="wt-extra" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.repo || "")}#${p.number} ${esc(p.state || "")}</a>`));
+      if (i.review) extra.push(`<span class="wt-extra rv" title="${esc(i.review.why)}">${esc(i.review.label)}</span>`);
+      const slot = i.slot !== null && i.slot !== undefined ? `[${i.slot}] ` : "";
+      const hi = ["今すぐ", "急いで"].includes(i.priority);
+      return `<div class="wt-row${i.attention ? " att" : ""}"><span class="wt-no">${k + 1}</span>
+        <div class="wt-head"><a href="${esc(i.url)}" target="_blank" rel="noopener">#${esc(i.id)}</a>
+          <span class="wt-pri${hi ? " hi" : ""}">【${esc(i.priority || "?")}】</span><span class="wt-pri">${esc(i.status)}</span>
+          <span class="wt-state ${i.state}" title="${esc(i.skill)}">${esc(slot)}${esc(i.state_label)}${i.skill ? ` · ${esc(i.skill.replace(/^ct-/, ""))}` : ""}</span>
+          <span class="wt-subj" title="${esc(i.subject)}">${esc(i.subject)}</span></div>
+        <div class="wt-flow">${flow}${extra.join("")}</div></div>`;
+    }).join("");
+  } catch (e) { /* 接続エラーは refresh() 側で表示する */ }
+}
+loadWatch();
+setInterval(loadWatch, 20000);
 refreshFocus();
 setInterval(refreshFocus, 30000);
 // ヘッダーの小さい版。元の欄（Claude・Codex・tmux）が画面に見えている間は出さず、
