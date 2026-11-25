@@ -36,7 +36,7 @@
 
 - **hub は monitor の番号無しの枠（★ MAIN。`claude-monitor` を実行した元の枠）に置く**（2026-11-25 決定）
   - `~/.tmuxp/ticket_v2_project.yaml` の monitor タブに `start_directory: ~/www/ticket_v2_hub` を指定し、起動コマンドを履歴に積むだけにした（↑ = continue、↑↑ = new）。変更前は `ticket_v2_project.yaml.bak-20261125`
-  - tmuxp を読み込んだ直後は1番の枠が MAIN の位置に表示されている。番号無しの枠に戻すには、表示中の番号（Alt+1）をもう一度押す
+  - monitor タブの `claude-monitor` には `--main-first` を付けているので、tmuxp を読み込んだ直後から番号無しの枠（★ MAIN＝hub）がメインに出る（2026-11-25〜。付けない他のタブは従来どおり [1] がメイン）。[n] を見た後で MAIN に戻すには、表示中の番号（Alt+n）をもう一度押す
 - 枠番号とペイン ID（`%NN`）の対応はフォーカス切り替えのたびに変わる。**送る直前に毎回 `tmux_link.py list` で引き直す**
 
 ## hub がやること・やらないこと

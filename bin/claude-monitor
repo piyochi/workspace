@@ -55,6 +55,7 @@ fi
 CURRENT_SESSION=$(tmux display-message -p '#{session_name}')
 MONITOR_NAME="default"
 NO_WINDOW=false
+MAIN_FIRST=false
 LIST_SIZE="50%"
 LAYOUT="left"
 GRID=""
@@ -96,6 +97,8 @@ while [[ $# -gt 0 ]]; do
       shift; MONITOR_NAME="$1"; shift ;;
     --no-window)
       NO_WINDOW=true; shift ;;
+    --main-first)
+      MAIN_FIRST=true; shift ;;
     -l|--layout)
       shift
       case "$1" in
@@ -177,6 +180,7 @@ Usage: claude-monitor [OPTIONS] [DIR1 DIR2 ...]
   -w, --width PERCENT   リスト側のサイズ (デフォルト: 50%)
   --name NAME           モニター名 (複数ウィンドウ共存時に必須)
   --no-window           新しいウィンドウを作らず現在のウィンドウを使う
+  --main-first          起動直後に [1] をメインに出さず、元の枠（★ MAIN）のままにする
   -h, --help            このヘルプ
 
 操作キー:
@@ -867,14 +871,20 @@ for ((i = 0; i < ${#CLI_IDS[@]}; i++)); do
   fi
 done
 
-# ---- 初期状態: ペイン1をメインにフォーカス ----
+# ---- 初期状態: ペイン1をメインにフォーカス（--main-first なら元の枠 ★ MAIN のまま） ----
 sleep 0.5
-first_title=$(env_get CLI_1_TITLE)
-CLI1_IDX=$(env_get CLI_1_IDX)
-tmux swap-pane -t "${WIN_ID}.${FOCUS_INDEX}" -s "${WIN_ID}.${CLI1_IDX}"
-env_set FOCUSED_CLI "1"
-tmux set-option -t "${WIN_ID}.${FOCUS_INDEX}" -p @cm_title "★ FOCUS $first_title"
-tmux set-option -t "${WIN_ID}.${CLI1_IDX}" -p @cm_title "[1] → $DIR_LABEL"
+if [[ "$MAIN_FIRST" == true ]]; then
+  # Alt+番号 でメインに戻したときと同じ状態（ディスパッチャーの「none」）にする
+  env_set FOCUSED_CLI "none"
+  tmux set-option -t "${WIN_ID}.${FOCUS_INDEX}" -p @cm_title "★ MAIN"
+else
+  first_title=$(env_get CLI_1_TITLE)
+  CLI1_IDX=$(env_get CLI_1_IDX)
+  tmux swap-pane -t "${WIN_ID}.${FOCUS_INDEX}" -s "${WIN_ID}.${CLI1_IDX}"
+  env_set FOCUSED_CLI "1"
+  tmux set-option -t "${WIN_ID}.${FOCUS_INDEX}" -p @cm_title "★ FOCUS $first_title"
+  tmux set-option -t "${WIN_ID}.${CLI1_IDX}" -p @cm_title "[1] → $DIR_LABEL"
+fi
 
 # =============================================
 #  キーバインド (ディスパッチャー経由)
