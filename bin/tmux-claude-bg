@@ -1,0 +1,21 @@
+#!/bin/bash
+# ============================================================================
+#  tmux-claude-bg — 入力待ち（@ai_state=idle）の Claude の枠の画面下端から、バックグラウンドで動いている
+#  シェル・Monitor・タスクの数（例「⏵⏵ auto mode on · 1 shell · ↓ to manage」）を読み、あれば枠タイトルの色（オレンジ）を返す
+#
+#  返事を書き終えると Stop フックで入力待ち（idle）になるが、バックグラウンドの処理の完了を待っている間は
+#  処理中として見せたいため（2026-11-25）。フックは完了を知らせないので画面から見る（tmux-codex-busy と同じ方式）
+#
+#  使い方: claude-monitor の pane-border-format から #(~/bin/tmux-claude-bg #{pane_id}) で呼ぶ（10 秒ごと）
+#          引数 --check のときは色ではなく、動いていれば 1 を返す（開発ダッシュボード用）
+# ============================================================================
+
+check=""
+[[ "${1:-}" == "--check" ]] && { check=1; shift; }
+[[ -z "${1:-}" ]] && exit 0
+# 画面の下端（入力欄の下の行）だけを見る。会話の中の「1 shell still running」は古い表示のことがあるので見ない
+foot=$(tmux capture-pane -p -t "$1" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 2)
+if grep -qE '(^|·)[[:space:]]*[0-9]+ (shells?|monitors?|background tasks?|tasks?|local agents?|agents?|workflows?)[[:space:]]*(·|$)' <<<"$foot"; then
+  if [[ -n "$check" ]]; then printf '1'; else printf '%s' '#[bg=colour208,fg=black]'; fi
+fi
+exit 0

@@ -737,10 +737,11 @@ tmux bind-key -T root MouseDown1Border if-shell -F -t = '#{@ai_label}' "display-
 tmux set-option -w -t "$WIN_ID" pane-border-status top
 # タイトルの色: Claude は @ai_state（~/bin/tmux-ai-state をフックから呼んで付ける）で busy=オレンジ・wait=赤、
 # 本体が入力待ちでもサブエージェントが動いていれば（@ai_sub）オレンジ、
+# 入力待ちでもバックグラウンドのシェル・Monitor 等が動いていれば（画面下端の「1 shell」等。~/bin/tmux-claude-bg、10 秒ごと）オレンジ、
 # タイトルの文字（@ai_label）を付けた枠は「[n] envN」のあとの「claude(continue)」の代わりにそれを36文字まで出す
 # （~/bin/tmux-title・スキル ct-tmux-title・開発ダッシュボードの tmux 欄で付ける。CLI を閉じるとダッシュボードが外す）、
 # 印の無いペインは Codex の処理中表示を画面から見る（~/bin/tmux-codex-busy、10 秒ごと）
-tmux set-option -w -t "$WIN_ID" pane-border-format ' #{?#{==:#{@ai_state},wait},#[bg=colour196#,fg=white],#{?#{||:#{==:#{@ai_state},busy},#{@ai_sub}},#[bg=colour208#,fg=black],#{?#{@ai_state},,#(~/bin/tmux-codex-busy #{pane_id})}}}#[bold] #{?#{@ai_label},#{s/ [a-z]+\([a-z]+\)$//:@cm_title} #{=/36/…:@ai_label},#{@cm_title}} #[default]'
+tmux set-option -w -t "$WIN_ID" pane-border-format ' #{?#{==:#{@ai_state},wait},#[bg=colour196#,fg=white],#{?#{||:#{==:#{@ai_state},busy},#{@ai_sub}},#[bg=colour208#,fg=black],#{?#{@ai_state},#(~/bin/tmux-claude-bg #{pane_id}),#(~/bin/tmux-codex-busy #{pane_id})}}}#[bold] #{?#{@ai_label},#{s/ [a-z]+\([a-z]+\)$//:@cm_title} #{=/36/…:@ai_label},#{@cm_title}} #[default]'
 
 # =============================================
 #  レイアウト構築

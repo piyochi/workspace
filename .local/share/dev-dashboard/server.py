@@ -662,6 +662,15 @@ def running_subagents(pane_id):
     return n
 
 
+def claude_bg_running(pane_id):
+    """入力待ちの Claude の枠で、バックグラウンドのシェル・Monitor・タスクが動いているか（画面下端の表示から）。"""
+    try:
+        return subprocess.run([os.path.join(HOME, "bin", "tmux-claude-bg"), "--check", pane_id],
+                              capture_output=True, text=True, timeout=3).stdout.strip() == "1"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def pane_status(pane_id, cmd, ai_state, tty, slot_kind, kinds):
     """(動いている CLI の種類, 状態) を返す。止まっていれば種類は枠の既定。"""
     # CLI はラッパーの bash から起動されるので、ログインシェル（zsh）に戻っていれば止まっている。
@@ -673,8 +682,9 @@ def pane_status(pane_id, cmd, ai_state, tty, slot_kind, kinds):
     if kind == "claude":
         if ai_state in ("busy", "wait"):
             return kind, ai_state
-        # 本体は入力待ちでも、バックグラウンドのサブエージェントが動いていれば処理中
-        return kind, ("busy" if running_subagents(pane_id) else "idle")
+        # 本体は入力待ちでも、バックグラウンドのサブエージェント・シェル・Monitor 等が動いていれば処理中
+        # （シェル等は画面下端の「1 shell」等を ~/bin/tmux-claude-bg で読む。枠タイトルの色と同じ判定）
+        return kind, ("busy" if running_subagents(pane_id) or claude_bg_running(pane_id) else "idle")
     return kind, codex_state(pane_id)
 
 
