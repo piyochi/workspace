@@ -1,7 +1,7 @@
 ---
 name: na-redmine
 description: 優先度で絞り込める。自分担当の未完了チケットとウォッチ中のチケットを、作業中の枠・待ち・最終更新付きで1件2行で画面に出す。表示は hub の UserPromptSubmit hook が行う
-argument-hint: "[件数] [今すぐ|急いで|高め|通常|低め|高め以上|全部（既定は上から2段）] [再取得]"
+argument-hint: "[件数] [now|urgent|high|normal|low|high+|all（既定は上から2段。日本語も可）] [refresh]"
 disable-model-invocation: true
 ---
 
