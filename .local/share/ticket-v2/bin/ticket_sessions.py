@@ -84,7 +84,7 @@ def live_panes():
             m = hs.SLOT_RE.match(hs.slot_title(p["title"]))
             if m and p["id"] in alive:
                 alive[p["id"]] = f"[{m.group(1)}]"
-    except Exception:
+    except (Exception, SystemExit):  # monitor タブが無いセッション（試験用など）では tl.load_panes が sys.exit する（2026-11-25 試験）
         pass
     live = {}
     for f in glob.glob(os.path.join(HOME, ".local", "share", "dev-dashboard", "cache", "pane-*.json")):
@@ -267,7 +267,7 @@ if __name__ == "__main__":
     if a[:1] == ["--hook"]:
         try:
             hook()
-        except Exception as e:  # hook の失敗でプロンプトを止めない
+        except (Exception, SystemExit) as e:  # hook の失敗でプロンプトを止めない（下の部品の sys.exit も受ける）
             print(f"ticket_sessions hook: {type(e).__name__}: {e}", file=sys.stderr)
     elif a[:1] == ["find"] and len(a) >= 2:
         ex = a[a.index("--exclude") + 1] if "--exclude" in a else ""
