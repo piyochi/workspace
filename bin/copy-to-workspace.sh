@@ -74,7 +74,7 @@ if [ -d "$SOURCE_DASHBOARD" ]; then
     "$SOURCE_DASHBOARD/" "$DEST_DASHBOARD"
 fi
 
-# hub（~/www/ticket_v2_hub の取りまとめ用。README・hub_status.py・na_to.py・hub_redmine.py・hub_watch.py・/na-to・/na-list・/na-redmine・/na-order・/na-watch・/na-next・/na-slot のスキル本体）をコピー
+# hub（~/www/ticket_v2_hub の取りまとめ用。README・hub_status.py・na_to.py・hub_redmine.py・hub_watch.py・/na-to・/na-list・/na-redmine・/na-order・/na-watch・/na-next・/na-slot・/na-go のスキル本体）をコピー
 # hub 側の .claude/settings.local.json の hook と .claude/skills/na-* のシンボリックリンクは対象外（作り方は README）
 SOURCE_HUB="$HOME/.local/share/ticket-v2/hub"
 DEST_HUB="$HOME/workspace/.local/share/ticket-v2/hub/"

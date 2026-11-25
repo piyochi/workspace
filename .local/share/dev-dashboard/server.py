@@ -3508,7 +3508,7 @@ def watch_once():
         if i["id"] == sent:  # 送った直後は処理中として扱う（「次の指示待ち」を知らせない）
             i["state"], i["state_label"], i["attention"] = "busy", "処理中（自動で依頼）", False
     d["attention"] = sum(1 for i in d["items"] if i["attention"])
-    d["auto"] = {k: {"slot": v.get("slot"), "plan": v.get("plan"), "last": (v.get("log") or [None])[-1]}
+    d["auto"] = {k: {"slot": v.get("slot"), "plan": v.get("plan"), "go": v.get("go"), "last": (v.get("log") or [None])[-1]}
                  for k, v in _json_load(HUB_AUTO, {"tickets": {}}).get("tickets", {}).items()}
     d["notified"] = watch_notify(d["items"]) + review_notify(fv_items, set(d["order"]))
     watch_cache.update(d)
@@ -3576,7 +3576,8 @@ def auto_text(skill, n, item, plan=None):
     if skill == "ct-analyze":
         return f"/ct-analyze {n} {ANALYZE_NOTE}"
     if skill == "commit":
-        return f"/ct-commit {n} ct-issue-docs で作った issue docs（docs/issues/active/{n}_*/）だけをコミットしてください。push はしないでください。"
+        return (f"/ct-commit {n} ct-issue-docs で作った issue docs（docs/issues/active/{n}_*/）だけをコミットしてください。"
+                f"ブランチはこの環境の CLAUDE.local.md の決まり（設計だけをして別の環境で実装するなら design/{n}）に従ってください。push はしないでください。")
     if skill == "pr-turn":
         urls = " ".join((item.get("review") or {}).get("urls") or [])
         return f"/ct-pr-turn {urls} #{n}".replace("  ", " ")
@@ -3684,6 +3685,14 @@ def autopilot(d, slots):
                         continue
                     sent = n
                     break
+            if t and t.get("go"):
+                r = go_step(auto, i, t)
+                if r is not None:
+                    changed = True
+                if r:
+                    sent = n
+                    break
+                continue  # 実装を開始したチケットは、流れの自動（redmine→analyze 等）の対象にしない
             if not t or i["state"] != "next" or i["slot"] is None:
                 continue
             last = i.get("last_flow") or {}
@@ -3760,13 +3769,13 @@ def auto_start(n, slot=None, sweep=False, scope=False, dry=False):
                 return False, f"#{n} の {last.get('skill')} が終わっていません（{last.get('result')}）。その枠で続けてください"
             done = [x["skill"] for x in i["flow"] if x["mark"] == "done"]
             if "ct-issue-docs" in done:
-                return False, f"#{n} は ct-issue-docs まで済んでいます。実装の開始は /na-go（未実装）です"
+                return False, f"#{n} は ct-issue-docs まで済んでいます。実装の開始は /na-go {n}"
             return False, f"#{n} の次のスキルを決められません（最後: {last.get('skill') or 'なし'}）"
         if nxt not in ("pr-turn", "commit") and (i.get("prs") or i.get("phase")):  # 03_progress.md は ct-issue-docs が作るのでコミットは止めない
             return False, (f"#{n} はブランチ・PR・03_progress.md があり実装まで進んでいますが、流れのスキルの記録（直近14日）は "
                            f"{last.get('skill') or 'なし'} までです。{nxt} を頼むのは止めました。その枠で直接頼んでください")
         if nxt == "commit" and any(x.get("skill") == "commit" and x.get("ok") for x in t.get("log") or []):
-            return False, f"#{n} は issue docs のコミットを頼み済みです。実装の開始は /na-go（未実装）です"
+            return False, f"#{n} は issue docs のコミットを頼み済みです。実装の開始は /na-go {n}"
         text = auto_text(nxt, n, i)
         if dry:
             return True, f"🧪 dry-run: [{use}] ← {text[:80]}"
@@ -3781,6 +3790,106 @@ def auto_start(n, slot=None, sweep=False, scope=False, dry=False):
         stop = "（この後は ct-analyze・ct-architect・ct-planner の後で止まります）" if nxt.startswith("ct-") else ""
         return True, f"{msg}{stop}"
     return False, msg
+
+
+# D: 実装の開始（/na-go）。依頼文は 2026-11-25 ユーザー指定（設計ページ r1 q4 の補足）のまま。2つ目は1つ目（ct-ship-loop）が終わってから送る
+GO_TEXT1 = ("/ct-ship-loop {n} コーディングはcodexで、それ以外はclaudeで行い。codexで作ったものはclaudeで、claudeで作ったものはcodexで精査して。"
+            "codex使うときは適切なモデルを選ぶように調整して。ブランチ：{branch}")
+GO_TEXT2 = ("/ct-finish {n} sweepは設計時に作ってたらそれを使う、作ってないなら使わない、codexにも相談して進めて。席外すので質問は全て推奨で進めて。"
+            "ブラウザの動作確認もして欲しい。db,redis,ログを監視しつつ、スクショ・録画してアーティファクトにまとめて")
+GO_ACTIVE = ("ship-loop", "finish")
+
+
+def auto_go(n, slot=None, branch="", force=False, dry=False):
+    """/na-go 番号 [枠] [--branch 名前] [force]: ct-ship-loop を頼み、終わったら ct-finish を自動で頼む。
+
+    E（開発用サーバーの順番待ち）ができるまでは1件ずつ: 他のチケットの実装（ship-loop・finish）が動いている間は止めて知らせる。
+    """
+    n = str(n)
+    branch = branch or f"feature/{n}"
+    if not re.fullmatch(r"[\w./-]{1,80}", branch):
+        return False, f"ブランチ名が不正です: {branch}"
+    scan_watch_skills()
+    slots = ai_panes().get("slots", [])
+    d = watch_build([n])
+    if not d["items"]:
+        return False, f"#{n} を判定できませんでした"
+    i = d["items"][0]
+    with auto_lock:
+        auto = _json_load(HUB_AUTO, {"tickets": {}})
+        other = [(k, v["go"]) for k, v in auto.get("tickets", {}).items() if k != n and (v.get("go") or {}).get("stage") in GO_ACTIVE]
+        if other:
+            k, g = other[0]
+            msg = (f"#{k} の実装（{g['stage']}・[{g.get('slot')}]）が動いているので、#{n} は始めません"
+                   f"（開発用サーバーの順番待ち（E）ができるまでは1件ずつ）。終わってからもう一度 /na-go {n}")
+            tmux_notify(f"⏸ {msg[:120]}")
+            return False, msg
+        g = (auto.get("tickets", {}).get(n) or {}).get("go") or {}
+        if g.get("stage") in GO_ACTIVE:
+            return False, f"#{n} は実装を開始済みです（{g['stage']}・[{g.get('slot')}]）"
+        if i["state"] in ("busy", "wait", "question"):
+            return False, f"#{n} は [{i['slot']}] で {i['state_label']} です。終わってから /na-go を使ってください"
+        marks = {x["skill"]: x["mark"] for x in i["flow"]}
+        if marks.get("ct-issue-docs") != "done" and not force:
+            return False, f"#{n} は ct-issue-docs の記録（直近14日）がありません。設計を記録の外で済ませたなら /na-go {n} force"
+        if marks.get("ct-ship-loop") or marks.get("ct-finish") in ("done", "running", "question"):
+            if not force:
+                return False, (f"#{n} は ct-ship-loop・ct-finish の記録があります（実装済み・途中）。やり直すときは /na-go {n} force、"
+                               f"レビューの戻りは /na-next {n}（ct-pr-turn）")
+        if i["slot"] is not None and slot is not None and slot != i["slot"]:
+            return False, f"#{n} は [{i['slot']}] で作業中です（1チケット1枠）。枠を変えるときはその枠を /clear してから指定してください"
+        use = i["slot"] if i["slot"] is not None else (slot if slot is not None else free_slot(
+            [x for x in watch_cache.get("items", []) if x["id"] != n], slots,
+            {"tickets": {k: v for k, v in auto.get("tickets", {}).items() if k != n}}, "fix"))
+        if use is None:
+            return False, "空いている Claude の枠（環境1・2）がありません。枠を指定してください（/na-go 番号 枠）"
+        # 同じ環境のもう一方の Claude の枠は同じリポジトリを使う。動いている作業があればブランチの切り替えで壊すので止める
+        me = next((s for s in slots if s["slot"] == use), None)
+        sib = [s for s in slots if me and s["env"] == me["env"] and s["slot"] != use and s["kind"] == "claude" and s["state"] in ("busy", "wait")]
+        if sib:
+            return False, (f"[{use}] と同じ {me['env']} の [{sib[0]['slot']}] が {WATCH_STATE_LABEL.get(sib[0]['state'], sib[0]['state'])}"
+                           f"（#{sib[0].get('ticket') or '番号なし'}）です。同じリポジトリのブランチを切り替えるので、終わってから始めてください")
+        text = GO_TEXT1.format(n=n, branch=branch)
+        if dry:
+            return True, f"🧪 dry-run: [{use}] ← {text[:90]}…（ct-ship-loop が終わったら ct-finish を自動で頼む）"
+        ok, msg = na_to_send(use, text)
+        last = i.get("last_flow") or {}
+        _auto_record(auto, n, use, "ct-ship-loop", text, ok, msg, f"{last.get('skill')}@{int(last.get('end') or 0)}")
+        if ok:
+            t = auto["tickets"][n]
+            t["slot"] = use
+            t["go"] = {"stage": "ship-loop", "at": time.time(), "slot": use, "branch": branch}
+        _json_save(HUB_AUTO, auto)
+    if ok:
+        return True, f"{msg}（{branch}。ct-ship-loop が終わったら ct-finish を自動で頼みます）"
+    return False, msg
+
+
+def go_step(auto, i, t):
+    """autopilot から: /na-go したチケットの ct-ship-loop が終わったら ct-finish を頼み、ct-finish が終わったら完了にする。
+    送ったら True（1回に1件）。"""
+    g = t.get("go") or {}
+    if g.get("stage") not in GO_ACTIVE or i["state"] != "next" or i["slot"] is None:
+        return None
+    last = i.get("last_flow") or {}
+    if last.get("result") != "done" or (last.get("end") or 0) < g.get("at", 0):
+        return None
+    n = i["id"]
+    if g["stage"] == "ship-loop" and last.get("skill") == "ct-ship-loop":
+        text = GO_TEXT2.format(n=n)
+        ok, msg = na_to_send(i["slot"], text)
+        _auto_record(auto, n, i["slot"], "ct-finish", text, ok, msg)
+        if ok:
+            g.update(stage="finish", at=time.time())
+            return True
+        auto_fail(n, f"[{i['slot']}] に ct-finish を送れません: {msg}", f"go-finish@{int(last.get('end') or 0)}")
+        return False
+    if g["stage"] == "finish" and last.get("skill") == "ct-finish":
+        g.update(stage="done", at=time.time())
+        tmux_notify(f"✅ #{n} 実装と仕上げ（ct-finish）が終わりました。[{i['slot']}] で結果を確認してください")
+        slack_dm(f"hub 監視\n✅ #{n} 実装と仕上げ（ct-finish）が終わりました。[{i['slot']}] で結果を確認してください（push はしていません）")
+        return False
+    return None
 
 
 def review_notify(fv_items, order):
@@ -4018,6 +4127,16 @@ class Handler(BaseHTTPRequestHandler):
             set_pane_label(p["id"], label)
             remember_label(slot, label[:LABEL_MAX])
             return self.send_json({"ok": True, "label": label[:LABEL_MAX]})
+        if self.path == "/api/watch/go":
+            try:
+                n = str(int(req.get("ticket")))
+                slot = int(req["slot"]) if req.get("slot") not in (None, "") else None
+            except (TypeError, ValueError):
+                return self.send_json({"error": "ticket / slot が不正です"}, 400)
+            if slot is not None and (slot % 2 == 0 or not 1 <= slot <= 11):
+                return self.send_json({"ok": False, "msg": "枠は Claude の枠（奇数 1〜11）を指定してください"})
+            ok, msg = auto_go(n, slot, str(req.get("branch") or ""), bool(req.get("force")), bool(req.get("dry")))
+            return self.send_json({"ok": ok, "msg": msg})
         if self.path == "/api/watch/next":
             try:
                 n = str(int(req.get("ticket")))

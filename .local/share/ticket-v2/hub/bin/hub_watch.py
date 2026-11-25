@@ -11,6 +11,7 @@
 
 使い方: python3 hub_watch.py [--refresh|refresh] [--json]
       python3 hub_watch.py --next 番号 [枠] [sweep] [scope] [dry]   … /na-next（止まっている所から次のスキルを頼み、以後は自動で頼む）
+      python3 hub_watch.py --go 番号 [枠] [--branch 名前] [force] [dry] … /na-go（ct-ship-loop を頼み、終わったら ct-finish を自動で頼む）
       python3 hub_watch.py --slot [off|on 枠…]                     … /na-slot（自動で割り当てる枠から外す・戻す。引数なしで表示）
 """
 import json
@@ -59,6 +60,8 @@ def compact_text(d):
             last = a.get("last") or {}
             when = time.strftime("%H:%M", time.localtime(last.get("at") or 0)) if last else ""
             extra.append(f"自動: [{a.get('slot')}] " + (f"{last.get('skill', '').removeprefix('ct-')} {'送信' if last.get('ok') else '失敗'} {when}" if last else "開始"))
+            if a.get("go"):
+                extra.append("実装: " + {"ship-loop": "ship-loop 中", "finish": "finish 中", "done": "完了"}.get(a["go"].get("stage"), a["go"].get("stage", "")))
         out.append("     " + flow + ("  " + "・".join(extra) if extra else ""))
     return "\n".join(out)
 
@@ -85,6 +88,27 @@ def next_cmd(args):
         return "⛔ 書き方: /na-next 番号 [枠] [sweep] [scope]（例: /na-next 14926・/na-next 14926 7・/na-next 14926 sweep scope）"
     r = dash_post("/api/watch/next", {"ticket": tickets[0], "slot": slots[0] if slots else None,
                                      "sweep": "sweep" in args, "scope": "scope" in args, "dry": "dry" in args})
+    return r.get("msg") if r.get("ok") else f"⛔ 送っていません: {r.get('msg') or r.get('error')}"
+
+
+def go_cmd(args):
+    """/na-go 番号 [枠] [--branch 名前|branch=名前] [force] [dry]"""
+    branch, rest = "", []
+    it = iter(args)
+    for a in it:
+        if a == "--branch":
+            branch = next(it, "")
+        elif a.startswith(("--branch=", "branch=")):
+            branch = a.split("=", 1)[1]
+        else:
+            rest.append(a)
+    nums = [a for a in rest if re.fullmatch(r"#?\d+", a)]
+    tickets = [a.lstrip("#") for a in nums if len(a.lstrip("#")) >= 4]
+    slots = [int(a) for a in nums if len(a.lstrip("#")) <= 2]
+    if len(tickets) != 1 or len(slots) > 1:
+        return "⛔ 書き方: /na-go 番号 [枠] [--branch 名前] [force]（例: /na-go 14926・/na-go 14926 5 --branch feature/14926_2）"
+    r = dash_post("/api/watch/go", {"ticket": tickets[0], "slot": slots[0] if slots else None, "branch": branch,
+                                   "force": "force" in rest, "dry": "dry" in rest})
     return r.get("msg") if r.get("ok") else f"⛔ 送っていません: {r.get('msg') or r.get('error')}"
 
 
@@ -119,6 +143,8 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     if a[:1] == ["--next"]:
         print(next_cmd(a[1:]))
+    elif a[:1] == ["--go"]:
+        print(go_cmd(a[1:]))
     elif a[:1] == ["--slot"]:
         print(slot_cmd(a[1:]))
     else:

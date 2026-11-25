@@ -1081,6 +1081,7 @@ async function loadWatch() {
       if (a) {
         const l = a.last, hm = l ? new Date(l.at * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "";
         extra.push(`<span class="wt-extra${l && !l.ok ? " rv" : ""}" title="${esc(l ? l.msg : "")}">自動 [${a.slot ?? "-"}]${l ? ` ${esc(String(l.skill).replace(/^ct-/, ""))} ${l.ok ? "送信" : "失敗"} ${hm}` : ""}</span>`);
+        if (a.go) extra.push(`<span class="wt-extra" title="/na-go（${esc(a.go.branch || "")}）">実装: ${{"ship-loop": "ship-loop 中", finish: "finish 中", done: "完了"}[a.go.stage] || esc(a.go.stage)}</span>`);
       }
       const slot = i.slot !== null && i.slot !== undefined ? `[${i.slot}] ` : "";
       const hi = ["今すぐ", "急いで"].includes(i.priority);
