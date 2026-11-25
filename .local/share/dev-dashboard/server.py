@@ -3629,7 +3629,147 @@ def na_to_send(slot, text):
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, f"送信の処理が失敗: {e}"
     out = (r.stdout or r.stderr or "").strip()
-    return r.returncode == 0 and out.startswith("✅"), out
+    ok = r.returncode == 0 and out.startswith("✅")
+    m = re.match(r"/ct-redmine\s+#?(1\d{4})\b", text)
+    if ok and m:
+        out += "・" + title_slot(target, m.group(1))
+    return ok, out
+
+
+TMUX_TITLE = os.path.expanduser("~/bin/tmux-title")
+
+
+def title_slot(pane, n):
+    """/ct-redmine を送った枠に hub がタイトル「#番号: 件名」を直接付ける（枠の Claude に ct-tmux-title を頼まない。2026-11-25）。
+    枠の会話には残らないので、--continue で起動し直したときの自動の付け直しは効かない。"""
+    try:
+        r = subprocess.run([TMUX_TITLE, "--pane", pane, "ticket", n], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"タイトルを付けられません（{e}）"
+    out = (r.stdout or r.stderr or "").strip().splitlines()
+    return "タイトルを付けました" if r.returncode == 0 else f"タイトルを付けられません（{(out or ['?'])[-1][:80]}）"
+
+
+# ---- 枠の Claude のモデルと思考の深さの自動選択（2026-11-25） ----
+# 自動で頼むときだけ、スキルの前に /model と /effort を送る（Codex の codex_model.py --kind と同じ考え方）。
+# Claude Code 2.1.332 の /model・/effort は ~/.claude/settings.json の model・modelSettings.<モデル>.effortLevel を
+# 「新しい会話の既定」として書き換えるので、送った直後に元へ戻す（戻しても送った枠の会話のモデルはそのまま。2026-11-25 実験で確認）
+MODEL_TABLE = {
+    "ct-redmine": ("sonnet", "medium"),       # スライド・画像があれば opus high（model_plan）
+    "ct-analyze": ("opus", "high"),
+    "ct-architect": ("opus", "high"),
+    "ct-sweep": ("sonnet", "medium"),
+    "ct-scope": ("sonnet", "medium"),
+    "ct-planner": ("opus", "high"),
+    "ct-issue-docs": ("opus", "medium"),      # Codex がそのまま実装する手順書なので opus（2026-11-25 ユーザー指定）
+    "commit": ("sonnet", "low"),
+    "ct-ship-loop": ("opus", "medium"),
+    "ct-finish": ("opus", "medium"),
+    "pr-turn": ("opus", "high"),
+}
+MODELS = ("haiku", "sonnet", "opus", "fable")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+CLAUDE_SETTINGS = os.path.expanduser("~/.claude/settings.json")
+IMAGE_EXT = re.compile(r"\.(png|jpe?g|gif|webp|heic|pdf)$", re.I)
+
+
+def ticket_has_visuals(n):
+    """チケットの説明・コメントに Google Slides の URL があるか、画像・PDF の添付があるか。取れなければ None（呼ぶ側は重い方に倒す）。"""
+    try:
+        i = redmine_call(f"/issues/{n}.json?include=journals,attachments").get("issue", {})
+    except Exception:
+        return None
+    texts = [i.get("description") or ""] + [j.get("notes") or "" for j in i.get("journals") or []]
+    if any("docs.google.com/presentation" in s for s in texts):
+        return True
+    return any((a.get("content_type") or "").startswith("image/") or IMAGE_EXT.search(a.get("filename") or "")
+               for a in i.get("attachments") or [])
+
+
+def model_plan(skill, n, t, override=None):
+    """(モデル, 深さ, 理由)。override は /na-next・/na-go の model=・effort=（その1回だけ）。"""
+    model, effort = MODEL_TABLE.get(skill, ("opus", "medium"))
+    why = []
+    if skill == "ct-redmine":
+        v = ticket_has_visuals(n)
+        if v is not False:
+            model, effort = "opus", "high"
+            why.append("スライド・画像あり" if v else "Redmine を取れず")
+    plan = (t or {}).get("plan") or {}
+    if skill in ("ct-architect", "ct-planner") and (plan.get("sweep") or plan.get("scope")):
+        effort = "xhigh"
+        why.append("範囲が広い（sweep・scope）")
+    # 同じスキルを前にも送れていた（結果が出ずに頼み直した）なら1段上げる。レビューの往復・コミットは頼み直しではないので除く
+    if skill not in ("pr-turn", "commit") and any(x.get("skill") == skill and x.get("ok") for x in (t or {}).get("log") or []):
+        if model == "sonnet":
+            model = "opus"
+        elif EFFORTS.index(effort) < EFFORTS.index("xhigh"):
+            effort = EFFORTS[EFFORTS.index(effort) + 1]
+        why.append("頼み直し")
+    o = override or {}
+    if o.get("model") or o.get("effort"):
+        model, effort = o.get("model") or model, o.get("effort") or effort
+        why.append("手で指定")
+    return model, effort, "・".join(why)
+
+
+def _restore_claude_settings(before):
+    """/model・/effort が書き換えた既定（model・effortLevel・modelSettings）だけを元に戻す。"""
+    try:
+        with open(CLAUDE_SETTINGS, encoding="utf-8") as f:
+            now = f.read()
+    except OSError:
+        return
+    if before is None or now == before:
+        return
+    keys = ("model", "effortLevel", "modelSettings")
+    try:
+        old, new = json.loads(before), json.loads(now)
+    except ValueError:
+        return
+    if {k: v for k, v in old.items() if k not in keys} == {k: v for k, v in new.items() if k not in keys}:
+        out = before  # ほかに変わった所が無ければ、書式ごと元の文に戻す
+    else:
+        for k in keys:
+            if k in old:
+                new[k] = old[k]
+            else:
+                new.pop(k, None)
+        out = json.dumps(new, ensure_ascii=False, indent=2) + "\n"
+    tmp = CLAUDE_SETTINGS + ".hub.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(out)
+    os.replace(tmp, CLAUDE_SETTINGS)
+
+
+def model_opts(req):
+    """API の model・effort（/na-next・/na-go の model=・effort=）。(model, effort) か、誤りの文。"""
+    m, e = (req.get("model") or None), (req.get("effort") or None)
+    if m and m not in MODELS:
+        return f"model は {'/'.join(MODELS)} のどれかです"
+    if e and e not in EFFORTS:
+        return f"effort は {'/'.join(EFFORTS)} のどれかです"
+    return m, e
+
+
+def send_skill(slot, skill, text, n, t, override=None):
+    """枠に /model・/effort を送ってからスキルの依頼文を送る。(成功したか, 結果の文)"""
+    model, effort, why = model_plan(skill, n, t, override)
+    try:
+        with open(CLAUDE_SETTINGS, encoding="utf-8") as f:
+            before = f.read()
+    except OSError:
+        before = None
+    try:
+        for cmd in (f"/model {model}", f"/effort {effort}"):
+            ok, msg = na_to_send(slot, cmd)
+            if not ok:
+                return False, f"{cmd} を送れません: {msg}"
+            time.sleep(1.0)
+    finally:
+        _restore_claude_settings(before)
+    ok, msg = na_to_send(slot, text)
+    return ok, f"{msg}（{model}・{effort}" + (f"・{why}" if why else "") + "）"
 
 
 def _auto_record(auto, n, slot, skill, text, ok, msg, key=None):
@@ -3684,7 +3824,7 @@ def autopilot(d, slots):
                         auto_fail(n, "ct-pr-turn を頼む空いている枠がありません（/na-next 番号 枠 で指定）", key + ":noslot")
                         continue
                     text = auto_text("pr-turn", n, i)
-                    ok, msg = na_to_send(slot, text)
+                    ok, msg = send_skill(slot, "pr-turn", text, n, t)
                     _auto_record(auto, n, slot, "pr-turn", text, ok, msg, key)
                     changed = True
                     if not ok:
@@ -3714,7 +3854,7 @@ def autopilot(d, slots):
             if t.get("slot") is not None and t["slot"] != i["slot"]:
                 continue  # 割り当てた枠と違う枠で作業している（手で動かした）ときは触らない
             text = auto_text(nxt, n, i)
-            ok, msg = na_to_send(i["slot"], text)
+            ok, msg = send_skill(i["slot"], nxt, text, n, t)
             _auto_record(auto, n, i["slot"], nxt, text, ok, msg, key)
             changed = True
             if not ok:
@@ -3742,7 +3882,7 @@ def auto_fail(n, msg, key=None):
     slack_dm(f"hub 監視\n⚠️ #{n} 自動の依頼に失敗: {msg}")
 
 
-def auto_start(n, slot=None, sweep=False, scope=False, dry=False):
+def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, effort=None):
     """/na-next 番号 [枠] [sweep] [scope]: 止まっている所から次のスキルを頼み、以後の自動の依頼の対象にする。"""
     n = str(n)
     scan_watch_skills()
@@ -3785,8 +3925,9 @@ def auto_start(n, slot=None, sweep=False, scope=False, dry=False):
             return False, f"#{n} は issue docs のコミットを頼み済みです。実装の開始は /na-go {n}"
         text = auto_text(nxt, n, i)
         if dry:
-            return True, f"🧪 dry-run: [{use}] ← {text[:80]}"
-        ok, msg = na_to_send(use, text)
+            mp = model_plan(nxt, n, t, {"model": model, "effort": effort})
+            return True, f"🧪 dry-run: [{use}] ← {text[:80]}（{mp[0]}・{mp[1]}" + (f"・{mp[2]}" if mp[2] else "") + "）"
+        ok, msg = send_skill(use, nxt, text, n, t, {"model": model, "effort": effort})
         key = f"{last.get('skill')}@{int(last.get('end') or 0)}" if nxt != "pr-turn" else \
             "review:" + ",".join(i["review"]["urls"]) + ":" + i["review"]["kind"]
         _auto_record(auto, n, use, nxt, text, ok, msg, key)
@@ -3807,7 +3948,7 @@ GO_TEXT2 = ("/ct-finish {n} sweepは設計時に作ってたらそれを使う�
 GO_ACTIVE = ("ship-loop", "finish")
 
 
-def auto_go(n, slot=None, branch="", force=False, dry=False):
+def auto_go(n, slot=None, branch="", force=False, dry=False, model=None, effort=None):
     """/na-go 番号 [枠] [--branch 名前] [force]: ct-ship-loop を頼み、終わったら ct-finish を自動で頼む。
 
     実装は同時に複数始めてよい。テスト・ブラウザでの確認は各枠の Claude が hub_docker.py wait で順番待ちをする（E）。
@@ -3853,8 +3994,9 @@ def auto_go(n, slot=None, branch="", force=False, dry=False):
                            f"（#{sib[0].get('ticket') or '番号なし'}）です。同じリポジトリのブランチを切り替えるので、終わってから始めてください")
         text = GO_TEXT1.format(n=n, branch=branch)
         if dry:
-            return True, f"🧪 dry-run: [{use}] ← {text[:90]}…（ct-ship-loop が終わったら ct-finish を自動で頼む）"
-        ok, msg = na_to_send(use, text)
+            mp = model_plan("ct-ship-loop", n, auto.get("tickets", {}).get(n), {"model": model, "effort": effort})
+            return True, f"🧪 dry-run: [{use}] ← {text[:90]}…（{mp[0]}・{mp[1]}。ct-ship-loop が終わったら ct-finish を自動で頼む）"
+        ok, msg = send_skill(use, "ct-ship-loop", text, n, auto.get("tickets", {}).get(n), {"model": model, "effort": effort})
         last = i.get("last_flow") or {}
         _auto_record(auto, n, use, "ct-ship-loop", text, ok, msg, f"{last.get('skill')}@{int(last.get('end') or 0)}")
         if ok:
@@ -3879,7 +4021,7 @@ def go_step(auto, i, t):
     n = i["id"]
     if g["stage"] == "ship-loop" and last.get("skill") == "ct-ship-loop":
         text = GO_TEXT2.format(n=n)
-        ok, msg = na_to_send(i["slot"], text)
+        ok, msg = send_skill(i["slot"], "ct-finish", text, n, t)
         _auto_record(auto, n, i["slot"], "ct-finish", text, ok, msg)
         if ok:
             g.update(stage="finish", at=time.time())
@@ -4196,7 +4338,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "ticket / slot が不正です"}, 400)
             if slot is not None and (slot % 2 == 0 or not 1 <= slot <= 11):
                 return self.send_json({"ok": False, "msg": "枠は Claude の枠（奇数 1〜11）を指定してください"})
-            ok, msg = auto_go(n, slot, str(req.get("branch") or ""), bool(req.get("force")), bool(req.get("dry")))
+            mo = model_opts(req)
+            if isinstance(mo, str):
+                return self.send_json({"ok": False, "msg": mo})
+            ok, msg = auto_go(n, slot, str(req.get("branch") or ""), bool(req.get("force")), bool(req.get("dry")), *mo)
             return self.send_json({"ok": ok, "msg": msg})
         if self.path == "/api/watch/next":
             try:
@@ -4206,7 +4351,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"error": "ticket / slot が不正です"}, 400)
             if slot is not None and (slot % 2 == 0 or not 1 <= slot <= 11):
                 return self.send_json({"ok": False, "msg": "枠は Claude の枠（奇数 1〜11）を指定してください"})
-            ok, msg = auto_start(n, slot, bool(req.get("sweep")), bool(req.get("scope")), bool(req.get("dry")))
+            mo = model_opts(req)
+            if isinstance(mo, str):
+                return self.send_json({"ok": False, "msg": mo})
+            ok, msg = auto_start(n, slot, bool(req.get("sweep")), bool(req.get("scope")), bool(req.get("dry")), *mo)
             return self.send_json({"ok": ok, "msg": msg})
         if self.path == "/api/link":
             try:

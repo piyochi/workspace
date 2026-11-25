@@ -10,8 +10,9 @@
   印: ✓ 済み / ▶ 実行中・途中 / ? 質問中 / ✗ 記録なし（後の段階が先に動いた） / ・ 未実行（() は省略可の段階）
 
 使い方: python3 hub_watch.py [--refresh|refresh] [--json]
-      python3 hub_watch.py --next 番号 [枠] [sweep] [scope] [dry]   … /na-next（止まっている所から次のスキルを頼み、以後は自動で頼む）
-      python3 hub_watch.py --go 番号 [枠] [--branch 名前] [force] [dry] … /na-go（ct-ship-loop を頼み、終わったら ct-finish を自動で頼む）
+      python3 hub_watch.py --next 番号 [枠] [sweep] [scope] [model=…] [effort=…] [dry]   … /na-next（止まっている所から次のスキルを頼み、以後は自動で頼む）
+      python3 hub_watch.py --go 番号 [枠] [--branch 名前] [force] [model=…] [effort=…] [dry] … /na-go（ct-ship-loop を頼み、終わったら ct-finish を自動で頼む）
+  モデルと思考の深さは送るスキルからダッシュボードが選ぶ（server.py の MODEL_TABLE）。model=・effort= はその1回だけ上書きする
       python3 hub_watch.py --slot [off|on 枠…]                     … /na-slot（自動で割り当てる枠から外す・戻す。引数なしで表示）
 """
 import json
@@ -86,20 +87,34 @@ def dash_post(path, body):
         return json.load(r)
 
 
+def model_args(args):
+    """model=…・effort=… を取り出す。({"model":…, "effort":…}, 残りの引数)"""
+    opt, rest = {}, []
+    for a in args:
+        k, _, v = a.partition("=")
+        if k in ("model", "effort") and v:
+            opt[k] = v.lower()
+        else:
+            rest.append(a)
+    return opt, rest
+
+
 def next_cmd(args):
-    """/na-next 番号 [枠] [sweep] [scope] [dry]"""
+    """/na-next 番号 [枠] [sweep] [scope] [model=…] [effort=…] [dry]"""
+    opt, args = model_args(args)
     nums = [a for a in args if re.fullmatch(r"#?\d+", a)]
     tickets = [a.lstrip("#") for a in nums if len(a.lstrip("#")) >= 4]
     slots = [int(a) for a in nums if len(a.lstrip("#")) <= 2]
     if len(tickets) != 1 or len(slots) > 1:
         return "⛔ 書き方: /na-next 番号 [枠] [sweep] [scope]（例: /na-next 14926・/na-next 14926 7・/na-next 14926 sweep scope）"
     r = dash_post("/api/watch/next", {"ticket": tickets[0], "slot": slots[0] if slots else None,
-                                     "sweep": "sweep" in args, "scope": "scope" in args, "dry": "dry" in args})
+                                     "sweep": "sweep" in args, "scope": "scope" in args, "dry": "dry" in args, **opt})
     return r.get("msg") if r.get("ok") else f"⛔ 送っていません: {r.get('msg') or r.get('error')}"
 
 
 def go_cmd(args):
-    """/na-go 番号 [枠] [--branch 名前|branch=名前] [force] [dry]"""
+    """/na-go 番号 [枠] [--branch 名前|branch=名前] [force] [model=…] [effort=…] [dry]"""
+    opt, args = model_args(args)
     branch, rest = "", []
     it = iter(args)
     for a in it:
@@ -115,7 +130,7 @@ def go_cmd(args):
     if len(tickets) != 1 or len(slots) > 1:
         return "⛔ 書き方: /na-go 番号 [枠] [--branch 名前] [force]（例: /na-go 14926・/na-go 14926 5 --branch feature/14926_2）"
     r = dash_post("/api/watch/go", {"ticket": tickets[0], "slot": slots[0] if slots else None, "branch": branch,
-                                   "force": "force" in rest, "dry": "dry" in rest})
+                                   "force": "force" in rest, "dry": "dry" in rest, **opt})
     return r.get("msg") if r.get("ok") else f"⛔ 送っていません: {r.get('msg') or r.get('error')}"
 
 

@@ -67,7 +67,7 @@
     - 前回の状態は `hub/watch_notify.json`（watch*.json は copy-to-workspace / copy-to-home の対象外）
   - 確かめるときは `/api/watch?tickets=14926,14747`（固定の順を使わず判定だけ。記録・通知はしない）
 - 自動の依頼（2026-11-25〜。B 次のスキル・C 資料の後のコミット・F レビュー）。判定と送信はダッシュボードの同じ常駐ループ（1回に1件。送信は `na_to.py` なので、偶数枠・処理中・入力欄に文字がある枠・本番系の枠には送らない）
-  - **`/na-next 番号 [枠] [sweep] [scope] [dry]`**: 止まっている所から次のスキルを頼み、以後そのチケットを自動の依頼の対象にする（固定しただけでは始めない）。枠を指定しなければ空いている Claude の枠（入力待ち・作業中のチケット無し・`/na-slot off` で外していない・他のチケットに割り当てていない）を、設計用の環境3・4 → 環境1・2 の順に選ぶ。1チケット1枠（作業中の枠と違う枠は指定できない）。`dry` は送らずに判定だけ
+  - **`/na-next 番号 [枠] [sweep] [scope] [model=…] [effort=…] [dry]`**: 止まっている所から次のスキルを頼み、以後そのチケットを自動の依頼の対象にする（固定しただけでは始めない）。枠を指定しなければ空いている Claude の枠（入力待ち・作業中のチケット無し・`/na-slot off` で外していない・他のチケットに割り当てていない）を、設計用の環境3・4 → 環境1・2 の順に選ぶ。1チケット1枠（作業中の枠と違う枠は指定できない）。`dry` は送らずに判定だけ
     - 次のスキル: なし→ct-redmine→ct-analyze→ct-architect→（sweep・scope を付けたら ct-sweep→ct-scope）→ct-planner→ct-issue-docs→コミット
     - 自動で進めるのは ct-redmine の後（→ct-analyze）・ct-sweep／ct-scope の後（→次）・ct-issue-docs の後（→コミット）。**ct-analyze・ct-architect・ct-planner の後は止めて確認待ち**として知らせる（`/na-next 番号` で次へ。architect の後に `sweep`・`scope` を付けて決める）。途中の質問も確認待ち。ct-ship-loop 以降は /na-go
     - ct-analyze の依頼文には「初期調査はステージング（団体 naga3）・テスティングは団体 nagayoshi・ローカルの DB・Redis・サーバーが要るときだけ hub_docker.py wait で順番待ち」を添える
@@ -75,6 +75,12 @@
     - 頼まないもの: 次のスキルがすでに動いた記録があるとき（終わったチケットで ct-redmine をコメントに使った等）・ブランチ／PR／03_progress.md があるのに流れの記録が足りないとき（記録の外で進めたチケット）・割り当てた枠と違う枠で作業しているとき
   - レビュー（F）: 固定していないチケットのレビュー依頼・修正依頼は知らせだけ（tmux・Slack DM。「/na-order で順番に入れると ct-pr-turn を自動で頼む」）。**固定したら** `/ct-pr-turn <PR の URL> #番号` を自動で頼む（作業中の枠、無ければ空いている枠。修正依頼は環境1・2の枠だけ）
   - 自動の依頼の失敗（枠が無い・送れない）は tmux と Slack DM で1回だけ知らせる
+  - **モデルと思考の深さの自動選択**（2026-11-25〜）: 自動で頼むとき（/na-next・/na-go・続きの自動の依頼）は、スキルの前に `/model`・`/effort` を枠へ送る。表は `server.py` の `MODEL_TABLE`
+    - ct-redmine は sonnet・medium。ただしチケットの説明・コメントに Google Slides の URL か、画像・PDF の添付があれば opus・high（画像を読むので）
+    - ct-analyze・ct-architect・ct-planner・ct-pr-turn は opus・high。ct-issue-docs・ct-ship-loop・ct-finish は opus・medium。ct-sweep・ct-scope は sonnet・medium。コミットは sonnet・low
+    - `sweep`・`scope` 付きのチケットは ct-architect・ct-planner を xhigh に。同じスキルを頼み直したら1段上げる（sonnet→opus、深さ +1）。`model=fable`・`effort=xhigh` を付けるとその1回だけ上書き
+    - `/model`・`/effort` は `~/.claude/settings.json` の既定（model・modelSettings）も書き換えるので、送った直後にダッシュボードが元へ戻す（戻しても枠の会話のモデルはそのまま）
+  - ct-redmine を送った枠には、hub が `~/bin/tmux-title --pane` で「#番号: 件名」のタイトルを直接付ける（枠の Claude に ct-tmux-title を頼まない。会話に残らないので `--continue` で起動し直したときは付け直されない）
   - **`/na-go 番号 [枠] [--branch 名前] [force] [dry]`**（D。2026-11-25〜）: 実装を始める。決まった依頼文2つ（設計ページ r1 q4 の補足のまま）を順に送る
     - 1つ目 `/ct-ship-loop 番号 コーディングはcodexで…ブランチ：feature/番号`（`--branch` で変える）。ct-ship-loop が終わったら（end_turn が質問でない）2つ目 `/ct-finish 番号 sweepは設計時に…アーティファクトにまとめて` を自動で送る。ct-finish が終わったら tmux と Slack DM で「完了」を知らせる（push はしない）
     - 枠: 作業中の枠（1チケット1枠）。無ければ指定した枠、無ければ空いている環境1・2の Claude の枠
