@@ -28,6 +28,8 @@ LIST_PREFIX = re.compile(r"^\s*/na-list\s*$")
 REDMINE_PREFIX = re.compile(r"^\s*/na-redmine(?:\s+(.*))?$")
 ORDER_PREFIX = re.compile(r"^\s*/na-order(?:\s+(.*))?$")
 WATCH_PREFIX = re.compile(r"^\s*/na-watch(?:\s+(.*))?$")
+NEXT_PREFIX = re.compile(r"^\s*/na-next(?:\s+(.*))?$")
+SLOT_PREFIX = re.compile(r"^\s*/na-slot(?:\s+(.*))?$")
 DRY_RUN = "--dry-run" in sys.argv  # 送信の直前で止める（条件の確認用）
 
 
@@ -112,6 +114,16 @@ def hook_main():
             msg = "na-watch " + hw.run(args)
         except Exception as e:
             msg = f"na-watch ⛔ エラー（開発ダッシュボードが動いているか確認）: {type(e).__name__}: {e}"
+    elif NEXT_PREFIX.match(prompt) or SLOT_PREFIX.match(prompt):
+        # /na-next 番号 [枠] [sweep] [scope]: 次のスキルを頼み、以後は自動で頼む / /na-slot off|on 枠…: 自動で割り当てる枠の除外
+        is_next = bool(NEXT_PREFIX.match(prompt))
+        name = "na-next" if is_next else "na-slot"
+        args = ((NEXT_PREFIX if is_next else SLOT_PREFIX).match(prompt).group(1) or "").split()
+        try:
+            import hub_watch as hw
+            msg = f"{name} " + (hw.next_cmd(args) if is_next else hw.slot_cmd(args))
+        except Exception as e:
+            msg = f"{name} ⛔ エラー（開発ダッシュボードが動いているか確認）: {type(e).__name__}: {e}"
     elif PREFIX.match(prompt):
         try:
             msg = "na-to " + send(PREFIX.sub("", prompt, count=1))
@@ -120,7 +132,7 @@ def hook_main():
         except Exception as e:  # hook が落ちてもプロンプトは Claude に渡さない
             msg = f"na-to ⛔ エラーで送っていません: {type(e).__name__}: {e}"
     else:
-        return  # /na-to・/na-list・/na-redmine・/na-order・/na-watch 以外は何もしない（通常どおり Claude に渡す）
+        return  # /na-to・/na-list・/na-redmine・/na-order・/na-watch・/na-next・/na-slot 以外は何もしない（通常どおり Claude に渡す）
     print(json.dumps({"decision": "block", "reason": msg, "suppressOriginalPrompt": True}, ensure_ascii=False))
     reset_pane_state()
 

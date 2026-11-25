@@ -10,16 +10,21 @@
   印: ✓ 済み / ▶ 実行中・途中 / ? 質問中 / ✗ 記録なし（後の段階が先に動いた） / ・ 未実行（() は省略可の段階）
 
 使い方: python3 hub_watch.py [--refresh|refresh] [--json]
+      python3 hub_watch.py --next 番号 [枠] [sweep] [scope] [dry]   … /na-next（止まっている所から次のスキルを頼み、以後は自動で頼む）
+      python3 hub_watch.py --slot [off|on 枠…]                     … /na-slot（自動で割り当てる枠から外す・戻す。引数なしで表示）
 """
 import json
 import os
+import re
 import sys
 import time
+import urllib.request
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import hub_redmine as hr  # noqa: E402  （dash_get を共有する）
 
+SLOTS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "slots.json")  # hub/slots.json
 MARK = {"done": "✓", "running": "▶", "question": "?", "skip": "✗", "": "・"}
 
 
@@ -48,13 +53,58 @@ def compact_text(d):
         for p in i.get("prs") or []:
             extra.append(f"{p.get('repo', '')}#{p.get('number')} {p.get('state', '')}")
         if i.get("review"):
-            extra.append(f"📨 {i['review']['label']}")
+            extra.append(i["review"]["label"])
+        a = (d.get("auto") or {}).get(i["id"])
+        if a:
+            last = a.get("last") or {}
+            when = time.strftime("%H:%M", time.localtime(last.get("at") or 0)) if last else ""
+            extra.append(f"自動: [{a.get('slot')}] " + (f"{last.get('skill', '').removeprefix('ct-')} {'送信' if last.get('ok') else '失敗'} {when}" if last else "開始"))
         out.append("     " + flow + ("  " + "・".join(extra) if extra else ""))
     return "\n".join(out)
 
 
 def hr_trim(s, n):
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def dash_post(path, body):
+    with open(os.path.join(hr.DASH_DIR, "config.json"), encoding="utf-8") as f:
+        key = json.load(f).get("key", "")
+    req = urllib.request.Request(hr.DASH_BASE + path, data=json.dumps(body).encode(), method="POST",
+                                 headers={"Cookie": f"dd_key={key}", "X-Dashboard": "1", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return json.load(r)
+
+
+def next_cmd(args):
+    """/na-next 番号 [枠] [sweep] [scope] [dry]"""
+    nums = [a for a in args if re.fullmatch(r"#?\d+", a)]
+    tickets = [a.lstrip("#") for a in nums if len(a.lstrip("#")) >= 4]
+    slots = [int(a) for a in nums if len(a.lstrip("#")) <= 2]
+    if len(tickets) != 1 or len(slots) > 1:
+        return "⛔ 書き方: /na-next 番号 [枠] [sweep] [scope]（例: /na-next 14926・/na-next 14926 7・/na-next 14926 sweep scope）"
+    r = dash_post("/api/watch/next", {"ticket": tickets[0], "slot": slots[0] if slots else None,
+                                     "sweep": "sweep" in args, "scope": "scope" in args, "dry": "dry" in args})
+    return r.get("msg") if r.get("ok") else f"⛔ 送っていません: {r.get('msg') or r.get('error')}"
+
+
+def slot_cmd(args):
+    """/na-slot [off|on 枠…]: 自動で割り当てる枠から外す・戻す（hub/slots.json）"""
+    try:
+        with open(SLOTS_FILE, encoding="utf-8") as f:
+            off = set(json.load(f).get("off") or [])
+    except (OSError, ValueError):
+        off = set()
+    if args:
+        op, nums = args[0], [int(a) for a in args[1:] if a.isdigit()]
+        if op not in ("off", "on") or not nums or any(not 1 <= n <= 12 for n in nums):
+            return "⛔ 書き方: /na-slot off 11 12・/na-slot on 11（引数なしで表示）"
+        off = off | set(nums) if op == "off" else off - set(nums)
+        tmp = SLOTS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"off": sorted(off), "updated": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, f, ensure_ascii=False)
+        os.replace(tmp, SLOTS_FILE)
+    return "自動で割り当てない枠: " + (" ".join(f"[{n}]" for n in sorted(off)) if off else "なし")
 
 
 def run(args):
@@ -66,4 +116,10 @@ def run(args):
 
 
 if __name__ == "__main__":
-    print(run(sys.argv[1:]))
+    a = sys.argv[1:]
+    if a[:1] == ["--next"]:
+        print(next_cmd(a[1:]))
+    elif a[:1] == ["--slot"]:
+        print(slot_cmd(a[1:]))
+    else:
+        print(run(a))

@@ -3371,11 +3371,11 @@ def watch_flow(n):
         flow.append({"skill": s, "short": WATCH_SHORT[s], "mark": m, "optional": s in WATCH_OPTIONAL})
     pr_turn = [ev for ev in evs if ev["skill"] == "ct-pr-turn"]
     lastf = next((ev for ev in reversed(evs) if ev["skill"] in WATCH_SHORT or ev["skill"] == "ct-pr-turn"), None)
-    return flow, lastf, (pr_turn[-1] if pr_turn else None)
+    return flow, lastf, (pr_turn[-1] if pr_turn else None), last
 
 
 def watch_item(n, f, slots):
-    flow, last, pr_turn = watch_flow(n)
+    flow, last, pr_turn, last_flow = watch_flow(n)
     mine = [s for s in slots if s["kind"] == "claude" and s["state"] != "stopped" and n in (s.get("tickets") or [s.get("ticket")])]
     rank = {"wait": 4, "busy": 3, "idle": 2}
     slot = max(mine, key=lambda s: rank.get(s["state"], 0)) if mine else None
@@ -3392,6 +3392,11 @@ def watch_item(n, f, slots):
         state = "idle"
     ball = (f.get("ball") or {})
     review = ball.get("kind") in ("review_in", "fix")
+    if ball.get("kind") == "review_in":
+        rv_urls = [r.get("url") for r in f.get("review_requested") or [] if r.get("url")]
+    else:
+        rv_urls = [p.get("url") for p in f.get("prs") or [] if p.get("state") == "open" and p.get("decision") == "CHANGES_REQUESTED" and p.get("url")]
+    ev = lambda e: {"skill": e["skill"], "result": e["result"], "start": e["start"], "end": e["end"]} if e else None
     stage = next((x["short"] for x in reversed(flow) if x["mark"] in ("done", "running", "question")), "")
     return {"id": n, "subject": f.get("subject", ""), "status": f.get("status", ""), "priority": f.get("priority", ""),
             "url": f.get("url", ""), "closed": f.get("ball", {}).get("kind") == "done",
@@ -3399,18 +3404,18 @@ def watch_item(n, f, slots):
             "state": state, "state_label": WATCH_STATE_LABEL[state], "attention": state in WATCH_ATTENTION or review,
             "skill": skill, "stage": stage, "flow": flow, "phase": f.get("phase"),
             "pr_turn": {"result": pr_turn["result"], "start": pr_turn["start"]} if pr_turn else None,
-            "review": {"kind": ball.get("kind"), "label": ball.get("label"), "why": ball.get("why")} if review else None,
+            "review": {"kind": ball.get("kind"), "label": ball.get("label"), "why": ball.get("why"), "urls": rv_urls} if review else None,
+            "last": ev(last), "last_flow": ev(last_flow),
             "ball": ball, "prs": [{"repo": p.get("repo"), "number": p.get("number"), "state": p.get("state"), "url": p.get("url"),
                                     "decision": p.get("decision")} for p in f.get("prs") or []]}
 
 
 def watch_build(order=None):
     order = order if order is not None else watch_order()
-    if not order:
-        return {"at": time.time(), "items": [], "attention": 0, "order": []}
     panes = ai_panes()
     slots = panes.get("slots", [])
-    fv = {str(i["id"]): i for i in focus_view()["items"]}
+    fv_items = focus_view()["items"]
+    fv = {str(i["id"]): i for i in fv_items}
     items = []
     for n in order:
         f = fv.get(n)
@@ -3418,7 +3423,8 @@ def watch_build(order=None):
             one = focus_view(only=n)["items"]
             f = one[0] if one else {}
         items.append(watch_item(n, f, slots))
-    return {"at": time.time(), "items": items, "attention": sum(1 for i in items if i["attention"]), "order": order}
+    return {"at": time.time(), "items": items, "attention": sum(1 for i in items if i["attention"]), "order": order,
+            "_fv": fv_items, "_slots": slots}  # _ で始まるものは外に出さない（watch_once が外す）
 
 
 def tmux_notify(msg):
@@ -3492,7 +3498,19 @@ def watch_notify(items):
 def watch_once():
     scan_watch_skills()
     d = watch_build()
-    d["notified"] = watch_notify(d["items"])
+    fv_items, slots = d.pop("_fv"), d.pop("_slots")
+    sent = None
+    try:
+        sent = autopilot(d, slots)  # B・C・F: 次のスキル・コミット・ct-pr-turn を自動で頼む（1回に1件）
+    except Exception as e:
+        print(f"{time.strftime('%F %T')} 自動の依頼に失敗: {e}", file=sys.stderr, flush=True)
+    for i in d["items"]:
+        if i["id"] == sent:  # 送った直後は処理中として扱う（「次の指示待ち」を知らせない）
+            i["state"], i["state_label"], i["attention"] = "busy", "処理中（自動で依頼）", False
+    d["attention"] = sum(1 for i in d["items"] if i["attention"])
+    d["auto"] = {k: {"slot": v.get("slot"), "plan": v.get("plan"), "last": (v.get("log") or [None])[-1]}
+                 for k, v in _json_load(HUB_AUTO, {"tickets": {}}).get("tickets", {}).items()}
+    d["notified"] = watch_notify(d["items"]) + review_notify(fv_items, set(d["order"]))
     watch_cache.update(d)
     tmux_attention(d["attention"])
     try:
@@ -3513,6 +3531,281 @@ def watch_loop():
         except Exception as e:  # 失敗しても次の回でやり直す
             print(f"{time.strftime('%F %T')} 監視の判定に失敗: {e}", file=sys.stderr, flush=True)
         time.sleep(WATCH_INTERVAL)
+
+
+# ---- hub の自動の依頼（B 次のスキル・C 資料の後のコミット・F レビュー。2026-11-25〜） ----
+# /na-next で開始したチケット（autopilot.json に載ったもの）だけ、枠のスキルが終わったら次のスキルを自動で頼む。
+# ct-analyze・ct-architect・ct-planner の後は止めて確認を待つ（/na-next で次へ）。ct-issue-docs の後はコミットを1回頼んで止める
+# （ct-ship-loop 以降は /na-go。D）。レビュー依頼・戻りは、固定（/na-order）したら ct-pr-turn を頼み、固定していなければ知らせだけ。
+# 送るのは hub の na_to.py（偶数枠・処理中・入力欄に文字がある枠・本番系の枠には送らない）。失敗は tmux と Slack DM で知らせる
+HUB_AUTO = os.path.join(HUB_STATE_DIR, "autopilot.json")
+HUB_SLOTS = os.path.join(HUB_STATE_DIR, "slots.json")  # /na-slot off で除外した枠
+NA_TO = os.path.join(HUB_STATE_DIR, "bin", "na_to.py")
+AUTO_NEXT = {"ct-redmine": "ct-analyze", "ct-sweep": "ct-planner", "ct-scope": "ct-planner", "ct-issue-docs": "commit"}
+AUTO_STOP = {"ct-analyze", "ct-architect", "ct-planner"}  # 次へ進む前にユーザーが確認する段階
+MANUAL_NEXT = {None: "ct-redmine", "ct-redmine": "ct-analyze", "ct-analyze": "ct-architect", "ct-architect": "ct-planner",
+               "ct-sweep": "ct-planner", "ct-scope": "ct-planner", "ct-planner": "ct-issue-docs", "ct-issue-docs": "commit"}
+ANALYZE_NOTE = ("初期調査は release が対象なので、基本はステージング（https://group.corich.mobi/naga3/events 。団体 naga3 は自由に使ってよい）で確かめてください。"
+                "テスティングは https://group.test.corich.asia/nagayoshi/events （団体 nagayoshi は自由に使ってよい）。"
+                "ローカルの DB・Redis が必要なときは、開発用サーバーは同時に1台なので、使う前に質問して止まってください。")
+auto_lock = threading.Lock()
+
+
+def _json_load(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def _json_save(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+
+
+def slots_off():
+    return {int(x) for x in _json_load(HUB_SLOTS, {}).get("off") or []}
+
+
+def auto_text(skill, n, item, plan=None):
+    """枠に送る依頼文。skill は ct-… か commit・pr-turn。"""
+    if skill == "ct-analyze":
+        return f"/ct-analyze {n} {ANALYZE_NOTE}"
+    if skill == "commit":
+        return f"/ct-commit {n} ct-issue-docs で作った issue docs（docs/issues/active/{n}_*/）だけをコミットしてください。push はしないでください。"
+    if skill == "pr-turn":
+        urls = " ".join((item.get("review") or {}).get("urls") or [])
+        return f"/ct-pr-turn {urls} #{n}".replace("  ", " ")
+    return f"/{skill} {n}"
+
+
+SLOT_PREFER = {"design": [9, 11, 1, 3, 5, 7],   # 調査・設計の流れ: 設計用の環境3・4を先に（環境3・4は release で設計する）
+               "review": [9, 11, 1, 3, 5, 7],   # 他の人の PR のレビュー
+               "fix": [1, 3, 5, 7]}             # 自分の PR の戻り（修正）: ブランチを触るので環境1・2だけ
+
+
+def free_slot(items, slots, auto, purpose="design"):
+    """空いている Claude の枠（入力待ち・作業中のチケットが無い・除外していない・他のチケットに割り当てていない）。SLOT_PREFER の順。"""
+    off = slots_off()
+    bound = {t.get("slot") for k, t in auto.get("tickets", {}).items() if t.get("slot") is not None}
+    bound |= {i["slot"] for i in items if i.get("slot") is not None}
+    prefer = SLOT_PREFER.get(purpose, SLOT_PREFER["design"])
+    for s in sorted((s for s in slots if s["slot"] in prefer), key=lambda s: prefer.index(s["slot"])):
+        if s["kind"] == "claude" and s["slot"] % 2 == 1 and s["state"] == "idle" and not (s.get("tickets") or s.get("ticket")) \
+                and s["slot"] not in off and s["slot"] not in bound:
+            return s["slot"]
+    return None
+
+
+def na_to_send(slot, text):
+    """hub の na_to.py で枠に送る。(成功したか, 結果の文)
+
+    na_to.py（tmux_link）は TMUX_PANE のセッションの中で枠を探す。launchd から呼ぶと tmux の外なので、
+    ticket_v2_project の枠を1つ TMUX_PANE に入れて、ほかのセッションの monitor タブを拾わないようにする。
+    """
+    target = (slot_pane(slot) or {}).get("id")
+    if not target:
+        return False, f"[{slot}] の枠が見つかりません"
+    # 送り先そのものを入れると tmux_link が「自分（self）」と見なして送らないので、同じセッションの別の枠を入れる
+    ids = tmux("list-panes", "-s", "-t", TMUX_SESSION, "-F", "#{pane_id}").stdout.split()
+    pane = next((x for x in ids if x != target), None)
+    if not pane:
+        return False, f"{TMUX_SESSION} に送り先以外の枠がありません"
+    try:
+        r = subprocess.run([sys.executable, NA_TO, str(slot), text], capture_output=True, text=True, timeout=60,
+                           env={**os.environ, "TMUX_PANE": pane})
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"送信の処理が失敗: {e}"
+    out = (r.stdout or r.stderr or "").strip()
+    return r.returncode == 0 and out.startswith("✅"), out
+
+
+def _auto_record(auto, n, slot, skill, text, ok, msg, key=None):
+    t = auto.setdefault("tickets", {}).setdefault(n, {"plan": {}, "handled": [], "log": []})
+    if ok:
+        t["slot"] = slot
+    if key and ok:
+        t["handled"] = (t.get("handled") or [])[-30:] + [key]
+    t.setdefault("log", []).append({"at": time.time(), "slot": slot, "skill": skill, "ok": ok, "msg": msg[:200], "text": text[:300]})
+    del t["log"][:-20]
+
+
+def next_skill(item, plan, manual):
+    """最後の流れのスキルから、次に頼むもの（ct-… / commit）。止める段階・終わっていないときは None（manual は止める段階でも進める）。"""
+    last = item.get("last_flow")
+    if last and last.get("result") != "done":
+        return None
+    sk = last["skill"] if last else None
+    if not manual and (sk is None or sk in AUTO_STOP):
+        return None
+    if sk == "ct-architect":
+        nxt = "ct-sweep" if plan.get("sweep") else ("ct-scope" if plan.get("scope") else "ct-planner")
+    elif sk == "ct-sweep":
+        nxt = "ct-scope" if plan.get("scope") else "ct-planner"
+    else:
+        nxt = (MANUAL_NEXT if manual else AUTO_NEXT).get(sk)
+    # 次のスキルがすでに動いた記録があれば頼まない（終わったチケットで ct-redmine をコメントに使ったとき等）
+    marks = {x["skill"]: x["mark"] for x in item.get("flow") or []}
+    if nxt and nxt.startswith("ct-") and marks.get(nxt) in ("done", "running", "question"):
+        return None
+    return nxt
+
+
+def autopilot(d, slots):
+    """watch_once から呼ぶ。1回に送るのは1件だけ（送った枠の状態を次の判定で見てから続ける）。送ったチケットの番号を返す。"""
+    with auto_lock:
+        auto = _json_load(HUB_AUTO, {"tickets": {}})
+        items = d["items"]
+        changed = False
+        sent = None
+        for i in items:
+            n = i["id"]
+            t = auto.get("tickets", {}).get(n)
+            # レビュー（F）: 固定したチケットにレビュー依頼・戻りが来たら ct-pr-turn を頼む（枠が無ければ空いている枠）
+            rv = i.get("review")
+            if rv and rv.get("urls"):
+                key = "review:" + ",".join(rv["urls"]) + ":" + rv["kind"]
+                if key not in ((t or {}).get("handled") or []) and i["state"] in ("next", "idle", "none") and \
+                        not (i.get("pr_turn") and i["pr_turn"]["result"] != "done"):
+                    slot = i["slot"] if i["slot"] is not None else free_slot(items, slots, auto, "fix" if rv["kind"] == "fix" else "review")
+                    if slot is None:
+                        auto_fail(n, "ct-pr-turn を頼む空いている枠がありません（/na-next 番号 枠 で指定）", key + ":noslot")
+                        continue
+                    text = auto_text("pr-turn", n, i)
+                    ok, msg = na_to_send(slot, text)
+                    _auto_record(auto, n, slot, "pr-turn", text, ok, msg, key)
+                    changed = True
+                    if not ok:
+                        auto_fail(n, f"[{slot}] に ct-pr-turn を送れません: {msg}", key)
+                        continue
+                    sent = n
+                    break
+            if not t or i["state"] != "next" or i["slot"] is None:
+                continue
+            last = i.get("last_flow") or {}
+            key = f"{last.get('skill')}@{int(last.get('end') or 0)}"
+            if key in (t.get("handled") or []):
+                continue
+            nxt = next_skill(i, t.get("plan") or {}, manual=False)
+            if not nxt:
+                t.setdefault("handled", []).append(key)  # 止める段階（確認待ちの知らせは watch_notify が出す）
+                changed = True
+                continue
+            if t.get("slot") is not None and t["slot"] != i["slot"]:
+                continue  # 割り当てた枠と違う枠で作業している（手で動かした）ときは触らない
+            text = auto_text(nxt, n, i)
+            ok, msg = na_to_send(i["slot"], text)
+            _auto_record(auto, n, i["slot"], nxt, text, ok, msg, key)
+            changed = True
+            if not ok:
+                auto_fail(n, f"[{i['slot']}] に {nxt} を送れません: {msg}", key)
+                continue
+            sent = n
+            break
+        if changed:
+            _json_save(HUB_AUTO, auto)
+    return sent
+
+
+def auto_fail(n, msg, key=None):
+    """自動の依頼の失敗を知らせる。同じ失敗（key）は1回だけ。"""
+    if key:
+        seen = _json_load(HUB_AUTO + ".fail", {})
+        if seen.get(n) == key:
+            return
+        seen[n] = key
+        try:
+            _json_save(HUB_AUTO + ".fail", seen)
+        except OSError:
+            pass
+    tmux_notify(f"⚠️ #{n} 自動の依頼に失敗: {msg[:80]}")
+    slack_dm(f"hub 監視\n⚠️ #{n} 自動の依頼に失敗: {msg}")
+
+
+def auto_start(n, slot=None, sweep=False, scope=False, dry=False):
+    """/na-next 番号 [枠] [sweep] [scope]: 止まっている所から次のスキルを頼み、以後の自動の依頼の対象にする。"""
+    n = str(n)
+    scan_watch_skills()
+    slots = ai_panes().get("slots", [])
+    d = watch_build([n])
+    if not d["items"]:
+        return False, f"#{n} を判定できませんでした"
+    i = d["items"][0]
+    with auto_lock:
+        auto = _json_load(HUB_AUTO, {"tickets": {}})
+        t = auto.setdefault("tickets", {}).setdefault(n, {"plan": {}, "handled": [], "log": []})
+        if sweep or scope:
+            t["plan"] = {"sweep": sweep, "scope": scope}
+        if i["state"] in ("busy", "wait", "question"):
+            return False, f"#{n} は [{i['slot']}] で {i['state_label']} です。その枠で答えるか、終わってから /na-next を使ってください"
+        if i["slot"] is not None and slot is not None and slot != i["slot"]:
+            return False, f"#{n} は [{i['slot']}] で作業中です（1チケット1枠）。枠を変えるときはその枠を /clear してから指定してください"
+        rv = i.get("review") if i.get("review") and i["review"].get("urls") and not (i.get("pr_turn") and i["pr_turn"]["result"] != "done") else None
+        use = i["slot"] if i["slot"] is not None else (slot if slot is not None else free_slot(
+            [x for x in watch_cache.get("items", []) if x["id"] != n], slots, {"tickets": {k: v for k, v in auto["tickets"].items() if k != n}},
+            ("fix" if rv["kind"] == "fix" else "review") if rv else "design"))
+        if use is None:
+            return False, "空いている Claude の枠がありません（入力待ち・作業中のチケット無し・除外していない奇数枠）。枠を指定してください"
+        if rv:
+            nxt = "pr-turn"
+        else:
+            nxt = next_skill(i, t.get("plan") or {}, manual=True)
+        last = i.get("last_flow") or {}
+        if not nxt:
+            if last.get("result") not in (None, "done"):
+                return False, f"#{n} の {last.get('skill')} が終わっていません（{last.get('result')}）。その枠で続けてください"
+            done = [x["skill"] for x in i["flow"] if x["mark"] == "done"]
+            if "ct-issue-docs" in done:
+                return False, f"#{n} は ct-issue-docs まで済んでいます。実装の開始は /na-go（未実装）です"
+            return False, f"#{n} の次のスキルを決められません（最後: {last.get('skill') or 'なし'}）"
+        if nxt not in ("pr-turn", "commit") and (i.get("prs") or i.get("phase")):  # 03_progress.md は ct-issue-docs が作るのでコミットは止めない
+            return False, (f"#{n} はブランチ・PR・03_progress.md があり実装まで進んでいますが、流れのスキルの記録（直近14日）は "
+                           f"{last.get('skill') or 'なし'} までです。{nxt} を頼むのは止めました。その枠で直接頼んでください")
+        if nxt == "commit" and any(x.get("skill") == "commit" and x.get("ok") for x in t.get("log") or []):
+            return False, f"#{n} は issue docs のコミットを頼み済みです。実装の開始は /na-go（未実装）です"
+        text = auto_text(nxt, n, i)
+        if dry:
+            return True, f"🧪 dry-run: [{use}] ← {text[:80]}"
+        ok, msg = na_to_send(use, text)
+        key = f"{last.get('skill')}@{int(last.get('end') or 0)}" if nxt != "pr-turn" else \
+            "review:" + ",".join(i["review"]["urls"]) + ":" + i["review"]["kind"]
+        _auto_record(auto, n, use, nxt, text, ok, msg, key)
+        if ok:
+            t["slot"] = use
+        _json_save(HUB_AUTO, auto)
+    if ok:
+        stop = "（この後は ct-analyze・ct-architect・ct-planner の後で止まります）" if nxt.startswith("ct-") else ""
+        return True, f"{msg}{stop}"
+    return False, msg
+
+
+def review_notify(fv_items, order):
+    """F: 固定していないチケットのレビュー依頼・戻りを知らせる（固定したものは watch_notify と自動の依頼で扱う）。"""
+    state = _json_load(HUB_NOTIFY + ".reviews", None)
+    first = state is None
+    state = state or {}
+    now, msgs = {}, []
+    for f in fv_items:
+        n = str(f["id"])
+        b = f.get("ball") or {}
+        if b.get("kind") not in ("review_in", "fix") or n in order:
+            continue
+        key = b["kind"] + ":" + b.get("why", "")
+        now[n] = key
+        if not first and state.get(n) != key:
+            msgs.append(f"#{n} {b.get('label')}（{b.get('why', '')[:60]}）— /na-order で順番に入れると ct-pr-turn を自動で頼みます")
+    try:
+        _json_save(HUB_NOTIFY + ".reviews", now)
+    except OSError:
+        pass
+    if msgs:
+        tmux_notify(" / ".join(m.split("—")[0] for m in msgs))
+        slack_dm("hub 監視\n" + "\n".join(msgs))
+    return msgs
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -3635,7 +3928,9 @@ class Handler(BaseHTTPRequestHandler):
             only = self.query.get("tickets", [""])[0]
             if only:  # 確かめる用: 固定の順を使わず、指定した番号で判定する（記録・通知はしない）
                 scan_watch_skills()
-                self.send_json(watch_build([t for t in re.findall(r"\d{4,6}", only)]))
+                d = watch_build([t for t in re.findall(r"\d{4,6}", only)])
+                d.pop("_fv", None), d.pop("_slots", None)
+                self.send_json(d)
             elif self.query.get("refresh", [""])[0] == "1" or not watch_cache["at"]:
                 self.send_json(watch_once())
             else:
@@ -3723,6 +4018,16 @@ class Handler(BaseHTTPRequestHandler):
             set_pane_label(p["id"], label)
             remember_label(slot, label[:LABEL_MAX])
             return self.send_json({"ok": True, "label": label[:LABEL_MAX]})
+        if self.path == "/api/watch/next":
+            try:
+                n = str(int(req.get("ticket")))
+                slot = int(req["slot"]) if req.get("slot") not in (None, "") else None
+            except (TypeError, ValueError):
+                return self.send_json({"error": "ticket / slot が不正です"}, 400)
+            if slot is not None and (slot % 2 == 0 or not 1 <= slot <= 11):
+                return self.send_json({"ok": False, "msg": "枠は Claude の枠（奇数 1〜11）を指定してください"})
+            ok, msg = auto_start(n, slot, bool(req.get("sweep")), bool(req.get("scope")), bool(req.get("dry")))
+            return self.send_json({"ok": ok, "msg": msg})
         if self.path == "/api/link":
             try:
                 slot = int(req.get("slot"))

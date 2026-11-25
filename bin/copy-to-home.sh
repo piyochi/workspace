@@ -76,17 +76,17 @@ if [ -d "$SOURCE_DASHBOARD" ]; then
   echo "  server.py を変えたときは launchctl kickstart -k gui/\$(id -u)/local.dev-dashboard で反映"
 fi
 
-# hub（~/www/ticket_v2_hub の取りまとめ用。README・hub_status.py・na_to.py・hub_redmine.py・hub_watch.py・/na-to・/na-list・/na-redmine・/na-order・/na-watch のスキル本体）をコピー
+# hub（~/www/ticket_v2_hub の取りまとめ用。README・hub_status.py・na_to.py・hub_redmine.py・hub_watch.py・/na-to・/na-list・/na-redmine・/na-order・/na-watch・/na-next・/na-slot のスキル本体）をコピー
 SOURCE_HUB="$HOME/workspace/.local/share/ticket-v2/hub"
 DEST_HUB="$HOME/.local/share/ticket-v2/hub/"
 HUB_WS="$HOME/www/ticket_v2_hub"
 if [ -d "$SOURCE_HUB" ]; then
   echo "Copying $SOURCE_HUB to $DEST_HUB..."
   mkdir -p "$DEST_HUB"
-  rsync -av --exclude='.DS_Store' --exclude='__pycache__/' --exclude='order.json*' --exclude='watch.json*' --exclude='watch_notify.json*' "$SOURCE_HUB/" "$DEST_HUB"  # order.json は /na-order の固定の順、watch*.json は監視の状態（個人の作業状態）
-  # hub の workspace があれば、スキルへのシンボリックリンクと git の除外を作る（「/」の候補に /na-to・/na-list・/na-redmine・/na-order・/na-watch を出すため）
+  rsync -av --exclude='.DS_Store' --exclude='__pycache__/' --exclude='order.json*' --exclude='watch.json*' --exclude='watch_notify.json*' --exclude='autopilot.json*' --exclude='slots.json*' "$SOURCE_HUB/" "$DEST_HUB"  # order.json は /na-order の固定の順、watch*.json・autopilot.json・slots.json は監視と自動の依頼の状態（個人の作業状態）
+  # hub の workspace があれば、スキルへのシンボリックリンクと git の除外を作る（「/」の候補に /na-to・/na-list・/na-redmine・/na-order・/na-watch・/na-next・/na-slot を出すため）
   if [ -d "$HUB_WS/.claude/skills" ]; then
-    for s in na-to na-list na-redmine na-order na-watch; do
+    for s in na-to na-list na-redmine na-order na-watch na-next na-slot; do
       ln -sfn "$HOME/.local/share/ticket-v2/hub/skills/$s" "$HUB_WS/.claude/skills/$s"
       grep -qxF "/.claude/skills/$s" "$HUB_WS/.git/info/exclude" 2>/dev/null || echo "/.claude/skills/$s" >> "$HUB_WS/.git/info/exclude"
     done

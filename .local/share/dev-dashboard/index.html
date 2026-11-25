@@ -1077,6 +1077,11 @@ async function loadWatch() {
       if (i.pr_turn) extra.push(`<span class="wt-extra">pr-turn ${i.pr_turn.result === "done" ? "済み" : "途中"}</span>`);
       (i.prs || []).forEach((p) => extra.push(`<a class="wt-extra" href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.repo || "")}#${p.number} ${esc(p.state || "")}</a>`));
       if (i.review) extra.push(`<span class="wt-extra rv" title="${esc(i.review.why)}">${esc(i.review.label)}</span>`);
+      const a = (d.auto || {})[i.id];  // /na-next で開始したチケット（自動で次のスキルを頼む）
+      if (a) {
+        const l = a.last, hm = l ? new Date(l.at * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "";
+        extra.push(`<span class="wt-extra${l && !l.ok ? " rv" : ""}" title="${esc(l ? l.msg : "")}">自動 [${a.slot ?? "-"}]${l ? ` ${esc(String(l.skill).replace(/^ct-/, ""))} ${l.ok ? "送信" : "失敗"} ${hm}` : ""}</span>`);
+      }
       const slot = i.slot !== null && i.slot !== undefined ? `[${i.slot}] ` : "";
       const hi = ["今すぐ", "急いで"].includes(i.priority);
       return `<div class="wt-row${i.attention ? " att" : ""}"><span class="wt-no">${k + 1}</span>
