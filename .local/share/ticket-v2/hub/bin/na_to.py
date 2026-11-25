@@ -14,6 +14,7 @@ hub の UserPromptSubmit hook から --hook で呼ばれ、`/na-to ` で始ま�
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 import sys
@@ -109,6 +110,12 @@ def send(args_text, busy_ok=False):
 def hook_main():
     data = json.load(sys.stdin)
     prompt = data.get("prompt", "")
+    targs = tui_args(prompt)
+    if targs and show_tui(targs):  # 一覧はポップアップで操作する（データはポップアップの中で取る。hook はすぐ返す）
+        print(json.dumps({"decision": "block", "reason": f"{prompt.strip()} → ポップアップで開きました（↑↓ 選ぶ・→ 全文・Enter 詳細・Esc 戻る/閉じる）",
+                          "suppressOriginalPrompt": True}, ensure_ascii=False))
+        reset_pane_state()
+        return
     if LIST_PREFIX.match(prompt):
         # /na-list: 12枠の要約を画面に出すだけ（reason は会話に入らない）
         args = (LIST_PREFIX.match(prompt).group(1) or "").split()
@@ -179,42 +186,41 @@ def hook_main():
             msg = f"na-to ⛔ エラーで送っていません: {type(e).__name__}: {e}"
     else:
         return  # /na-to・/na-list・/na-redmine・/na-order・/na-watch・/na-next・/na-slot・/na-go 以外は何もしない（通常どおり Claude に渡す）
-    kind = msg.split(" ", 1)[0].split("\n", 1)[0].split("（", 1)[0]
-    if kind in POPUP_KINDS:
-        try:
-            text = popup_text(prompt, msg)
-        except Exception as e:  # 描けなければ hook の文で出す
-            text, msg = None, msg + f"\n（ポップアップを描けませんでした: {type(e).__name__}: {e}）"
-        if text and show_popup(kind, text):
-            msg = f"{kind} → ポップアップで表示しました（q か Esc で閉じる）"
     print(json.dumps({"decision": "block", "reason": msg, "suppressOriginalPrompt": True}, ensure_ascii=False))
     reset_pane_state()
 
 
-POPUP_KINDS = ("na-list", "na-watch", "na-redmine")  # 読むための表示だけポップアップに出す（送信・変更の結果は短いので今までどおり）
 
 
-def popup_text(prompt, msg):
-    """ポップアップに出す文（hub_popup がデータから組み立てる）。エラーのときは None（hook の文で出す）"""
-    if "⛔" in msg.split("\n", 1)[0]:
+def tui_args(prompt):
+    """ポップアップの操作できる一覧（hub_tui.py）の引数。対象外・引数が誤りなら None（hook の文で出す）"""
+    m = LIST_PREFIX.match(prompt)
+    if m:
+        a = (m.group(1) or "").split()
+        if not a:
+            return ["list"]
+        if a[0].strip("[]").isdigit() and 1 <= int(a[0].strip("[]")) <= 12 and (len(a) == 1 or (len(a) == 2 and a[1].isdigit())):
+            return ["slot", a[0].strip("[]")] + ([str(min(int(a[1]), 150))] if len(a) > 1 else [])
         return None
-    import hub_popup as hp
-    if LIST_PREFIX.match(prompt):
-        args = (LIST_PREFIX.match(prompt).group(1) or "").split()
-        if args:
-            return hp.render_slot(int(args[0].strip("[]")), min(int(args[1]), 150) if len(args) > 1 else 30)
-        return hp.render_slots([r for r in hs.collect("monitor") if r["slot"] % 2 == 1])
-    if WATCH_PREFIX.match(prompt):
-        import hub_watch as hw
-        return hp.render_watch(hw.fetch(False))  # 判定し直し（refresh）は hook の文を作るときに済んでいる
-    if REDMINE_PREFIX.match(prompt):
-        return hp.render_redmine(msg.removeprefix("na-redmine ").strip())
+    m = WATCH_PREFIX.match(prompt)
+    if m:
+        return ["watch"] + (m.group(1) or "").split()
+    m = REDMINE_PREFIX.match(prompt)
+    if m:
+        a = (m.group(1) or "").split()
+        try:
+            import hub_redmine as hr
+            if hr.parse_args(a)[3]:  # 分からない引数は hook の文でエラーを出す
+                return None
+        except Exception:
+            return None
+        return ["redmine"] + a
     return None
 
 
-def show_popup(title, text):
-    """hub の tmux のクライアントにポップアップで出す（hook の表示は必ず黄色で読みにくい。2026-11-25 ユーザー指定）。
-    ↑↓・PgUp/PgDn でスクロール、q で閉じる。出せなければ False（呼び出し側が hook の文で出す）"""
+def show_tui(args):
+    """hub の tmux のクライアントに、操作できる一覧（hub_tui.py）をポップアップで開く（hook の文は必ず黄色で読みにくい。2026-11-25 ユーザー指定）。
+    ↑↓ で選び、→ で全文、Enter で詳細、Esc で戻る・閉じる。開けなければ False（呼び出し側が hook の文で出す）"""
     pane = os.environ.get("TMUX_PANE")
     if not pane:
         return False
@@ -225,22 +231,11 @@ def show_popup(title, text):
                    if l.split("\t")[-1] == sess]
         if not clients:
             return False
-        import tempfile
-        fd, path = tempfile.mkstemp(prefix="na-popup-", suffix=".txt")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text + "\n")
-        # 自作のページャー（less は Esc を閉じるに割り当てると矢印キーまで閉じるため）。長い行は折り返さず切り、←→ で横に動く
-        pager = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hub_pager.py")
-        cmd = f"python3 -B {pager} {path} --delete"
-        # 大きさは中身に合わせる（幅は最も長い行＋余白、高さは行数＋余白。クライアントの 92%・88% まで）
-        import hub_popup as hp
-        cw, ch = (int(x) for x in subprocess.run(["tmux", "display", "-p", "-c", clients[0], "#{client_width} #{client_height}"],
-                                                 capture_output=True, text=True, timeout=5).stdout.split())
-        lines = text.splitlines()
-        pw = min(max((hp.dw(l) for l in lines), default=60) + 4, int(cw * 0.92))
-        ph = min(len(lines) + 4, int(ch * 0.88))
-        subprocess.Popen(["tmux", "display-popup", "-c", clients[0], "-w", str(max(pw, 60)), "-h", str(max(ph, 10)), "-b", "rounded",
-                          "-T", f" {title} ", "-E", cmd],
+        tui = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hub_tui.py")
+        # TMUX_PANE: monitor タブを hub と同じセッションで探すため（ポップアップの中には枠が無い）
+        cmd = f"TMUX_PANE={shlex.quote(pane)} python3 -B {shlex.quote(tui)} " + " ".join(shlex.quote(a) for a in args)
+        title = {"list": "na-list", "slot": f"na-list [{args[1]}]" if len(args) > 1 else "na-list", "watch": "na-watch", "redmine": "na-redmine"}[args[0]]
+        subprocess.Popen(["tmux", "display-popup", "-c", clients[0], "-w", "94%", "-h", "90%", "-b", "rounded", "-T", f" {title} ", "-E", cmd],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         return True
     except (OSError, subprocess.SubprocessError):
