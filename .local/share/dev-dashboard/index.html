@@ -1146,6 +1146,13 @@ function renderWatch() {
       const flow = (i.flow || []).map((x) => `<span class="wt-step ${x.mark || ""}${x.optional ? " opt" : ""}" title="${esc(x.skill)}${x.mark ? `：${{done: "済み", running: "実行中・途中", question: "質問中", skip: "実行の記録なし"}[x.mark] || x.mark}` : ""}">${esc(x.short)}</span>`).join("");
       const extra = [];
       if (i.phase) extra.push(`<span class="wt-extra" title="03_progress.md のフェーズ">フェーズ ${i.phase.done}/${i.phase.total}</span>`);
+      // 不具合・負荷の流れ（ct-fix-loop）の進み具合（~/.claude/tmp/fix-loop/<番号>/state.json。2026-11-26）
+      if (i.fix) {
+        const fd = i.fix.findings || {}, stop = i.fix.stop;
+        const tip = `ct-fix-loop ${i.fix.step || ""}${i.fix.kind ? `・${i.fix.kind}` : ""}・指摘 必ず ${fd.must ?? "-"} / できれば ${fd.should ?? "-"} / 任意 ${fd.optional ?? "-"}${i.fix.updated ? `・${i.fix.updated}` : ""}`;
+        extra.push(`<span class="wt-extra${stop ? " rv" : ""}" title="${esc(tip)}">施策: ${esc(i.fix.display || "")}</span>`);
+      }
+      if (i.flow_hint) extra.push(`<span class="wt-extra rv" title="ct-analyze の後。件名からの推奨（決めるのはユーザー）">推奨: ${i.flow_hint === "fix" ? `不具合・負荷の流れ（/na-go ${esc(i.id)} fix）` : `新規開発の流れ（/na-next ${esc(i.id)}）`}</span>`);
       // ct-pr-turn は流れのスキル（WATCH_FLOW）の外で持つ（入れると自動の依頼の「次のスキル」と「前の段階は済み」の判定が変わる）ので、
       // サーバーの pr_turn から finish の右に同じ形のアイコンを足す（印: 済み・実行中・質問中。記録が無ければ印なし）
       const ptMark = i.pr_turn ? ({ done: "done", running: "running", question: "question" }[i.pr_turn.result] || "running") : "";
@@ -1157,7 +1164,7 @@ function renderWatch() {
       if (a) {
         const l = a.last, hm = l ? new Date(l.at * 1000).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "";
         extra.push(`<span class="wt-extra${l && !l.ok ? " rv" : ""}" title="${esc(l ? l.msg : "")}">自動 [${a.slot ?? "-"}]${l ? ` ${esc(String(l.skill).replace(/^ct-/, ""))} ${l.ok ? "送信" : "失敗"} ${hm}` : ""}</span>`);
-        if (a.go) extra.push(`<span class="wt-extra" title="/na-go（${esc(a.go.branch || "")}）">実装: ${{"ship-loop": "ship-loop 中", finish: "finish 中", done: "完了"}[a.go.stage] || esc(a.go.stage)}</span>`);
+        if (a.go) extra.push(`<span class="wt-extra" title="/na-go（${esc(a.go.branch || "")}）">実装: ${{"ship-loop": "ship-loop 中", finish: "finish 中", "fix-loop": "fix-loop 中", done: "完了"}[a.go.stage] || esc(a.go.stage)}</span>`);
       }
       const slot = i.slot !== null && i.slot !== undefined ? `[${i.slot}] ` : "";
       // タイトルの行は Redmine 欄の行と同じ部品: 優先度・ステータス（押すと変更）・「#番号: 件名」（乗せると吹き出し。⧉・▶・移動は吹き出しの中）・✎
