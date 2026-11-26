@@ -6,12 +6,14 @@
 対象は /na-order で固定したチケット（hub/order.json）。
 
 見出し: 順・#番号【優先度】ステータス [枠] 状態 · スキル。流れは3段ずつ折り返す
-流れ（redmine→analyze→architect→(sweep)→(scope)→planner→issue-docs→ship-loop→finish）の印・フェーズ・PR・レビュー
+流れ（新規開発 redmine→analyze→architect→(sweep)→(scope)→planner→issue-docs→ship-loop→finish、
+不具合・負荷 redmine→analyze→fix-loop→finish）の印・施策の進み具合・フェーズ・PR・レビュー
   印: ✓ 済み / ▶ 実行中・途中 / ? 質問中 / ✗ 記録なし（後の段階が先に動いた） / ・ 未実行（() は省略可の段階）
 
 使い方: python3 hub_watch.py [--refresh|refresh] [--json]
-      python3 hub_watch.py --next 番号|枠 [枠] [sweep] [scope] [model=…] [effort=…] [dry] [補足の指示…]   … /na-next（止まっている所から次のスキルを頼み、以後は自動で頼む）
-      python3 hub_watch.py --go 番号|枠 [枠] [--branch 名前] [force] [model=…] [effort=…] [dry] [補足の指示…] … /na-go（ct-ship-loop を頼み、終わったら ct-finish を自動で頼む）
+      python3 hub_watch.py --next 番号|枠 [枠] [sweep] [scope] [fix|new] [model=…] [effort=…] [dry] [補足の指示…]   … /na-next（止まっている所から次のスキルを頼み、以後は自動で頼む）
+      python3 hub_watch.py --go 番号|枠 [枠] [fix|new] [--branch 名前] [force] [model=…] [effort=…] [dry] [補足の指示…] … /na-go（ct-ship-loop を頼み、終わったら ct-finish を自動で頼む。fix は ct-fix-loop）
+  fix・new: 流れを選ぶ（fix = 不具合・負荷の流れ。ct-analyze の後の知らせに推奨が出る）
   モデルと思考の深さは送るスキルからダッシュボードが選ぶ（server.py の MODEL_TABLE）。model=・effort= はその1回だけ上書きする
       python3 hub_watch.py --slot [off|on 枠…]                     … /na-slot（自動で割り当てる枠から外す・戻す。引数なしで表示）
 """
@@ -57,7 +59,11 @@ def item_block(i, d, k=None):
     row = lambda label, text: out.append(f"  {pad(label, 6)}{text}")
     row("件名", hr_trim(i.get("subject", ""), 48))
     for n, ln in enumerate(flow_lines(i.get("flow"))):
-        row("流れ" if n == 0 else "", ln)
+        row(("流れ" if i.get("flow_kind") != "fix" else "不具合") if n == 0 else "", ln)
+    if i.get("fix"):
+        row("施策", i["fix"].get("display", ""))
+    if i.get("flow_hint"):
+        row("推奨", f"不具合・負荷の流れ（/na-go {i['id']} fix）" if i["flow_hint"] == "fix" else f"新規開発の流れ（/na-next {i['id']}）")
     if i.get("phase"):
         row("実装", f"フェーズ {i['phase']['done']}/{i['phase']['total']}")
     if i.get("pr_turn"):
@@ -72,7 +78,7 @@ def item_block(i, d, k=None):
         when = time.strftime("%H:%M", time.localtime(last.get("at") or 0)) if last else ""
         row("自動", f"[{a.get('slot')}] " + (f"{last.get('skill', '').removeprefix('ct-')} {'送信' if last.get('ok') else '失敗'} {when}" if last else "開始"))
         if a.get("go"):
-            row("", "実装: " + {"ship-loop": "ship-loop 中", "finish": "finish 中", "done": "完了"}.get(a["go"].get("stage"), a["go"].get("stage", "")))
+            row("", "実装: " + {"ship-loop": "ship-loop 中", "finish": "finish 中", "fix-loop": "fix-loop 中", "done": "完了"}.get(a["go"].get("stage"), a["go"].get("stage", "")))
     return out
 
 
@@ -144,7 +150,7 @@ def split_note(args, words):
 def next_cmd(args):
     """/na-next 番号 [枠] [sweep] [scope] [prod|noprod] [model=…] [effort=…] [dry] [補足の指示…]
     prod・noprod: ct-analyze に本番の DB・Redis・ログの精査を含めるか（本番の問題と自動で判断したチケットは、最初の1回だけ聞いて止まる）"""
-    args, note = split_note(args, ("sweep", "scope", "dry", "prod", "noprod"))
+    args, note = split_note(args, ("sweep", "scope", "dry", "prod", "noprod", "fix", "new"))
     opt, args = model_args(args)
     nums = [a for a in args if re.fullmatch(r"#?\d+", a)]
     tickets = [a.lstrip("#") for a in nums if len(a.lstrip("#")) >= 4]
@@ -153,13 +159,14 @@ def next_cmd(args):
         return "⛔ 書き方: /na-next 番号 [枠] [sweep] [scope] [補足の指示]・/na-next 枠（その枠の作業中のチケット）（例: /na-next 14926・/na-next 14926 7・/na-next 14926 sweep scope）"
     r = dash_post("/api/watch/next", {"ticket": tickets[0] if tickets else None, "slot": slots[0] if slots else None,
                                      "sweep": "sweep" in args, "scope": "scope" in args, "dry": "dry" in args, "note": note,
-                                     "prod": True if "prod" in args else (False if "noprod" in args else None), **opt})
+                                     "prod": True if "prod" in args else (False if "noprod" in args else None),
+                                     "flow": "fix" if "fix" in args else ("new" if "new" in args else None), **opt})
     return r.get("msg") if r.get("ok") else f"⛔ 送っていません: {r.get('msg') or r.get('error')}"
 
 
 def go_cmd(args):
     """/na-go 番号 [枠] [--branch 名前|branch=名前] [force] [model=…] [effort=…] [dry] [補足の指示…]"""
-    args, note = split_note(args, ("force", "dry"))
+    args, note = split_note(args, ("force", "dry", "fix", "new"))
     opt, args = model_args(args)
     branch, rest = "", []
     it = iter(args)
@@ -176,7 +183,8 @@ def go_cmd(args):
     if len(tickets) > 1 or len(slots) > 1 or (not tickets and not slots):
         return "⛔ 書き方: /na-go 番号 [枠] [--branch 名前] [force]・/na-go 枠（その枠の作業中のチケット）（例: /na-go 14926・/na-go 14926 5 --branch feature/14926_2）"
     r = dash_post("/api/watch/go", {"ticket": tickets[0] if tickets else None, "slot": slots[0] if slots else None, "branch": branch,
-                                   "force": "force" in rest, "dry": "dry" in rest, "note": note, **opt})
+                                   "force": "force" in rest, "dry": "dry" in rest, "note": note,
+                                   "flow": "fix" if "fix" in rest else ("new" if "new" in rest else None), **opt})
     return r.get("msg") if r.get("ok") else f"⛔ 送っていません: {r.get('msg') or r.get('error')}"
 
 

@@ -3276,8 +3276,13 @@ HUB_WATCH = os.path.join(HUB_STATE_DIR, "watch.json")
 HUB_NOTIFY = os.path.join(HUB_STATE_DIR, "watch_notify.json")  # 前回の状態（変わったときだけ知らせる）
 SLACK_DM = os.path.join(HOME, ".claude", "hooks", "slack-dm.sh")
 WATCH_FLOW = ["ct-redmine", "ct-analyze", "ct-architect", "ct-sweep", "ct-scope", "ct-planner", "ct-issue-docs", "ct-ship-loop", "ct-finish"]
+# 不具合・負荷の流れ（2026-11-26）: ct-analyze の後に hub が推奨し、ユーザーが /na-go 番号 fix で選ぶ。ct-fix-loop の中で ct-finish まで進む
+WATCH_FLOW_FIX = ["ct-redmine", "ct-analyze", "ct-fix-loop", "ct-finish"]
+WATCH_FLOWS = {"new": WATCH_FLOW, "fix": WATCH_FLOW_FIX}
 WATCH_OPTIONAL = {"ct-sweep", "ct-scope"}
-WATCH_SHORT = {s: s.removeprefix("ct-") for s in WATCH_FLOW}
+WATCH_SHORT = {s: s.removeprefix("ct-") for s in WATCH_FLOW + WATCH_FLOW_FIX}
+FIX_LOOP_DIR = os.path.join(HOME, ".claude", "tmp", "fix-loop")  # ct-fix-loop の進捗（<番号>/state.json）
+FIX_HINT = re.compile(r"不具合|バグ|エラー|負荷|遅い|遅延|重い|タイムアウト|ECPU|CPU|障害|落ちる|されない|できない|二重|重複|多重|漏れ")
 WATCH_DAYS = 14
 WATCH_INTERVAL = 20
 WATCH_ATTENTION = {"wait", "question", "next"}  # 確認待ち（ユーザーが見る番）
@@ -3390,24 +3395,69 @@ def scan_watch_skills():
                 _watch_lines(st, lines, skills)
 
 
+def flow_kind(n, evs=None):
+    """チケットの流れ: "fix"（不具合・負荷）か "new"（新規開発）。/na-next・/na-go で選んだもの（autopilot.json の plan.flow）、
+    無ければ ct-fix-loop を動かした記録があれば fix。"""
+    plan = ((_json_load(HUB_AUTO, {}).get("tickets") or {}).get(str(n)) or {}).get("plan") or {}
+    if plan.get("flow") in WATCH_FLOWS:
+        return plan["flow"]
+    if evs is None:
+        with watch_lock:
+            evs = list(watch_skills.get(n, []))
+    return "fix" if any(ev["skill"] == "ct-fix-loop" for ev in evs) else "new"
+
+
+def fix_state(n):
+    """ct-fix-loop の state.json（無ければ None）に表示用の label を足して返す。"""
+    try:
+        with open(os.path.join(FIX_LOOP_DIR, str(n), "state.json"), encoding="utf-8") as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        return None
+    fd = st.get("findings") or {}
+    step, rnd = st.get("step") or "", st.get("round") or 0
+    if step in ("F2", "F3", "F4"):
+        label = f"施策 第{rnd}回・{st.get('label') or step}"
+        if step == "F4" and fd:
+            label += f"・指摘{(fd.get('must') or 0) + (fd.get('should') or 0)}件"
+    elif step == "done":
+        label = "完了"
+    else:
+        label = f"{step} {st.get('label') or ''}".strip()
+    if st.get("stop") == "loop_end":
+        label += "（施策の結果の確認待ち）"
+    elif st.get("stop") == "push":
+        label += "（push の確認待ち）"
+    elif st.get("waiting") == "docker":
+        label += "（サーバーの順番待ち）"
+    st["display"] = label
+    return st
+
+
+def flow_hint(subject):
+    """ct-analyze の後に出す、流れの推奨（件名から。最後はユーザーが決める）。"""
+    return "fix" if FIX_HINT.search(subject or "") else "new"
+
+
 def watch_flow(n):
     """スキル単位の段階: 流れの各スキルの印（done 済み / running 実行中 / question 質問中 / "" 未実行）と、最後のスキル。"""
     with watch_lock:
         evs = sorted(watch_skills.get(n, []), key=lambda e: e["start"])  # ファイルの読む順は時刻順ではない
-    marks = {ev["skill"]: ev["result"] for ev in evs if ev["skill"] in WATCH_SHORT}  # 同じスキルは最後の実行の結果
-    last = next((ev for ev in reversed(evs) if ev["skill"] in WATCH_SHORT), None)
+    names = WATCH_FLOWS[flow_kind(n, evs)]
+    marks = {ev["skill"]: ev["result"] for ev in evs if ev["skill"] in names}  # 同じスキルは最後の実行の結果
+    last = next((ev for ev in reversed(evs) if ev["skill"] in names), None)
     # 後の段階が始まっていれば、前の段階は済んだものとみなす（ct-ship-loop の中で ct-finish が動く等）
-    reached = max((WATCH_FLOW.index(s) for s in marks), default=-1)
+    reached = max((names.index(s) for s in marks), default=-1)
     flow = []
-    for i, s in enumerate(WATCH_FLOW):
+    for i, s in enumerate(names):
         m = marks.get(s, "")
         if not m and i < reached and s not in WATCH_OPTIONAL:
             m = "skip"
-        if m in ("running", "question") and last and last["skill"] != s:
-            m = "done"  # 途中で別のスキルに移った（終わりの区切りが無いまま）
+        if m in ("running", "question") and last and last["skill"] != s and not (s == "ct-fix-loop" and last["skill"] == "ct-finish"):
+            m = "done"  # 途中で別のスキルに移った（終わりの区切りが無いまま）。ct-fix-loop は中で ct-finish を呼ぶので終わりにしない
         flow.append({"skill": s, "short": WATCH_SHORT[s], "mark": m, "optional": s in WATCH_OPTIONAL})
     pr_turn = [ev for ev in evs if ev["skill"] == "ct-pr-turn"]
-    lastf = next((ev for ev in reversed(evs) if ev["skill"] in WATCH_SHORT or ev["skill"] == "ct-pr-turn"), None)
+    lastf = next((ev for ev in reversed(evs) if ev["skill"] in names or ev["skill"] == "ct-pr-turn"), None)
     return flow, lastf, (pr_turn[-1] if pr_turn else None), last
 
 
@@ -3435,11 +3485,18 @@ def watch_item(n, f, slots):
         rv_urls = [p.get("url") for p in f.get("prs") or [] if p.get("state") == "open" and p.get("decision") == "CHANGES_REQUESTED" and p.get("url")]
     ev = lambda e: {"skill": e["skill"], "result": e["result"], "start": e["start"], "end": e["end"]} if e else None
     stage = next((x["short"] for x in reversed(flow) if x["mark"] in ("done", "running", "question")), "")
+    kind = "fix" if any(x["skill"] == "ct-fix-loop" for x in flow) else "new"
+    fx = fix_state(n) if kind == "fix" else None
+    if fx and stage in ("fix-loop", "finish") and fx.get("step") != "done":
+        stage = f"fix-loop {fx['display']}"
+    done_analyze = any(x["skill"] == "ct-analyze" and x["mark"] == "done" for x in flow)
+    hint = flow_hint(f.get("subject")) if done_analyze and kind == "new" and stage == "analyze" else None
     return {"id": n, "subject": f.get("subject", ""), "status": f.get("status", ""), "priority": f.get("priority", ""),
             "url": f.get("url", ""), "closed": f.get("ball", {}).get("kind") == "done",
             "slot": slot["slot"] if slot else None, "env": slot["env"] if slot else "", "slots": [s["slot"] for s in mine],
             "state": state, "state_label": WATCH_STATE_LABEL[state], "attention": state in WATCH_ATTENTION or review,
             "skill": skill, "stage": stage, "flow": flow, "phase": f.get("phase"),
+            "flow_kind": kind, "fix": fx, "flow_hint": hint,
             "pr_turn": {"result": pr_turn["result"], "start": pr_turn["start"], "end": pr_turn.get("end")} if pr_turn else None,
             "review": {"kind": ball.get("kind"), "label": ball.get("label"), "why": ball.get("why"), "urls": rv_urls} if review else None,
             "last": ev(last), "last_flow": ev(last_flow),
@@ -3515,7 +3572,11 @@ def watch_notify(items):
         if key and key != p.get("state"):
             what = {"wait": "許可の確認", "question": f"{WATCH_SHORT.get(i['skill'], i['skill'])} の質問",
                     "next": f"{WATCH_SHORT.get(i['skill'], i['skill'])} 完了・次の指示"}[i["state"]]
-            msgs.append(f"👀 #{i['id']} {where}{what}（{i['subject'][:30]}）")
+            hint = ""
+            if i["state"] == "next" and i.get("flow_hint"):
+                hint = (f" 推奨: 不具合・負荷の流れ → /na-go {i['id']} fix" if i["flow_hint"] == "fix"
+                        else f" 推奨: 新規開発の流れ → /na-next {i['id']}（architect へ）")
+            msgs.append(f"👀 #{i['id']} {where}{what}（{i['subject'][:30]}）{hint}")
         if rkey and rkey != p.get("review"):
             msgs.append(f"#{i['id']} {i['review']['label']}（{i['review']['why'][:60]}）")
     try:
@@ -3775,6 +3836,7 @@ MODEL_TABLE = {
     "commit": ("sonnet", "low"),
     "ct-ship-loop": ("opus", "medium"),
     "ct-finish": ("opus", "medium"),
+    "ct-fix-loop": ("opus", "high"),          # 施策のレビュー・テスト設計・日本語化を Claude が行う（2026-11-26）
     "pr-turn": ("opus", "high"),
 }
 MODELS = ("haiku", "sonnet", "opus", "fable")
@@ -3947,6 +4009,8 @@ def next_skill(item, plan, manual):
     sk = last["skill"] if last else None
     if not manual and (sk is None or sk in AUTO_STOP):
         return None
+    if plan.get("flow") == "fix" and sk in ("ct-analyze", "ct-fix-loop", "ct-finish"):
+        return None  # 不具合・負荷の流れの実装は /na-go 番号 fix で始める（ct-fix-loop が ct-finish まで進む）
     if sk == "ct-architect":
         nxt = "ct-sweep" if plan.get("sweep") else ("ct-scope" if plan.get("scope") else "ct-planner")
     elif sk == "ct-sweep":
@@ -4070,7 +4134,7 @@ def auto_fail(n, msg, key=None):
     slack_dm(f"hub 監視\n⚠️ #{n} 自動の依頼に失敗: {msg}")
 
 
-def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, effort=None, note="", prod=None):
+def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, effort=None, note="", prod=None, flow=None):
     """/na-next 番号 [枠] [sweep] [scope]: 止まっている所から次のスキルを頼み、以後の自動の依頼の対象にする。"""
     n = str(n)
     scan_watch_skills()
@@ -4083,7 +4147,11 @@ def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, ef
         auto = _json_load(HUB_AUTO, {"tickets": {}})
         t = auto.setdefault("tickets", {}).setdefault(n, {"plan": {}, "handled": [], "log": []})
         if sweep or scope:
-            t["plan"] = {"sweep": sweep, "scope": scope}
+            t["plan"] = {**(t.get("plan") or {}), "sweep": sweep, "scope": scope}
+        if flow in WATCH_FLOWS:
+            t["plan"] = {**(t.get("plan") or {}), "flow": flow}
+            if not dry:
+                _json_save(HUB_AUTO, auto)
         if i["state"] in ("busy", "wait", "question"):
             return False, f"#{n} は [{i['slot']}] で {i['state_label']} です。その枠で答えるか、終わってから /na-next を使ってください"
         if i["slot"] is not None and slot is not None and slot != i["slot"]:
@@ -4111,6 +4179,8 @@ def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, ef
             if last.get("result") not in (None, "done"):
                 return False, f"#{n} の {last.get('skill')} が終わっていません（{last.get('result')}）。その枠で続けてください"
             done = [x["skill"] for x in i["flow"] if x["mark"] == "done"]
+            if (t.get("plan") or {}).get("flow") == "fix" and "ct-analyze" in done:
+                return False, f"#{n} は不具合・負荷の流れです。ct-analyze まで済んでいます。施策の開始は /na-go {n} fix（ct-fix-loop）"
             if "ct-issue-docs" in done:
                 return False, f"#{n} は ct-issue-docs まで済んでいます。実装の開始は /na-go {n}"
             return False, f"#{n} の次のスキルを決められません（最後: {last.get('skill') or 'なし'}）"
@@ -4154,10 +4224,13 @@ GO_TEXT1 = ("/ct-ship-loop {n} コーディングはcodexで、それ以外はcl
             "codex使うときは適切なモデルを選ぶように調整して。ブランチ：{branch}")
 GO_TEXT2 = ("/ct-finish {n} sweepは設計時に作ってたらそれを使う、作ってないなら使わない、codexにも相談して進めて。席外すので質問は全て推奨で進めて。"
             "ブラウザの動作確認もして欲しい。db,redis,ログを監視しつつ、スクショ・録画してアーティファクトにまとめて")
-GO_ACTIVE = ("ship-loop", "finish")
+GO_TEXT_FIX = ("/ct-fix-loop {n} ct-analyze の結論をもとに、施策（Codex）→実測（Codex）→Claude のレビューを「必ず直す」「できれば」が0件になるまで繰り返してください。"
+               "繰り返しが終わったら止まって結果を見せてください。その後は設計書→テスト設計→Codex のテスト→日本語化とコメント→ct-finish まで推奨で進めて、最後に push してよいか聞いてください。"
+               "codex使うときは適切なモデルを選ぶように調整して。ブランチ：{branch}")
+GO_ACTIVE = ("ship-loop", "finish", "fix-loop")
 
 
-def auto_go(n, slot=None, branch="", force=False, dry=False, model=None, effort=None, note=""):
+def auto_go(n, slot=None, branch="", force=False, dry=False, model=None, effort=None, note="", flow=None):
     """/na-go 番号 [枠] [--branch 名前] [force]: ct-ship-loop を頼み、終わったら ct-finish を自動で頼む。
 
     実装は同時に複数始めてよい。テスト・ブラウザでの確認は各枠の Claude が hub_docker.py wait で順番待ちをする（E）。
@@ -4181,10 +4254,23 @@ def auto_go(n, slot=None, branch="", force=False, dry=False, model=None, effort=
             return False, f"#{n} は実装を開始済みです（{g['stage']}・[{g.get('slot')}]）"
         if i["state"] in ("busy", "wait", "question"):
             return False, f"#{n} は [{i['slot']}] で {i['state_label']} です。終わってから /na-go を使ってください"
+        t0 = auto.setdefault("tickets", {}).setdefault(n, {"plan": {}, "handled": [], "log": []})
+        if flow in WATCH_FLOWS:
+            t0["plan"] = {**(t0.get("plan") or {}), "flow": flow}
+        fix = (t0.get("plan") or {}).get("flow") == "fix"
+        if fix:
+            if flow in WATCH_FLOWS and not dry:
+                _json_save(HUB_AUTO, auto)
+            i = watch_build([n])["items"][0]  # 流れを fix に切り替えた後の印で判定する
         marks = {x["skill"]: x["mark"] for x in i["flow"]}
-        if marks.get("ct-issue-docs") != "done" and not force:
+        if fix:
+            if marks.get("ct-analyze") != "done" and not force:
+                return False, f"#{n} は ct-analyze の記録（直近14日）がありません。調査を記録の外で済ませたなら /na-go {n} fix force"
+            if marks.get("ct-fix-loop") in ("done", "running", "question") and not force:
+                return False, f"#{n} は ct-fix-loop の記録があります（途中なら [{i['slot']}] で続けてください。やり直すときは /na-go {n} fix force）"
+        elif marks.get("ct-issue-docs") != "done" and not force:
             return False, f"#{n} は ct-issue-docs の記録（直近14日）がありません。設計を記録の外で済ませたなら /na-go {n} force"
-        if marks.get("ct-ship-loop") or marks.get("ct-finish") in ("done", "running", "question"):
+        if not fix and (marks.get("ct-ship-loop") or marks.get("ct-finish") in ("done", "running", "question")):
             if not force:
                 return False, (f"#{n} は ct-ship-loop・ct-finish の記録があります（実装済み・途中）。やり直すときは /na-go {n} force、"
                                f"レビューの戻りは /na-next {n}（ct-pr-turn）")
@@ -4201,20 +4287,22 @@ def auto_go(n, slot=None, branch="", force=False, dry=False, model=None, effort=
         if sib:
             return False, (f"[{use}] と同じ {me['env']} の [{sib[0]['slot']}] が {WATCH_STATE_LABEL.get(sib[0]['state'], sib[0]['state'])}"
                            f"（#{sib[0].get('ticket') or '番号なし'}）です。同じリポジトリのブランチを切り替えるので、終わってから始めてください")
-        text = GO_TEXT1.format(n=n, branch=branch) + (f" 補足（hub から）: {note}" if note else "")
+        skill = "ct-fix-loop" if fix else "ct-ship-loop"
+        text = (GO_TEXT_FIX if fix else GO_TEXT1).format(n=n, branch=branch) + (f" 補足（hub から）: {note}" if note else "")
+        after = "ct-fix-loop が ct-finish まで進めます（止まるのは施策の結果の確認と push の確認）" if fix else "ct-ship-loop が終わったら ct-finish を自動で頼みます"
         if dry:
-            mp = model_plan("ct-ship-loop", n, auto.get("tickets", {}).get(n), {"model": model, "effort": effort})
-            return True, f"🧪 dry-run: [{use}] ← {text[:90]}…（{mp[0]}・{mp[1]}。ct-ship-loop が終わったら ct-finish を自動で頼む）"
-        ok, msg = send_skill(use, "ct-ship-loop", text, n, auto.get("tickets", {}).get(n), {"model": model, "effort": effort})
+            mp = model_plan(skill, n, auto.get("tickets", {}).get(n), {"model": model, "effort": effort})
+            return True, f"🧪 dry-run: [{use}] ← {text[:90]}…（{mp[0]}・{mp[1]}。{after}）"
+        ok, msg = send_skill(use, skill, text, n, auto.get("tickets", {}).get(n), {"model": model, "effort": effort})
         last = i.get("last_flow") or {}
-        _auto_record(auto, n, use, "ct-ship-loop", text, ok, msg, f"{last.get('skill')}@{int(last.get('end') or 0)}")
+        _auto_record(auto, n, use, skill, text, ok, msg, f"{last.get('skill')}@{int(last.get('end') or 0)}")
         if ok:
             t = auto["tickets"][n]
             t["slot"] = use
-            t["go"] = {"stage": "ship-loop", "at": time.time(), "slot": use, "branch": branch}
+            t["go"] = {"stage": "fix-loop" if fix else "ship-loop", "at": time.time(), "slot": use, "branch": branch}
         _json_save(HUB_AUTO, auto)
     if ok:
-        return True, f"{msg}（{branch}。ct-ship-loop が終わったら ct-finish を自動で頼みます）"
+        return True, f"{msg}（{branch}。{after}）"
     return False, msg
 
 
@@ -4236,6 +4324,14 @@ def go_step(auto, i, t):
             g.update(stage="finish", at=time.time())
             return True
         auto_fail(n, f"[{i['slot']}] に ct-finish を送れません: {msg}", f"go-finish@{int(last.get('end') or 0)}")
+        return False
+    if g["stage"] == "fix-loop" and last.get("skill") in ("ct-fix-loop", "ct-finish"):
+        fx = fix_state(n) or {}
+        if fx.get("stop") != "push" and fx.get("step") != "done":
+            return None  # ct-fix-loop の途中（施策の結果の確認待ちなど）。終わりは state.json の stop=push か step=done で見る
+        g.update(stage="done", at=time.time())
+        tmux_notify(f"✅ #{n} 不具合・負荷の流れ（ct-fix-loop → ct-finish）が終わりました。[{i['slot']}] で結果を確認してください")
+        slack_dm(f"hub 監視\n✅ #{n} 不具合・負荷の流れ（ct-fix-loop → ct-finish）が終わりました。[{i['slot']}] で結果を確認してください（push はしていません）")
         return False
     if g["stage"] == "finish" and last.get("skill") == "ct-finish":
         g.update(stage="done", at=time.time())
@@ -4554,7 +4650,7 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(mo, str):
                 return self.send_json({"ok": False, "msg": mo})
             ok, msg = auto_go(n, slot, str(req.get("branch") or ""), bool(req.get("force")), bool(req.get("dry")), *mo,
-                             note=str(req.get("note") or "")[:500])
+                             note=str(req.get("note") or "")[:500], flow=req.get("flow") if req.get("flow") in WATCH_FLOWS else None)
             return self.send_json({"ok": ok, "msg": pre + msg})
         if self.path == "/api/watch/next":
             n, slot, pre = watch_target(req)
@@ -4565,7 +4661,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": False, "msg": mo})
             ok, msg = auto_start(n, slot, bool(req.get("sweep")), bool(req.get("scope")), bool(req.get("dry")), *mo,
                                  note=str(req.get("note") or "")[:500],
-                                 prod=req.get("prod") if isinstance(req.get("prod"), bool) else None)
+                                 prod=req.get("prod") if isinstance(req.get("prod"), bool) else None,
+                                 flow=req.get("flow") if req.get("flow") in WATCH_FLOWS else None)
             return self.send_json({"ok": ok, "msg": pre + msg})
         if self.path == "/api/link":
             try:

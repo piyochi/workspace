@@ -83,7 +83,7 @@
   - 番号を省いて枠だけ（`/na-next 7`・`/na-go 1`）を指定すると、その枠で作業中のチケットを使う（枠のタイトル `#番号` か会話の作業番号。複数・不明なら止まる）。偶数の枠（Codex）は相方の Claude の枠（-1）に読み替える
   - **モデルと思考の深さの自動選択**（2026-11-25〜）: 自動で頼むとき（/na-next・/na-go・続きの自動の依頼）は、スキルの前に `/model`・`/effort` を枠へ送る。表は `server.py` の `MODEL_TABLE`
     - ct-redmine は sonnet・medium。ただしチケットの説明・コメントに Google Slides の URL か、画像・PDF の添付があれば opus・high（画像を読むので）
-    - ct-analyze・ct-architect・ct-planner・ct-pr-turn は opus・high。ct-issue-docs・ct-ship-loop・ct-finish は opus・medium。ct-sweep・ct-scope は sonnet・medium。コミットは sonnet・low
+    - ct-analyze・ct-architect・ct-planner・ct-pr-turn・ct-fix-loop は opus・high。ct-issue-docs・ct-ship-loop・ct-finish は opus・medium。ct-sweep・ct-scope は sonnet・medium。コミットは sonnet・low
     - `sweep`・`scope` 付きのチケットは ct-architect・ct-planner を xhigh に。同じスキルを頼み直したら1段上げる（sonnet→opus、深さ +1）。`model=fable`・`effort=xhigh` を付けるとその1回だけ上書き
     - `/model`・`/effort` は `~/.claude/settings.json` の既定（model・modelSettings）も書き換えるので、送った直後にダッシュボードが元へ戻す（戻しても枠の会話のモデルはそのまま）
     - 会話の途中で `/model` を送ると「Switch model?（履歴を読み直すので遅くなる）」の確認が出るので、ダッシュボードが Enter で Yes を選ぶ
@@ -97,7 +97,14 @@
     - 枠: 作業中の枠（1チケット1枠）。無ければ指定した枠、無ければ空いている環境1・2の Claude の枠
     - 止めるもの: ct-issue-docs の記録が無い（記録の外で設計したなら `force`）・ct-ship-loop／ct-finish の記録がある（やり直しは `force`）・処理中や確認待ち・**同じ環境のもう一方の Claude の枠が処理中／確認待ち**（同じリポジトリのブランチを切り替えるため）
     - 実装を始めたチケットは、流れの自動（redmine→analyze 等）の対象から外れる。状態は `autopilot.json` の `go`（stage: ship-loop → finish → done）。監視欄・/na-watch に「実装: ship-loop 中」等
-    - API は `POST /api/watch/go {ticket, slot, branch, force, dry}`。スキル本体 `hub/skills/na-go`
+    - API は `POST /api/watch/go {ticket, slot, branch, force, dry, flow}`。スキル本体 `hub/skills/na-go`
+  - **流れは2本**（2026-11-26〜）。どちらで進めるかは ct-analyze の後にユーザーが決める（hub は件名から推奨を出す: 「不具合・負荷・エラー・遅い・ECPU・タイムアウト・二重・重複」などがあれば不具合・負荷の流れ。ct-analyze 完了の知らせと /na-watch の「推奨」行に出る）
+    - **新規開発**: redmine→analyze→architect→(sweep)→(scope)→planner→issue-docs→ship-loop→finish。ct-ship-loop は最初に `ct-test-design` で全フェーズ分のテスト設計表（issue docs の `test_design.md`）を作り、各フェーズは「Codex がテスト（RED）→ Codex が実装（GREEN）→ Claude が両方をレビュー → Claude がテストの説明を日本語で書き直しコメントを足す」。実装で変わったら設計表もその都度直す（止まらない）
+    - **不具合・負荷**: redmine→analyze→**fix-loop**→finish。`/na-go 番号 fix` で始める（ct-analyze の記録が必要。無ければ `force`）。個人スキル `~/.claude/skills/ct-fix-loop`: 基準の実測 → 施策（Codex）→ 実測（Codex。負荷は計測、不具合は再現の手順）→ Claude のレビュー を「必ず直す」「できれば」が0件まで → **止まって確認** → 設計書 → テスト設計（Codex のレビューで OK まで）→ Codex がテスト（英語・コメントなし）→ Claude のレビュー → Claude が日本語化とコメント → ct-finish → **push の確認で止まる**
+    - 施策の進み具合は ct-fix-loop が `~/.claude/tmp/fix-loop/<番号>/state.json` に書き、監視欄・/na-watch の「施策」行に「施策 第2回・レビュー・指摘3件」「（施策の結果の確認待ち）」のように出る。終わり（state.json の stop=push か step=done）で tmux・Slack に完了を知らせる
+    - `/na-next 番号 fix|new` でも流れを選べる（autopilot.json の `plan.flow`）。fix にすると ct-analyze の後は自動で進めず、`/na-go 番号 fix` を案内する
+    - ct-finish は両方の流れの最後に使い、テスト設計表との照合・変異検査（一時コミットの後の clean な作業ツリーで1件ずつ入れて戻す）・2pass レビュー＋Codex の独立レビューとの照合（「必ず直す」「できれば」は Codex が直し、「任意」は一覧で報告）・ブラウザでの確認（録画と DB・Redis・ログの監視。画面が変わらなければ理由を書いて省く）を行う。途中では止まらず、最後の push の確認だけで止まる
+    - 個人スキルの編集前の控え: `~/.claude/tmp/skill-backup-20261126-flow/`
   - **`/na-slot [off|on 枠…]`**: 自動で割り当てる枠から外す・戻す（例 `/na-slot off 11 12`。`hub/slots.json`）
   - 状態: `hub/autopilot.json`（開始したチケット・割り当てた枠・sweep/scope・処理済みの区切り・送信の記録）。`/na-watch` とダッシュボードの監視欄に「自動 [枠] スキル 送信/失敗 時刻」を出す
   - スキル本体 `hub/skills/na-next`・`na-slot`（hub の `.claude/skills/` からリンク。`.git/info/exclude` 済み）。API は `POST /api/watch/next {ticket, slot, sweep, scope, dry}`

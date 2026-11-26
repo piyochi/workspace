@@ -1,7 +1,7 @@
 ---
 name: na-go
-description: 設計（ct-issue-docs）まで済んだチケットの実装を始める（ct-ship-loop を頼み、終わったら ct-finish を自動で頼む）。処理は hub の UserPromptSubmit hook が行う
-argument-hint: "番号|枠 [枠] [--branch 名前（既定 feature/番号）] [force] [model=…] [effort=…] [dry] [補足の指示…]"
+description: 設計（ct-issue-docs）まで済んだチケットの実装を始める（ct-ship-loop を頼み、終わったら ct-finish を自動で頼む）。fix を付けると不具合・負荷の流れ（ct-analyze の後に ct-fix-loop）。処理は hub の UserPromptSubmit hook が行う
+argument-hint: "番号|枠 [枠] [fix|new] [--branch 名前（既定 feature/番号）] [force] [model=…] [effort=…] [dry] [補足の指示…]"
 disable-model-invocation: true
 ---
 
