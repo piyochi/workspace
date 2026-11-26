@@ -3310,7 +3310,7 @@ WATCH_STATE_LABEL = {"busy": "処理中", "wait": "確認待ち（許可）", "q
                      "idle": "入力待ち", "stopped": "停止中", "none": "枠なし"}
 WATCH_STATUS_FMT = "#{?@hub_attention,#[fg=black#,bg=yellow] 確認待ち #{@hub_attention} #[default] ,}"
 watch_lock = threading.Lock()
-watch_files = {}   # 記録ファイル -> {"offset", "cwd", "ticket", "open"}（追記分だけ読む）
+watch_files = {}   # 記録ファイル -> {"offset", "cwd", "ticket", "opens"}（追記分だけ読む）
 watch_skills = {}  # チケット番号 -> [{"skill", "start", "end", "result"}]（result: running / done / question）
 watch_cache = {"at": 0, "items": [], "attention": 0}
 
@@ -3379,7 +3379,7 @@ def _watch_lines(st, lines, skills):
                     if name.startswith("ct-") and name in skills:
                         tk = tks[0] if tks else st.get("ticket", "")
                         if tk:
-                            st["open"] = _watch_event(tk, name, ts)
+                            st.setdefault("opens", []).append(_watch_event(tk, name, ts))
         if has_skill_tool:
             for b in (d.get("message") or {}).get("content") or []:
                 if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Skill":
@@ -3389,13 +3389,17 @@ def _watch_lines(st, lines, skills):
                         continue
                     tk = main_ticket(str(inp.get("args") or "")) or st.get("ticket", "")
                     if tk:
-                        st["open"] = _watch_event(tk, name, ts)
-        if is_end and st.get("open") and st["open"]["result"] != "done":
+                        st.setdefault("opens", []).append(_watch_event(tk, name, ts))
+        # 返事の終わり（end_turn）は、その会話で開いていたスキル全部の終わり。スキルの中で別のスキル（ct-ssh-host-production 等）を
+        # 呼ぶと、最後に開いたものだけを閉じていたので外側の ct-analyze が「実行中」のまま残った（2026-11-26 #15012。11/20 の記録）
+        if is_end and st.get("opens"):
             msg = d.get("message") or {}
             if msg.get("stop_reason") == "end_turn":
                 text = "\n".join(b.get("text", "") for b in msg.get("content") or [] if isinstance(b, dict) and b.get("type") == "text")
-                st["open"]["end"] = ts
-                st["open"]["result"] = "question" if is_question(text) else "done"
+                res = "question" if is_question(text) else "done"
+                for ev in st["opens"]:
+                    ev["end"], ev["result"] = ts, res
+                st["opens"] = [ev for ev in st["opens"] if ev["result"] != "done"]  # 質問で終わったものは次の返事の終わりで決め直す
 
 
 def scan_watch_skills():
