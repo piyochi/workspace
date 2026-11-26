@@ -112,14 +112,23 @@ def main(argv):
     out = [f"取得 {time.strftime('%H:%M:%S')}・確認待ち {watch.get('attention', 0)} 件（/na-watch の固定分）"]
     out.append("開発用サーバー: " + (f"使用中 #{holder}" if holder else "使用中なし")
                + ("・待ち " + " → ".join(f"#{t}" for t in queue) if queue else ""))
-    for n in sorted(k for k in slots if k % 2 == 1):
+    # 並びは /na-order の順（固定したチケットが先・上が先）。固定していないチケットの枠・空き枠はその後に枠番号の順（2026-11-26 ユーザー「優先順に」）
+    order = [str(x) for x in load(hd.ORDER).get("order") or []]
+
+    def rank(k):
+        tk = [t for t in (slots[k].get("tickets") or [slots[k].get("ticket")]) if t]
+        r = min((order.index(t) for t in tk if t in order), default=None)
+        return (0, r, k) if r is not None else (1, 0, k)
+
+    for n in sorted((k for k in slots if k % 2 == 1), key=rank):
         if want and n not in want:
             continue
         s, scr = slots[n], screens.get(n, {})
         cx, cxs = slots.get(n + 1, {}), screens.get(n + 1, {})
         tks = [t for t in (s.get("tickets") or [s.get("ticket")]) if t]
         out.append("")
-        head = f"[{n}] {s['env']} Claude: {STATE.get(s['state'], s['state'])}"
+        rk = rank(n)
+        head = (f"優先 {rk[1] + 1}位 " if rk[0] == 0 else "優先 固定なし ") + f"[{n}] {s['env']} Claude: {STATE.get(s['state'], s['state'])}"
         if s["state"] != "stopped":
             head += f"（画面: {scr.get('state', '?')}"
             mv = last_move(s["pane"])
