@@ -97,7 +97,9 @@
   - **`/na-go 番号 [枠] [--branch 名前] [force] [dry]`**（D。2026-11-25〜）: 実装を始める。決まった依頼文2つ（設計ページ r1 q4 の補足のまま）を順に送る
     - 1つ目 `/ct-ship-loop 番号 コーディングはcodexで…ブランチ：feature/番号`（`--branch` で変える）。ct-ship-loop が終わったら（end_turn が質問でない）2つ目 `/ct-finish 番号 sweepは設計時に…アーティファクトにまとめて` を自動で送る。ct-finish が終わったら tmux と Slack DM で「完了」を知らせる（push はしない）
     - 枠: 作業中の枠（1チケット1枠）。無ければ指定した枠、無ければ空いている環境1・2の Claude の枠
-    - 止めるもの: ct-issue-docs の記録が無い（記録の外で設計したなら `force`）・ct-ship-loop／ct-finish の記録がある（やり直しは `force`）・処理中や確認待ち・**同じ環境のもう一方の Claude の枠が処理中／確認待ち**（同じリポジトリのブランチを切り替えるため）
+    - 止めるもの: ct-issue-docs の記録が無い（記録の外で設計したなら `force`）・ct-ship-loop／ct-finish の記録がある（やり直しは `force`）・処理中や確認待ち・**同じ環境のもう一方の Claude の枠が処理中／確認待ち**（同じリポジトリのブランチを切り替えるため。その枠がリポジトリを使わない作業（本番の監視など）なら `force`。2026-11-26 [7] #15043 の本番監視中に [5] で #14921 を始めた）
+    - **`force` は上の確認（設計・調査の記録が無い・実装の記録がある・同じ環境の枠が動いている）を全部まとめて飛ばす**。1つのために付けても他も効かなくなるので、付ける前に残りの確認を自分で済ませる
+    - 補足の指示に別のチケットを「#番号」で書いても、スキルの引数の**先頭の番号**がそのチケットとして記録される（server.py の `arg_tickets`。先頭に番号が無いときだけ「#番号」。2026-11-26 まで「#番号」が優先で、補足の「[7] #15043 は…」により #14921 の ct-ship-loop が #15043 の作業と記録され、ct-finish を自動で頼まなかった）
     - 実装を始めたチケットは、流れの自動（redmine→analyze 等）の対象から外れる。状態は `autopilot.json` の `go`（stage: ship-loop → finish → done）。監視欄・/na-watch に「実装: ship-loop 中」等
     - API は `POST /api/watch/go {ticket, slot, branch, force, dry, flow}`。スキル本体 `hub/skills/na-go`
   - **流れは2本**（2026-11-26〜）。どちらで進めるかは ct-analyze の後にユーザーが決める（hub は件名から推奨を出す: 「不具合・負荷・エラー・遅い・ECPU・タイムアウト・二重・重複」などがあれば不具合・負荷の流れ。ct-analyze 完了の知らせと /na-watch の「推奨」行に出る）
@@ -109,6 +111,7 @@
     - 個人スキルの編集前の控え: `~/.claude/tmp/skill-backup-20261126-flow/`
   - **`/na-slot [off|on 枠…]`**: 自動で割り当てる枠から外す・戻す（例 `/na-slot off 11 12`。`hub/slots.json`）
   - 状態: `hub/autopilot.json`（開始したチケット・割り当てた枠・sweep/scope・処理済みの区切り・送信の記録）。`/na-watch` とダッシュボードの監視欄に「自動 [枠] スキル 送信/失敗 時刻」を出す
+  - **一時停止**（2026-11-26〜）: `hub/paused` というファイルがある間は、自動の依頼（次のスキル・コミット・ct-pr-turn・/na-go の続き）を送らない（server.py の `autopilot()` の先頭で見る）。止めるのは `date > ~/.local/share/ticket-v2/hub/paused`、再開は削除。各枠の今の作業は止まらないので、止めたい枠には別に `/na-to 枠 …` で止まるよう頼む（2026-11-26 使用量の制限の前に [3]・[9] を止めて 18:01 に再開した）
   - スキル本体 `hub/skills/na-next`・`na-slot`（hub の `.claude/skills/` からリンク。`.git/info/exclude` 済み）。API は `POST /api/watch/next {ticket, slot, sweep, scope, dry}`
 - 開発用サーバー（Docker）の順番待ち（E。2026-11-25〜）
   - メモリの都合で、ローカルの api・app・sqs は同時に1環境だけ。**テスト・ブラウザでの確認・ローカルの DB/Redis を見る作業の直前に、各環境の Claude が `python3 ~/.local/share/ticket-v2/hub/bin/hub_docker.py wait <番号>`**（run_in_background。終了コード 0 = 使ってよい・3 = まだ待ち→もう一度・1 = 失敗）、終わったら `release <番号>`。コードを書く・読む作業は待たない（実装は同時に複数進めてよいので、/na-go の1件ずつの制限は外した）

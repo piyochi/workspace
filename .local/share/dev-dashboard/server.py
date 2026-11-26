@@ -1363,15 +1363,16 @@ LEAD_TICKETS = re.compile(r"\s*((?:[#＃]?\d{5}(?!\d)[\s,、]*)+)")
 
 
 def arg_tickets(text):
-    """スキルの引数・入力に出た番号。「#番号」があればそれだけ。無ければ先頭に並べた番号（/ct-redmine 14625 14891）だけ。
+    """スキルの引数・入力に出た番号。先頭に並べた番号（/ct-redmine 14625 14891）があればそれだけ。無ければ「#番号」。
 
     貼り付けたメールの「17767件」のように、文の途中の # の無い数字は拾わない。
     """
-    nums = MENTION_TICKET.findall(text or "")
-    if nums:
-        return nums
+    # 先頭に並べた番号（/ct-ship-loop 14921 …）が最優先。後ろの補足に出た「#番号」で取り違えない
+    # （2026-11-26 #14921: 補足の「[7] #15043 は…」で ct-ship-loop を #15043 の作業と記録し、ct-finish を自動で頼まなかった）
     m = LEAD_TICKETS.match(text or "")
-    return PROMPT_TICKET.findall(m.group(1)) if m else []
+    if m and (m.end() == len(text) or m.group(1)[-1:] in " \t\n,、"):
+        return PROMPT_TICKET.findall(m.group(1))
+    return MENTION_TICKET.findall(text or "")
 
 
 def main_ticket(text):
@@ -3677,6 +3678,8 @@ def watch_loop():
 # （ct-ship-loop 以降は /na-go。D）。レビュー依頼・戻りは、固定（/na-order）したら ct-pr-turn を頼み、固定していなければ知らせだけ。
 # 送るのは hub の na_to.py（偶数枠・処理中・入力欄に文字がある枠・本番系の枠には送らない）。失敗は tmux と Slack DM で知らせる
 HUB_AUTO = os.path.join(HUB_STATE_DIR, "autopilot.json")
+# このファイルがあれば自動の依頼（次のスキル・コミット・ct-pr-turn・/na-go の続き）を送らない（2026-11-26 使用量の制限の前に一時停止）
+HUB_PAUSE = os.path.join(HUB_STATE_DIR, "paused")
 HUB_SLOTS = os.path.join(HUB_STATE_DIR, "slots.json")  # /na-slot off で除外した枠
 NA_TO = os.path.join(HUB_STATE_DIR, "bin", "na_to.py")
 AUTO_NEXT = {"ct-redmine": "ct-analyze", "ct-sweep": "ct-planner", "ct-scope": "ct-planner", "ct-issue-docs": "commit"}
@@ -4134,6 +4137,8 @@ def next_skill(item, plan, manual):
 
 def autopilot(d, slots):
     """watch_once から呼ぶ。1回に送るのは1件だけ（送った枠の状態を次の判定で見てから続ける）。送ったチケットの番号を返す。"""
+    if os.path.exists(HUB_PAUSE):
+        return None
     with auto_lock:
         auto = _json_load(HUB_AUTO, {"tickets": {}})
         items = d["items"]
@@ -4438,9 +4443,11 @@ def auto_go(n, slot=None, branch="", force=False, dry=False, model=None, effort=
         # 同じ環境のもう一方の Claude の枠は同じリポジトリを使う。動いている作業があればブランチの切り替えで壊すので止める
         me = next((s for s in slots if s["slot"] == use), None)
         sib = [s for s in slots if me and s["env"] == me["env"] and s["slot"] != use and s["kind"] == "claude" and s["state"] in ("busy", "wait")]
-        if sib:
+        # force: もう一方の枠がリポジトリを使わない作業（本番の監視など）なら、そのまま始めてよい（2026-11-26 ユーザー「[7]は本番の監視なので環境自体はこっちで使っていい」）
+        if sib and not force:
             return False, (f"[{use}] と同じ {me['env']} の [{sib[0]['slot']}] が {WATCH_STATE_LABEL.get(sib[0]['state'], sib[0]['state'])}"
-                           f"（#{sib[0].get('ticket') or '番号なし'}）です。同じリポジトリのブランチを切り替えるので、終わってから始めてください")
+                           f"（#{sib[0].get('ticket') or '番号なし'}）です。同じリポジトリのブランチを切り替えるので、終わってから始めてください"
+                           f"（その枠がリポジトリを使わない作業なら /na-go {n} {use} force）")
         skill = "ct-fix-loop" if fix else "ct-ship-loop"
         text = (GO_TEXT_FIX if fix else GO_TEXT1).format(n=n, branch=branch) + (f" 補足（hub から）: {note}" if note else "")
         after = "ct-fix-loop が ct-finish まで進めます（止まるのは施策の結果の確認と push の確認）" if fix else "ct-ship-loop が終わったら ct-finish を自動で頼みます"
