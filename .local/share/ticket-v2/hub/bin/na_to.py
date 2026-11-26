@@ -63,7 +63,8 @@ def mark_sent(pane, text):
 TMUX_TITLE = os.path.expanduser("~/bin/tmux-title")
 # 送る前に枠のタイトルを「#番号: 件名」にするスキル（ct-tmux-title と同じ ~/bin/tmux-title を hub が直接実行する。枠の Claude には頼まない）
 # ct-pr-turn は ct-redmine を経ないで送ることがあり、タイトルが前のチケットのまま変わらなかった（2026-11-26 ユーザー指定）
-TITLE_SKILLS = re.compile(r"^/ct-redmine\s+#?(1\d{4})\b|^/ct-pr-turn\b.*?#(1\d{4})\b", re.DOTALL)
+# 枠を別のチケットに使い回すと ct-architect 等から始まるので、番号で始まる /ct-… は全部対象（2026-11-26 [5] #14921 でタイトルが #15012 のまま）
+TITLE_SKILLS = re.compile(r"^/ct-[\w-]+\s+#?(1\d{4})\b|^/ct-pr-turn\b.*?#(1\d{4})\b", re.DOTALL)
 
 
 def title_before(pane, text):
@@ -283,7 +284,8 @@ def main():
         hook_main()
         return
     try:
-        print(send(" ".join(a for a in sys.argv[1:] if a != "--dry-run")))
+        # --busy: 処理中の枠にも送る（開発用サーバーを譲ったことを使用中だった枠に伝えるとき。server.py の docker_check）
+        print(send(" ".join(a for a in sys.argv[1:] if a not in ("--dry-run", "--busy")), busy_ok="--busy" in sys.argv))
     except Refuse as e:
         sys.exit(f"送っていません: {e}")
 

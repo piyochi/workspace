@@ -91,7 +91,8 @@
   - スキルの返答の最後が「？」のほか「〜か。」（進めますか。など）で終わったら質問とみなし、次へ進めずに確認待ち（質問）として知らせる
   - **レビューのチケット**: `/na-next` で開始したチケットに自分の PR が無く、他の人のオープンな PR（タイトルに #番号）があれば、GitHub でレビュアーに指定されていなくてもレビューとみなす。レビューのチケット（レビュアー指定も含む）は **ct-redmine → ct-pr-turn** の順（ct-redmine が済んでいれば ct-pr-turn から）。ct-redmine が終わったら autopilot が ct-pr-turn を1回だけ頼み、設計の流れ（analyze→…）は頼まない（autopilot.json の `mode: review`・`review.urls`）。枠で ct-pr-turn を手で始めた場合と、ct-pr-turn の中で動いた ct-sweep なども、流れの自動の依頼をしない
   - 枠の取り違え防止: claude-monitor のフォーカス表示で「[n] → left」になった枠（実体は MAIN など別の枠）は [n] とみなさない。「★ FOCUS [n]」は [n]
-  - **`/ct-redmine 番号`・`/ct-pr-turn … #番号` を送る前に**（自動の依頼も `/na-to` で手で送るときも）、hub（`na_to.py` の `title_before`）がその枠に `~/bin/tmux-title --pane` で「#番号: 件名」のタイトルを直接付ける（ct-pr-turn は ct-redmine を経ないことがあり、タイトルが前のチケットのまま変わらなかったため。2026-11-26〜）（枠の Claude に ct-tmux-title を頼まない。会話に残らないので `--continue` で起動し直したときは付け直されない）
+  - **`/ct-… 番号`（`/ct-redmine`・`/ct-architect` など番号で始まるもの全部）・`/ct-pr-turn … #番号` を送る前に**（自動の依頼も `/na-to` で手で送るときも）、hub（`na_to.py` の `title_before`）がその枠に `~/bin/tmux-title --pane` で「#番号: 件名」のタイトルを直接付ける（ct-pr-turn は ct-redmine を経ないことがあり、枠を使い回すと ct-architect 等から始まるので、タイトルが前のチケットのまま変わらなかったため。2026-11-26〜）
+  - **別のチケットの会話が残っている枠に頼むときは、先に `/clear` する**（server.py の `clear_other`。自動で選んだ枠も指定した枠も。同じチケットの続きは会話を引き継ぐので消さない。新しい会話の枠はそのまま。結果の文に「/clear しました」と出る。2026-11-26 [5] で #15012 の会話のまま #14921 を頼んだため）（枠の Claude に ct-tmux-title を頼まない。会話に残らないので `--continue` で起動し直したときは付け直されない）
   - **`/na-go 番号 [枠] [--branch 名前] [force] [dry]`**（D。2026-11-25〜）: 実装を始める。決まった依頼文2つ（設計ページ r1 q4 の補足のまま）を順に送る
     - 1つ目 `/ct-ship-loop 番号 コーディングはcodexで…ブランチ：feature/番号`（`--branch` で変える）。ct-ship-loop が終わったら（end_turn が質問でない）2つ目 `/ct-finish 番号 sweepは設計時に…アーティファクトにまとめて` を自動で送る。ct-finish が終わったら tmux と Slack DM で「完了」を知らせる（push はしない）
     - 枠: 作業中の枠（1チケット1枠）。無ければ指定した枠、無ければ空いている環境1・2の Claude の枠
@@ -112,7 +113,7 @@
   - メモリの都合で、ローカルの api・app・sqs は同時に1環境だけ。**テスト・ブラウザでの確認・ローカルの DB/Redis を見る作業の直前に、各環境の Claude が `python3 ~/.local/share/ticket-v2/hub/bin/hub_docker.py wait <番号>`**（run_in_background。終了コード 0 = 使ってよい・3 = まだ待ち→もう一度・1 = 失敗）、終わったら `release <番号>`。コードを書く・読む作業は待たない（実装は同時に複数進めてよいので、/na-go の1件ずつの制限は外した）
   - wait は順番が来たら、他の環境のサーバーを `~/bin/local-server down` し、自分の環境を `up` する（環境2も対象。2026-11-25 決定）。release ではサーバーを止めない（次の人の wait が切り替える）
   - 順番は /na-order の順（固定したものが先）、固定していないものは来た順。同じチケットの wait は使用中ならすぐ返る。5分呼び直さない待ちは外す。環境は実行したフォルダから判定（hub では使えない。`--env envN` で指定可）
-  - 譲る: 使用中のチケットの枠が 30 分止まって（質問・入力待ち・枠が無い）いて待っている人がいれば、ダッシュボードの常駐ループが使用中を外し、tmux と Slack DM で知らせる（記録は docker.json の log。`hub_docker.py status` に直近3件）
+  - 譲る: 使用中のチケットの枠が 15 分止まって（質問・入力待ち・枠が無い）いるか、**45 分 `wait` を呼んでいない（処理中でも。サーバーを使う直前に毎回 wait を呼ぶ決まりなので、使っていない見込み）**とき、待っている人がいれば、ダッシュボードの常駐ループが使用中を外し、tmux と Slack DM と使用中だった枠（`na_to.py --busy`。処理中でも途中で読む）に知らせる（2026-11-26 30分→15分・45分を追加。#14747 が処理中のまま1時間半返さず #15047 が待ち続けた）（記録は docker.json の log。`hub_docker.py status` に直近3件）
   - 手順は個人スキル `~/.claude/skills/ct-ship`・`ct-ship-loop`・`ct-finish`・`ct-pr-turn` の「開発用サーバーの順番待ち」の節に書いた（チーム共有の ct-analyze は書き換えず、依頼文で伝える）。編集前の控えは `~/.claude/tmp/skill-backup-20261125-docker/`
   - 見る: `hub_docker.py status`・監視欄の先頭・/na-watch の2行目。状態は `hub/docker.json`・`docker.lock`（copy の対象外）
 - Claude の枠（奇数枠）への依頼の送付と完了待ち（2026-11-25 決定: hub が送るのは Claude の枠だけ）

@@ -571,15 +571,24 @@ def _codex_skill(tty, kinds_pids):
     return st.get("skill", ""), st.get("skill_done", False)
 
 
+class Kinds(dict):
+    """running_kinds の結果。failed: ps が失敗した（どの枠も「CLI が無い」とは言えない）"""
+    failed = False
+
+
 def running_kinds():
     """端末（tty）ごとに、動いている AI CLI（claude / codex）を返す。ps を1回だけ呼ぶ。
 
     枠のタイトルは tmuxp で決めた「その枠の既定の CLI」なので、別の CLI を起動した枠もある。実際のプロセスで見る。
     """
-    kinds = {}  # tty -> {"claude": pid, "codex": pid}
+    kinds = Kinds()  # tty -> {"claude": pid, "codex": pid}
     try:
-        out = subprocess.run(["ps", "-A", "-o", "pid=,tty=,comm="], capture_output=True, text=True, timeout=5).stdout
+        r = subprocess.run(["ps", "-A", "-o", "pid=,tty=,comm="], capture_output=True, text=True, timeout=5)
+        out = r.stdout
     except (OSError, subprocess.TimeoutExpired):
+        out, r = "", None
+    if r is None or r.returncode != 0 or not out.strip():
+        kinds.failed = True  # 失敗を「全部の枠で CLI が止まった」と読むと、全部の枠のタイトルを外してしまう（2026-11-26）
         return kinds
     for line in out.splitlines():
         parts = line.split(None, 2)
@@ -689,7 +698,7 @@ def pane_status(pane_id, cmd, ai_state, tty, slot_kind, kinds):
     found = kinds.get(tty.removeprefix("/dev/"), {})
     # その端末に CLI のプロセスが無ければ、手前のコマンドが何でも止まっている（2026-11-26 [3]: tmuxp で枠を作り直した直後は
     # シェルの起動処理が手前にいて「zsh」ではなかったので入力待ちの Claude とみなし、起動せずに送ろうとして失敗した）
-    if not found:
+    if not found and (cmd == "zsh" or not getattr(kinds, "failed", False)):
         return slot_kind, "stopped"
     kind = "codex" if "codex" in found and "claude" not in found else ("claude" if "claude" in found else slot_kind)
     if kind == "claude":
@@ -811,7 +820,7 @@ def ai_panes():
                     "subagents": subagents, "ctx": ctx,
                     "skill": skill, "skill_done": skill_done, "link": link,
                     "ticket_from": "label" if label_ticket else ("title" if m and ticket == m.group(1) and not session_ticket else ("session" if ticket else ""))}
-    return {"running": True, "slots": [slots[k] for k in sorted(slots)], "main": main}
+    return {"running": True, "slots": [slots[k] for k in sorted(slots)], "main": main, "kinds_failed": getattr(kinds, "failed", False)}
 
 
 # ---- tmux の枠のタイトルの文字（@ai_label） ----
@@ -874,7 +883,10 @@ def remember_label(slot, label):
 
 def clear_stopped_labels():
     """Claude・Codex が「動いている → 止まった」に変わった枠だけ外す（止まっている枠に手で付けたものは残す）。"""
-    for sl in ai_panes().get("slots", []):
+    d = ai_panes()
+    if d.get("kinds_failed"):
+        return  # ps が失敗したときは判定しない
+    for sl in d.get("slots", []):
         if sl.get("label") and pane_last_label.get(sl["pane"]) != sl["label"]:  # 付け替わったときだけ覚える
             remember_label(sl["slot"], sl["label"])
         pane_last_label[sl["pane"]] = sl.get("label", "")
@@ -3846,7 +3858,7 @@ def launch_claude(slot):
     return True, f"[{slot}] で Claude を起動しました（{cmd}）"
 
 
-def na_to_send(slot, text):
+def na_to_send(slot, text, busy=False):
     """hub の na_to.py で枠に送る。(成功したか, 結果の文)
 
     na_to.py（tmux_link）は TMUX_PANE のセッションの中で枠を探す。launchd から呼ぶと tmux の外なので、
@@ -3861,7 +3873,7 @@ def na_to_send(slot, text):
     if not pane:
         return False, f"{TMUX_SESSION} に送り先以外の枠がありません"
     try:
-        r = subprocess.run([sys.executable, NA_TO, str(slot), text], capture_output=True, text=True, timeout=60,
+        r = subprocess.run([sys.executable, NA_TO, str(slot), text] + (["--busy"] if busy else []), capture_output=True, text=True, timeout=60,
                            env={**os.environ, "TMUX_PANE": pane})
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, f"送信の処理が失敗: {e}"
@@ -4033,9 +4045,35 @@ def model_opts(req):
     return m, e
 
 
+def clear_other(slot, n):
+    """枠の会話に別のチケットが残っていれば /clear して新しい会話にする。(成功したか, 結果の文。何もしなければ "")
+
+    一区切りついた枠を別のチケットに使い回すと、前のチケットの話が残った会話のまま動いた（2026-11-26 [5] #15012 → #14921。ユーザー「直して」）。
+    同じチケットの続き（ct-analyze → ct-architect 等）は会話を引き継ぐので消さない。"""
+    s = next((x for x in ai_panes().get("slots", []) if x["slot"] == slot), None)
+    if not s or s["kind"] != "claude" or s.get("fresh"):
+        return True, ""
+    tickets = [x for x in (s.get("tickets") or [s.get("ticket")]) if x]
+    if not tickets or str(n) in tickets:
+        return True, ""
+    ok, msg = na_to_send(slot, "/clear")
+    if not ok:
+        return False, f"/clear を送れません: {msg}"
+    for _ in range(20):  # 新しい会話になった（statusline が新しい記録のパスを書いた）のを待つ。来なくても 20 秒で進む
+        time.sleep(1.0)
+        if claude_fresh(s["pane"]):
+            break
+    time.sleep(1.0)
+    return True, f"[{slot}] の会話（#{'・#'.join(tickets)}）を /clear しました。"
+
+
 def send_skill(slot, skill, text, n, t, override=None):
-    """枠に /model・/effort を送ってからスキルの依頼文を送る。(成功したか, 結果の文)"""
+    """枠に /model・/effort を送ってからスキルの依頼文を送る。(成功したか, 結果の文)
+    別のチケットの会話が残っている枠は、先に /clear する（clear_other）"""
     model, effort, why = model_plan(skill, n, t, override)
+    ok, cleared = clear_other(slot, n)
+    if not ok:
+        return False, cleared
     try:
         with open(CLAUDE_SETTINGS, encoding="utf-8") as f:
             before = f.read()
@@ -4052,7 +4090,7 @@ def send_skill(slot, skill, text, n, t, override=None):
     finally:
         _restore_claude_settings(before)
     ok, msg = na_to_send(slot, text)
-    return ok, f"{msg}（{model}・{effort}" + (f"・{why}" if why else "") + "）"
+    return ok, cleared + f"{msg}（{model}・{effort}" + (f"・{why}" if why else "") + "）"
 
 
 def _auto_record(auto, n, slot, skill, text, ok, msg, key=None):
@@ -4460,12 +4498,14 @@ def go_step(auto, i, t):
 # E: 開発用サーバーの順番待ち（hub/bin/hub_docker.py が docker.json を読み書きする）。ここは「譲る」だけを受け持つ
 HUB_DOCKER = os.path.join(HUB_STATE_DIR, "docker.json")
 HUB_DOCKER_LOCK = os.path.join(HUB_STATE_DIR, "docker.lock")
-DOCKER_YIELD = 30 * 60      # 使用中のチケットの枠がこの秒数止まって（質問・入力待ち）いて、待っている人がいれば譲る
+DOCKER_YIELD = 15 * 60      # 使用中のチケットの枠がこの秒数止まって（質問・入力待ち）いて、待っている人がいれば譲る（2026-11-26 30分→15分）
+DOCKER_HOLD_STALE = 45 * 60  # 使用中のチケットがこの秒数 wait を呼んでいなければ、処理中でも譲る（サーバーを使う直前に毎回 wait を呼ぶ決まり。
+                             # 2026-11-26 #14747: レポート作成などで処理中のまま1時間半使用中を返さず、#15047 が待ち続けた）
 DOCKER_QUEUE_STALE = 300    # hub_docker.py の QUEUE_STALE と同じ
 
 
 def docker_check(slots):
-    """使用中のチケットの枠が 30 分止まっていて、待っている人がいれば使用中を外す（次の人の wait が切り替える）。docker.json の要約を返す。"""
+    """使用中のチケットの枠が 15 分止まっている・45 分 wait を呼んでいないとき、待っている人がいれば使用中を外す（次の人の wait が切り替える）。docker.json の要約を返す。"""
     try:
         os.makedirs(HUB_STATE_DIR, exist_ok=True)
         lf = open(HUB_DOCKER_LOCK, "a")
@@ -4492,11 +4532,16 @@ def docker_check(slots):
                 elif not h.get("idle_since"):
                     h["idle_since"] = now
                     changed = True
-                elif queue and now - h["idle_since"] >= DOCKER_YIELD:
+                if queue and (now - h.get("seen", h.get("since", now)) >= DOCKER_HOLD_STALE
+                              or (h.get("idle_since") and now - h["idle_since"] >= DOCKER_YIELD)):
                     order = {str(x): k for k, x in enumerate(watch_order())}
                     nxt = sorted(queue, key=lambda q: (order.get(q["ticket"], 10_000), q["since"]))[0]
-                    why = "枠が見つからない" if not mine else f"[{mine[0]['slot']}] が{WATCH_STATE_LABEL.get(mine[0]['state'], mine[0]['state'])}"
-                    why += f"のまま {int((now - h['idle_since']) // 60)} 分"
+                    if h.get("idle_since") and now - h["idle_since"] >= DOCKER_YIELD:
+                        why = "枠が見つからない" if not mine else f"[{mine[0]['slot']}] が{WATCH_STATE_LABEL.get(mine[0]['state'], mine[0]['state'])}"
+                        why += f"のまま {int((now - h['idle_since']) // 60)} 分"
+                    else:
+                        why = f"{int((now - h.get('seen', h.get('since', now))) // 60)} 分 wait を呼んでいない（サーバーを使っていない見込み）"
+                    h["slots"] = [s["slot"] for s in mine]
                     d.setdefault("log", []).append({"at": now, "event": "yield", "ticket": h["ticket"], "env": h["env"], "to": nxt["ticket"], "why": why})
                     del d["log"][:-50]
                     d["holder"] = None
@@ -4513,6 +4558,9 @@ def docker_check(slots):
                f"#{h['ticket']} は次にサーバーを使う前に hub_docker.py wait で並び直します")
         tmux_notify(msg[:150])
         slack_dm("hub 監視\n" + msg)
+        for sl in h.get("slots") or []:  # 使用中だった枠にも伝える（処理中でも今の処理の途中で読む）
+            na_to_send(sl, f"hub から: 開発用サーバーの使用中を #{nxt['ticket']} に譲りました（{why}）。"
+                           f"次にサーバー（テスト・ブラウザ確認・ローカルの DB/Redis）を使う前に hub_docker.py wait {h['ticket']} で並び直してください", busy=True)
     return summary
 
 
