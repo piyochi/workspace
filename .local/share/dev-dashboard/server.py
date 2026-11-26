@@ -687,7 +687,9 @@ def pane_status(pane_id, cmd, ai_state, tty, slot_kind, kinds):
     # CLI はラッパーの bash から起動されるので、ログインシェル（zsh）に戻っていれば止まっている。
     # ただし CLI がコマンドを実行している間も手前は「zsh -c」になるので、その端末に CLI のプロセスがあれば動いている
     found = kinds.get(tty.removeprefix("/dev/"), {})
-    if cmd == "zsh" and not found:
+    # その端末に CLI のプロセスが無ければ、手前のコマンドが何でも止まっている（2026-11-26 [3]: tmuxp で枠を作り直した直後は
+    # シェルの起動処理が手前にいて「zsh」ではなかったので入力待ちの Claude とみなし、起動せずに送ろうとして失敗した）
+    if not found:
         return slot_kind, "stopped"
     kind = "codex" if "codex" in found and "claude" not in found else ("claude" if "claude" in found else slot_kind)
     if kind == "claude":
@@ -4300,6 +4302,15 @@ def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, ef
             _json_save(HUB_AUTO, auto)
             return True, f"{msg}。入力待ちになったら {nxt} を送ります（{LAUNCH_WAIT // 60} 分待っても起動しなければ知らせます）"
         ok, msg = send_skill(use, nxt, text, n, t, {"model": model, "effort": effort})
+        if not ok and "が起動していません" in msg:
+            # 判定の後に Claude が終わっていた枠: 送らずに起動して、入力待ちになったら送る（2026-11-26 ユーザー「起動するようにして」）
+            lok, lmsg = launch_claude(use)
+            if lok:
+                t["slot"] = use
+                t["pending"] = {"skill": nxt, "text": text, "key": key, "at": time.time(), "model": model, "effort": effort,
+                                "review": {"kind": rv["kind"], "urls": rv["urls"]} if rv else None}
+                _json_save(HUB_AUTO, auto)
+                return True, f"{lmsg}。入力待ちになったら {nxt} を送ります（{LAUNCH_WAIT // 60} 分待っても起動しなければ知らせます）"
         _auto_record(auto, n, use, nxt, text, ok, msg, key)
         if ok:
             t["slot"] = use
