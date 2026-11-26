@@ -8,7 +8,7 @@
   python3 hub_docker.py wait <番号> [--env envN] [--timeout 秒]  … 順番が来るまで待ち、来たら他の環境のサーバーを止めて自分の環境を起動する
                                                                      終了コード 0 = 使ってよい / 3 = まだ順番待ち（もう一度 wait）/ 1 = 失敗
   python3 hub_docker.py release <番号>                            … 使い終わった（サーバーは止めない。次の人の wait が切り替える）
-  python3 hub_docker.py status                                    … 使用中・順番待ち・サーバーの状態
+  python3 hub_docker.py status                                    … 使用中・順番待ち・サーバーの状態（hub の /na-server-status は report() で詳しく出す）
 
 - 順番: hub の /na-order の順（固定したチケットが先、上が先）。固定していないものはその後に来た順
 - 同じチケットがもう一度 wait しても、使用中ならそのまま使える（テストの前に毎回 wait してよい）
@@ -195,17 +195,61 @@ def cmd_release(ticket):
     return 0
 
 
-def cmd_status():
+HOLD_STALE = 45 * 60  # server.py の DOCKER_HOLD_STALE と同じ（この秒数 wait を呼ばなければ、待っている人に譲る）
+YIELD_IDLE = 15 * 60  # server.py の DOCKER_YIELD と同じ（使用中の枠がこの秒数止まっていれば譲る）
+EVENT_LABEL = {"acquire": "使い始め", "release": "返した", "yield": "譲った", "enqueue": "並んだ", "env_change": "環境を変えた",
+               "switch_failed": "切り替え失敗"}
+
+
+def ago(sec):
+    sec = max(0, int(sec))
+    return f"{sec // 60} 分" if sec < 3600 else f"{sec // 3600} 時間 {sec % 3600 // 60} 分"
+
+
+def report(detail=True, slots=None):
+    """使用中・順番待ち・サーバー・直近の記録の文。slots: {チケット番号: "[1] 処理中"}（/na-server-status がダッシュボードから渡す）"""
+    slots = slots or {}
+    now = time.time()
     with Locked() as d:
         h, qs = d["holder"], queue_sorted(d)
-        recent = [x for x in d["log"] if x["event"] == "yield"][-3:]
-    out = ["使用中: " + (f"#{h['ticket']} {h['env']}（{time.strftime('%H:%M', time.localtime(h['since']))}〜）" if h else "なし")]
-    out.append("順番待ち: " + (" → ".join(f"#{q['ticket']}（{q['env']}）" for q in qs) if qs else "なし"))
+        logs = d["log"][-6:] if detail else [x for x in d["log"] if x["event"] == "yield"][-3:]
+    out = []
+    if h:
+        seen = now - h.get("seen", h["since"])
+        out.append(f"使用中: #{h['ticket']} {h['env']} {slots.get(h['ticket'], '')}".rstrip()
+                   + f"・{time.strftime('%H:%M', time.localtime(h['since']))}〜（{ago(now - h['since'])}）・最後の wait {ago(seen)}前")
+        if qs:
+            idle = h.get("idle_since")
+            left = HOLD_STALE - seen
+            why = [f"wait が無いまま あと {ago(left)} で譲る" if left > 0 else "wait が無いので次の判定で譲る"]
+            if idle:
+                why.append(f"枠が止まって {ago(now - idle)}（{ago(YIELD_IDLE)} で譲る）")
+            out.append("  " + "・".join(why))
+    else:
+        out.append("使用中: なし")
+    if qs:
+        out.append("順番待ち:")
+        for k, q in enumerate(qs, 1):
+            out.append(f"  {k}. #{q['ticket']} {q['env']} {slots.get(q['ticket'], '')}".rstrip() + f"・{ago(now - q['since'])}待ち")
+    else:
+        out.append("順番待ち: なし")
     st = server_status()
-    out.append("サーバー: " + " ".join(f"{e}={'●' if s == 'up' else '◐' if s == 'partial' else '○'}" for e, s in st.items()))
-    for y in recent:
-        out.append(f"譲った: {time.strftime('%m/%d %H:%M', time.localtime(y['at']))} #{y['ticket']} → #{y.get('to', '?')}（{y.get('why', '')}）")
-    print("\n".join(out))
+    mark = {"up": "● 起動", "partial": "◐ 一部", "down": "○ 停止"}
+    out.append("サーバー: " + "　".join(f"{e} {mark.get(s, '?')}" for e, s in st.items()))
+    if logs:
+        out.append("直近の記録:" if detail else "")
+        for y in logs:
+            line = f"  {time.strftime('%m/%d %H:%M', time.localtime(y['at']))} #{y['ticket']} {y.get('env', '')} {EVENT_LABEL.get(y['event'], y['event'])}"
+            if y["event"] == "yield":
+                line += f" → #{y.get('to', '?')}（{y.get('why', '')}）"
+            elif y["event"] == "release" and y.get("used"):
+                line += f"（{ago(y['used'])}使用）"
+            out.append(line)
+    return "\n".join(x for x in out if x)
+
+
+def cmd_status():
+    print(report(detail=False))
     return 0
 
 

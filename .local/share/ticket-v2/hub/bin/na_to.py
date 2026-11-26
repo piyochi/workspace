@@ -32,6 +32,7 @@ WATCH_PREFIX = re.compile(r"^\s*/na-watch(?:\s+(.*))?$")
 NEXT_PREFIX = re.compile(r"^\s*/na-next(?:\s+(.*))?$")
 SLOT_PREFIX = re.compile(r"^\s*/na-slot(?:\s+(.*))?$")
 GO_PREFIX = re.compile(r"^\s*/na-go(?:\s+(.*))?$")
+SERVER_PREFIX = re.compile(r"^\s*/na-server-status(?:\s+(.*))?$")
 DRY_RUN = "--dry-run" in sys.argv  # 送信の直前で止める（条件の確認用）
 
 
@@ -79,6 +80,32 @@ def title_before(pane, text):
         return f"タイトルを付けられません（{e}）"
     out = (r.stdout or r.stderr or "").strip().splitlines()
     return f"タイトルを #{n} に付けました" if r.returncode == 0 else f"タイトルを付けられません（{(out or ['?'])[-1][:80]}）"
+
+
+def server_status_cmd(args):
+    """/na-server-status [release 番号]。枠の番号と状態はダッシュボードから取る（取れなければ出さない）"""
+    import contextlib
+    import io
+    import hub_docker as hd
+    head = ""
+    if args:
+        if args[0] != "release" or len(args) != 2 or not args[1].lstrip("#").isdigit():
+            return "⛔ 書き方: /na-server-status（表示）・/na-server-status release 番号（使用中を外す）"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            hd.cmd_release(args[1].lstrip("#"))
+        head = buf.getvalue().strip() + "\n"
+    slots = {}
+    try:
+        import hub_redmine as hr
+        label = {"busy": "処理中", "wait": "確認待ち", "idle": "入力待ち", "stopped": "停止中"}
+        for s in hr.dash_get("/api/panes").get("slots", []):
+            if s["kind"] == "claude":
+                for t in s.get("tickets") or ([s["ticket"]] if s.get("ticket") else []):
+                    slots.setdefault(t, f"[{s['slot']}] {label.get(s['state'], s['state'])}")
+    except Exception:
+        pass
+    return head + hd.report(detail=True, slots=slots)
 
 
 def send(args_text, busy_ok=False):
@@ -182,6 +209,13 @@ def hook_main():
             msg = "na-watch " + hw.run(args)
         except Exception as e:
             msg = f"na-watch ⛔ エラー（開発ダッシュボードが動いているか確認）: {type(e).__name__}: {e}"
+    elif SERVER_PREFIX.match(prompt):
+        # /na-server-status [release 番号]: 開発用サーバーの使用中・順番待ち・経過時間・直近の記録（2026-11-26 ユーザー指定）
+        args = (SERVER_PREFIX.match(prompt).group(1) or "").split()
+        try:
+            msg = "na-server-status " + server_status_cmd(args)
+        except Exception as e:
+            msg = f"na-server-status ⛔ エラー: {type(e).__name__}: {e}"
     elif GO_PREFIX.match(prompt):
         # /na-go 番号 [枠] [--branch 名前] [force]: ct-ship-loop を頼み、終わったら ct-finish を自動で頼む（E ができるまで1件ずつ）
         args = (GO_PREFIX.match(prompt).group(1) or "").split()
@@ -208,7 +242,7 @@ def hook_main():
         except Exception as e:  # hook が落ちてもプロンプトは Claude に渡さない
             msg = f"na-to ⛔ エラーで送っていません: {type(e).__name__}: {e}"
     else:
-        return  # /na-to・/na-list・/na-redmine・/na-order・/na-watch・/na-next・/na-slot・/na-go 以外は何もしない（通常どおり Claude に渡す）
+        return  # /na-to・/na-list・/na-redmine・/na-order・/na-watch・/na-next・/na-slot・/na-go・/na-server-status 以外は何もしない（通常どおり Claude に渡す）
     print(json.dumps({"decision": "block", "reason": msg, "suppressOriginalPrompt": True}, ensure_ascii=False))
     reset_pane_state()
 

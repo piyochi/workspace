@@ -131,7 +131,8 @@ def ticket_card(i, d, w, num=None):
     if a:
         last = a.get("last") or {}
         if last:
-            when = time.strftime("%H:%M", time.localtime(last.get("at") or 0))
+            # 今日より前の依頼は日付も出す（「18:55」だけだと今日のことに見えた。2026-11-26）
+            when = time.strftime("%H:%M" if time.strftime("%Y%m%d", time.localtime(last.get("at") or 0)) == time.strftime("%Y%m%d") else "%m/%d %H:%M", time.localtime(last.get("at") or 0))
             ok = c("green", "送信") if last.get("ok") else c("red", "失敗")
             info.append(c("gray", "自動 ") + f"[{a.get('slot')}] {last.get('skill', '').removeprefix('ct-')} {ok} {c('gray', when)}")
         else:

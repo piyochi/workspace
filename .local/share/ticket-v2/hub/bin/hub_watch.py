@@ -75,7 +75,8 @@ def item_block(i, d, k=None):
     a = (d.get("auto") or {}).get(i["id"])
     if a:
         last = a.get("last") or {}
-        when = time.strftime("%H:%M", time.localtime(last.get("at") or 0)) if last else ""
+        # 今日より前の依頼は日付も出す（「18:55」だけだと今日のことに見えた。2026-11-26）
+        when = time.strftime("%H:%M" if time.strftime("%Y%m%d", time.localtime(last.get("at") or 0)) == time.strftime("%Y%m%d") else "%m/%d %H:%M", time.localtime(last.get("at") or 0)) if last else ""
         row("自動", f"[{a.get('slot')}] " + (f"{last.get('skill', '').removeprefix('ct-')} {'送信' if last.get('ok') else '失敗'} {when}" if last else "開始"))
         if a.get("go"):
             row("", "実装: " + {"ship-loop": "ship-loop 中", "finish": "finish 中", "fix-loop": "fix-loop 中", "done": "完了"}.get(a["go"].get("stage"), a["go"].get("stage", "")))
