@@ -60,6 +60,26 @@ def mark_sent(pane, text):
         pass  # 印が書けなくても送信は止めない（過去のセッションの確認が出ないだけ）
 
 
+TMUX_TITLE = os.path.expanduser("~/bin/tmux-title")
+# 送る前に枠のタイトルを「#番号: 件名」にするスキル（ct-tmux-title と同じ ~/bin/tmux-title を hub が直接実行する。枠の Claude には頼まない）
+# ct-pr-turn は ct-redmine を経ないで送ることがあり、タイトルが前のチケットのまま変わらなかった（2026-11-26 ユーザー指定）
+TITLE_SKILLS = re.compile(r"^/ct-redmine\s+#?(1\d{4})\b|^/ct-pr-turn\b.*?#(1\d{4})\b", re.DOTALL)
+
+
+def title_before(pane, text):
+    """text が /ct-redmine 番号・/ct-pr-turn … #番号 なら、送る前にその枠のタイトルを付ける。付けた結果の文（対象外なら ""）。"""
+    m = TITLE_SKILLS.match(text.strip())
+    if not m or DRY_RUN:
+        return ""
+    n = m.group(1) or m.group(2)
+    try:
+        r = subprocess.run([TMUX_TITLE, "--pane", pane, "ticket", n], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"タイトルを付けられません（{e}）"
+    out = (r.stdout or r.stderr or "").strip().splitlines()
+    return f"タイトルを #{n} に付けました" if r.returncode == 0 else f"タイトルを付けられません（{(out or ['?'])[-1][:80]}）"
+
+
 def send(args_text, busy_ok=False):
     """busy_ok: 処理中の枠にも送る（/na-to で手で打った指示。Claude Code は処理中の入力を今の処理の途中で読む。2026-11-25 ユーザー指定）。
     自動の依頼（/na-next・/na-go・autopilot）は /model・/effort を先に送るので、入力待ちのときだけ送る"""
@@ -95,6 +115,7 @@ def send(args_text, busy_ok=False):
         return f"🧪 dry-run（送っていません）: {label} ← {hs.clip_tail(text, 60)}"
     # tmux_link.py send は「処理中」の表示が出るまで Enter を押し直して最大36秒待つ。
     # すぐ終わる返答だと待ち切ってしまうので、ここでは「入力欄が空になったか」で受け付けを判定する
+    titled = title_before(p["id"], text)
     mark_sent(p["id"], text)
     tl.paste(p["id"], text)
     time.sleep(1.0)
@@ -103,7 +124,8 @@ def send(args_text, busy_ok=False):
         for _ in range(8):
             time.sleep(0.5)
             if not hs.parse_claude(hs.capture(p["id"]))["pending"]:
-                return (f"✅ 送信しました{'（処理中の枠へ。今の処理の途中で読まれます）' if busy else ''}: {label} ← {hs.clip_tail(text, 60)}")
+                return (f"✅ 送信しました{'（処理中の枠へ。今の処理の途中で読まれます）' if busy else ''}: {label} ← {hs.clip_tail(text, 60)}"
+                        + (f"・{titled}" if titled else ""))
     raise Refuse(f"{label} に貼り付けましたが、入力欄に残ったままです。その枠の画面を確認してください")
 
 
