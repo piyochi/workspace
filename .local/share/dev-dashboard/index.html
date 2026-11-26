@@ -529,11 +529,6 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
   <!-- 吹き出しはヘッダーの外に置く（ヘッダーの中だと、モーダル（日報など）の下に隠れる） -->
   <div class="fc-pop" id="fc-pop" hidden></div>
 
-  <details class="sec" data-key="watch" open>
-    <summary><h2>監視（/na-order）</h2> <span class="label" id="watch-meta"></span></summary>
-    <div id="watch"></div>
-  </details>
-
   <details class="sec" data-key="claude" open>
     <summary><h2>Claude</h2></summary>
     <div id="claude"></div>
@@ -542,6 +537,11 @@ button.rm-st:hover { border-color: var(--accent); color: var(--accent); }
   <details class="sec" data-key="codex" open>
     <summary><h2>Codex</h2></summary>
     <div id="codex"></div>
+  </details>
+
+  <details class="sec" data-key="watch" open>
+    <summary><h2>監視（/na-order）</h2> <span class="label" id="watch-meta"></span></summary>
+    <div id="watch"></div>
   </details>
 
   <details class="sec" data-key="tmux" open>
@@ -1200,7 +1200,7 @@ setInterval(loadWatch, 20000);
 refreshFocus();
 setInterval(refreshFocus, 30000);
 // ヘッダーの小さい版。Claude・Codex の使用率は常に出す（2026-11-25）。
-// tmux の処理中の枠は、元の欄が画面に見えている間は出さず、下にスクロールして見えなくなったとき（または欄を閉じたとき）だけ出す
+// tmux の処理中の枠は、元の欄が画面に見えている間・まだ下にある間は出さず、下にスクロールして通り過ぎたとき（または欄を閉じたとき）だけ出す
 const mini = { usage: null, slots: null, visible: { claude: true, codex: true, tmux: true } };
 const miniBar = (p) => `<span class="bar"><i class="${p >= 90 ? "bad" : p >= 70 ? "warn" : ""}" style="width:${p}%"></i></span>`;
 function miniUsage(name, rows) {
@@ -1227,13 +1227,20 @@ function renderMini() {
   $("mini-wrap").hidden = !usage && !act.length;
 }
 $("mini-panes").addEventListener("click", (e) => { const b = e.target.closest("[data-slot]"); if (b) openPane(Number(b.dataset.slot)); });
-// 欄が閉じている・ヘッダーの下に隠れている・画面の外にあるときは「見えていない」とみなす
+// 欄が閉じている・ヘッダーの下に隠れている（上へ通り過ぎた）ときは「見えていない」とみなす。
+// まだ下にあって画面に入っていないだけのときは見えている扱い（一番上で小さい版が下の欄に重なって隠すため。2026-11-26）
 function watchSection(key, contentId) {
   const sec = document.querySelector(`details.sec[data-key="${key}"]`), body = $(contentId);
   const update = (shown) => { mini.visible[key] = sec.open && shown; renderMini(); };
+  // 中身の下端がヘッダーの下端より下にあれば「見えている」（まだ下にある場合も含む）。
+  // IntersectionObserver は上から下へ一気に飛ぶと（画面に入らないまま）知らせないので、スクロールのたびに測る
   let shown = true;
-  new IntersectionObserver(([e]) => { shown = e.isIntersecting; update(shown); },
-    { rootMargin: `-${document.querySelector("header").offsetHeight}px 0px 0px 0px` }).observe(body);
+  const measure = () => {
+    const now = body.getBoundingClientRect().bottom > document.querySelector("header").getBoundingClientRect().bottom;
+    if (now !== shown) { shown = now; update(shown); }
+  };
+  window.addEventListener("scroll", measure, { passive: true });
+  window.addEventListener("resize", measure);
   sec.addEventListener("toggle", () => update(shown));
 }
 watchSection("claude", "claude");
@@ -1538,6 +1545,7 @@ document.addEventListener("change", async (e) => {
   if (d.error) { rmSt = { id, error: d.error }; rmRerender(); return; }
   // すぐ見た目に反映してから、Redmine を取り直す（完了などにすると一覧から消える）
   [...rmData.issues, ...(rmData.today_extra || []), ...(rmData.memo_extra || [])].filter((i) => i.id === id).forEach((i) => { i.status = d.status; });
+  ((watchData && watchData.items) || []).filter((i) => Number(i.id) === id).forEach((i) => { i.status = d.status; });  // 監視の行（番号は文字列）も
   rmSt = null; rmRerender();
   loadRedmine(true); loadWatch();
   delete fcCache[String(id)]; refreshFocus();  // 吹き出し・対応中も取り直す（サーバー側の覚えている分は変更のときに捨ててある）

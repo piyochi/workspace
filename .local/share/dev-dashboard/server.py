@@ -1665,6 +1665,12 @@ def redmine_set_status(issue_id, status_id):
     focus_forget(str(issue_id))  # 対応中・吹き出しの Redmine の情報もすぐ取り直す
     if now.get("id") != status_id:
         return {"error": f"Redmine が変更を受け付けませんでした（今は「{now.get('name', '?')}」のまま）"}, 409
+    # 監視の一覧は watch_once が 20 秒ごとに作り直すまで前のステータスのままなので、覚えている分も書き換える
+    # （watch_once は自動の依頼まで動かすので、ここでは呼ばない）
+    with watch_lock:
+        for i in watch_cache.get("items", []):
+            if str(i.get("id")) == str(issue_id):
+                i["status"] = now.get("name", "")
     return {"ok": True, "status": now.get("name", "")}, 200
 
 
@@ -3855,9 +3861,7 @@ def na_to_send(slot, text):
         return False, f"送信の処理が失敗: {e}"
     out = (r.stdout or r.stderr or "").strip()
     ok = r.returncode == 0 and out.startswith("✅")
-    m = re.match(r"/ct-redmine\s+#?(1\d{4})\b", text)
-    if ok and m:
-        out += "・" + title_slot(target, m.group(1))
+    # タイトル（/ct-redmine・/ct-pr-turn の前に「#番号: 件名」）は na_to.py が送る前に付ける（2026-11-26 から。手で打つ /na-to でも付く）
     return ok, out
 
 
