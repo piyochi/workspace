@@ -1140,7 +1140,7 @@ function renderWatch() {
     $("watch-meta").textContent = items.length ? `${items.length} 件${d.attention ? `・確認待ち ${d.attention}` : ""}・${t} 時点` : "";
     // 開発用サーバーの順番待ち（hub_docker.py）。使用中か待ちがあれば先頭に1行出す
     const dk = d.docker || {}, dq = dk.queue || [];
-    const dline = dk.holder || dq.length ? `<div class="wt-empty" title="hub_docker.py wait / release。30 分止まると次に譲る">開発用サーバー: ${dk.holder ? `使用中 #${esc(dk.holder.ticket)}（${esc(dk.holder.env)}）` : "空き"}${dq.length ? `・待ち ${dq.map((q) => `#${esc(q.ticket)}（${esc(q.env)}）`).join(" → ")}` : ""}</div>` : "";
+    const dline = dk.holder || dq.length ? `<div class="wt-empty" title="hub_docker.py wait / release。15 分止まるか 45 分 wait が無ければ次に譲る">開発用サーバー: ${dk.holder ? `使用中 #${esc(dk.holder.ticket)}（${esc(dk.holder.env)}）` : "空き"}${dq.length ? `・待ち ${dq.map((q) => `#${esc(q.ticket)}（${esc(q.env)}）`).join(" → ")}` : ""}</div>` : "";
     if (!items.length) { $("watch").innerHTML = dline + `<div class="wt-empty">固定したチケットはありません（hub で <code>/na-order 番号 …</code>）</div>`; syncNavBtns(); return; }
     $("watch").innerHTML = dline + items.map((i, k) => {
       const flow = (i.flow || []).map((x) => `<span class="wt-step ${x.mark || ""}${x.optional ? " opt" : ""}" title="${esc(x.skill)}${x.mark ? `：${{done: "済み", running: "実行中・途中", question: "質問中", skip: "実行の記録なし"}[x.mark] || x.mark}` : ""}">${esc(x.short)}</span>`).join("");
