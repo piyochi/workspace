@@ -438,6 +438,17 @@ def is_question(text):
     return last.endswith(("？", "?")) or last.rstrip("。.").endswith(("か", "ですか", "ますか"))
 
 
+def claude_fresh(pane_id):
+    """Claude の枠が新しい会話のまま（まだ何も入力していない）か。statusline.py が書いたセッションの記録ファイルがまだ無ければ True。
+    起動し直した・/clear した枠に、前の会話で付けたタイトル（#番号）や自動の依頼の割り当てが残っていても空きとみなすため（2026-11-26 [1]）。"""
+    try:
+        with open(os.path.join(CACHE, f"pane-{pane_id.lstrip('%')}.json")) as f:
+            path = json.load(f)["transcript_path"]
+    except (OSError, ValueError, KeyError):
+        return False
+    return not os.path.exists(path)
+
+
 def claude_session_info(pane_id):
     with transcript_lock:
         return _claude_session_info(pane_id)
@@ -793,6 +804,7 @@ def ai_panes():
         ctx = None if state == "stopped" else (claude_context(pane_id) if kind == "claude" else codex_context(tty.removeprefix("/dev/"), kinds))
         slots[n] = {"slot": n, "pane": pane_id, "env": env, "kind": kind, "slot_kind": slot_kind, "state": state, "task": task, "ticket": ticket,
                     "tickets": tickets,
+                    "fresh": kind == "claude" and state == "idle" and claude_fresh(pane_id),
                     "label": label,
                     "subagents": subagents, "ctx": ctx,
                     "skill": skill, "skill_done": skill_done, "link": link,
@@ -3773,11 +3785,53 @@ def free_slot(items, slots, auto, purpose="design"):
     bound = {t.get("slot") for k, t in auto.get("tickets", {}).items() if t.get("slot") is not None}
     bound |= {i["slot"] for i in items if i.get("slot") is not None}
     prefer = SLOT_PREFER.get(purpose, SLOT_PREFER["design"])
+    pending = {t.get("slot") for k, t in auto.get("tickets", {}).items() if t.get("pending")}
     for s in sorted((s for s in slots if s["slot"] in prefer), key=lambda s: prefer.index(s["slot"])):
-        if s["kind"] == "claude" and s["slot"] % 2 == 1 and s["state"] == "idle" and not (s.get("tickets") or s.get("ticket")) \
-                and s["slot"] not in off and s["slot"] not in bound:
+        if s["kind"] != "claude" or s["slot"] % 2 == 0 or s["state"] != "idle" or s["slot"] in off:
+            continue
+        if s.get("fresh") and s["slot"] not in pending:
+            return s["slot"]  # 新しい会話: 前の会話のタイトル・割り当てが残っていても空き
+        if not (s.get("tickets") or s.get("ticket")) and s["slot"] not in bound:
             return s["slot"]
     return None
+
+
+MONITOR_TXT = os.path.join(HOME, ".tmuxp", "ticket_v2_project", "monitor.txt")
+LAUNCH_WAIT = 240  # 未起動の枠で Claude を起動してから、入力待ちになるのを待つ秒数
+
+
+def stopped_slot(items, slots, auto, purpose="design"):
+    """起動中の空き枠が無いときの代わり: Claude が未起動の奇数枠（除外・割り当て済みを除く）。SLOT_PREFER の順。"""
+    off = slots_off()
+    bound = {t.get("slot") for k, t in auto.get("tickets", {}).items() if t.get("slot") is not None}
+    bound |= {i["slot"] for i in items if i.get("slot") is not None}
+    prefer = SLOT_PREFER.get(purpose, SLOT_PREFER["design"])
+    for s in sorted((s for s in slots if s["slot"] in prefer), key=lambda s: prefer.index(s["slot"])):
+        if s["kind"] == "claude" and s["slot"] % 2 == 1 and s["state"] == "stopped" and s["slot"] not in off and s["slot"] not in bound:
+            return s["slot"]
+    return None
+
+
+def launch_claude(slot):
+    """未起動の枠で Claude を新しい会話として起動する（monitor.txt のその枠の行。--continue は外す）。(成功したか, 結果の文)"""
+    try:
+        with open(MONITOR_TXT, encoding="utf-8") as f:
+            rows = [ln for ln in f.read().splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+        cwd, cmd = [x.strip() for x in rows[slot - 1].split("|")[:2]]
+    except (OSError, IndexError, ValueError):
+        return False, f"[{slot}] の起動コマンドを monitor.txt から読めません"
+    cmd = re.sub(r"\s--continue\b", "", cmd.lstrip("@"))
+    if "bin/claude" not in cmd:
+        return False, f"[{slot}] は Claude の枠ではありません（{cmd[:40]}）"
+    pane = (slot_pane(slot) or {}).get("id")
+    if not pane:
+        return False, f"[{slot}] の枠が見つかりません"
+    cur = tmux("display", "-p", "-t", pane, "#{pane_current_command}").stdout.strip()
+    if cur not in ("zsh", "-zsh", "bash", "sh"):
+        return False, f"[{slot}] でシェル以外（{cur}）が動いているので起動しません"
+    tmux("send-keys", "-t", pane, "-l", f"cd {cwd} && {cmd}")
+    tmux("send-keys", "-t", pane, "Enter")
+    return True, f"[{slot}] で Claude を起動しました（{cmd}）"
 
 
 def na_to_send(slot, text):
@@ -4037,7 +4091,30 @@ def autopilot(d, slots):
         items = d["items"]
         changed = False
         sent = None
-        for i in items:
+        # 未起動の枠で起動した Claude が入力待ちになったら、預かっていた依頼を送る（/na-next）
+        for n, t in list(auto.get("tickets", {}).items()):
+            p = t.get("pending")
+            if not p:
+                continue
+            s = next((x for x in slots if x["slot"] == t.get("slot")), None)
+            if s and s["state"] == "idle":
+                ok, msg = send_skill(t["slot"], p["skill"], p["text"], n, t, {"model": p.get("model"), "effort": p.get("effort")})
+                _auto_record(auto, n, t["slot"], p["skill"], p["text"], ok, msg, p.get("key"))
+                changed = True
+                if ok:
+                    t.pop("pending", None)
+                    if p.get("review"):
+                        t["mode"], t["review"] = "review", p["review"]
+                    sent = n
+                    break
+                if time.time() - p["at"] > LAUNCH_WAIT:
+                    t.pop("pending", None)
+                    auto_fail(n, f"[{t['slot']}] に {p['skill']} を送れません: {msg}", f"pending@{int(p['at'])}")
+            elif time.time() - p["at"] > LAUNCH_WAIT:
+                t.pop("pending", None)
+                changed = True
+                auto_fail(n, f"[{t.get('slot')}] で Claude を起動しましたが {LAUNCH_WAIT // 60} 分たっても入力待ちになりません", f"pending@{int(p['at'])}")
+        for i in items if sent is None else []:
             n = i["id"]
             t = auto.get("tickets", {}).get(n)
             # レビュー（F）: 固定したチケットにレビュー依頼・戻りが来たら ct-pr-turn を頼む（枠が無ければ空いている枠）
@@ -4160,8 +4237,15 @@ def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, ef
         use = i["slot"] if i["slot"] is not None else (slot if slot is not None else free_slot(
             [x for x in watch_cache.get("items", []) if x["id"] != n], slots, {"tickets": {k: v for k, v in auto["tickets"].items() if k != n}},
             ("fix" if rv["kind"] == "fix" else "review") if rv else "design"))
+        launch = None
         if use is None:
-            return False, "空いている Claude の枠がありません（入力待ち・作業中のチケット無し・除外していない奇数枠）。枠を指定してください"
+            # 起動中の空き枠が無ければ、Claude が未起動の枠で起動してから送る（2026-11-26 ユーザー「空きがないって言われるけど空あるよ？」）
+            launch = stopped_slot([x for x in watch_cache.get("items", []) if x["id"] != n], slots,
+                                  {"tickets": {k: v for k, v in auto["tickets"].items() if k != n}},
+                                  ("fix" if rv["kind"] == "fix" else "review") if rv else "design")
+            use = launch
+        if use is None:
+            return False, "空いている Claude の枠がありません（起動中の枠は作業中のチケットあり・未起動の枠も無いか除外中）。枠を指定してください"
         if not rv and not i.get("prs"):
             # GitHub でレビュアーに指定されていなくても、他の人の PR があるチケットはレビュー（ct-pr-turn）。設計の流れには乗せない
             op = other_prs(n)
@@ -4198,13 +4282,26 @@ def auto_start(n, slot=None, sweep=False, scope=False, dry=False, model=None, ef
         text = auto_text(nxt, n, i, t=t) + (f" 補足（hub から）: {note}" if note else "")
         if dry:
             mp = model_plan(nxt, n, t, {"model": model, "effort": effort})
-            return True, f"🧪 dry-run: [{use}] ← " + (text if len(text) <= 160 else f"{text[:80]}…{text[-60:]}" if note else text[:80]) + f"（{mp[0]}・{mp[1]}" + (f"・{mp[2]}" if mp[2] else "") + "）"
-        ok, msg = send_skill(use, nxt, text, n, t, {"model": model, "effort": effort})
+            return True, (f"🧪 dry-run: {'未起動の ' if launch else ''}[{use}] ← " + (text if len(text) <= 160 else f"{text[:80]}…{text[-60:]}" if note else text[:80])
+                          + f"（{mp[0]}・{mp[1]}" + (f"・{mp[2]}" if mp[2] else "") + "）" + ("。Claude を起動してから送る" if launch else ""))
         key = f"{last.get('skill')}@{int(last.get('end') or 0)}" if nxt != "pr-turn" else \
             "review:" + ",".join(rv["urls"]) + ":" + rv["kind"]
+        if launch:
+            ok, msg = launch_claude(launch)
+            if not ok:
+                return False, msg
+            t["slot"] = launch
+            t["pending"] = {"skill": nxt, "text": text, "key": key, "at": time.time(), "model": model, "effort": effort,
+                            "review": {"kind": rv["kind"], "urls": rv["urls"]} if rv else None}
+            _json_save(HUB_AUTO, auto)
+            return True, f"{msg}。入力待ちになったら {nxt} を送ります（{LAUNCH_WAIT // 60} 分待っても起動しなければ知らせます）"
+        ok, msg = send_skill(use, nxt, text, n, t, {"model": model, "effort": effort})
         _auto_record(auto, n, use, nxt, text, ok, msg, key)
         if ok:
             t["slot"] = use
+            for k, o in auto["tickets"].items():  # 新しい会話の枠に残っていた、ほかのチケットの古い割り当てを外す
+                if k != n and o.get("slot") == use and not o.get("pending"):
+                    o.pop("slot", None)
             if rv:
                 # レビューのチケット: ct-redmine の後は ct-pr-turn。ct-analyze… の設計の流れの自動の依頼はしない
                 t["mode"] = "review"

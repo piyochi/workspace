@@ -70,7 +70,7 @@
     - 前回の状態は `hub/watch_notify.json`（watch*.json は copy-to-workspace / copy-to-home の対象外）
   - 確かめるときは `/api/watch?tickets=14926,14747`（固定の順を使わず判定だけ。記録・通知はしない）
 - 自動の依頼（2026-11-25〜。B 次のスキル・C 資料の後のコミット・F レビュー）。判定と送信はダッシュボードの同じ常駐ループ（1回に1件。送信は `na_to.py` なので、偶数枠・処理中・入力欄に文字がある枠・本番系の枠には送らない）
-  - **`/na-next 番号 [枠] [sweep] [scope] [model=…] [effort=…] [dry]`**: 止まっている所から次のスキルを頼み、以後そのチケットを自動の依頼の対象にする（固定しただけでは始めない）。枠を指定しなければ空いている Claude の枠（入力待ち・作業中のチケット無し・`/na-slot off` で外していない・他のチケットに割り当てていない）を、設計用の環境3・4 → 環境1・2 の順に選ぶ。1チケット1枠（作業中の枠と違う枠は指定できない）。`dry` は送らずに判定だけ
+  - **`/na-next 番号 [枠] [sweep] [scope] [model=…] [effort=…] [dry]`**: 止まっている所から次のスキルを頼み、以後そのチケットを自動の依頼の対象にする（固定しただけでは始めない）。枠を指定しなければ空いている Claude の枠（入力待ち・作業中のチケット無し・`/na-slot off` で外していない・他のチケットに割り当てていない）を、設計用の環境3・4 → 環境1・2 の順に選ぶ。**起動中の空き枠が無ければ、Claude が未起動の奇数枠（シェルのまま）で `monitor.txt` のその枠のコマンドから `--continue` を外して新しい会話として起動し、入力待ちになったら依頼を送る**（autopilot.json の `pending`。4分たっても入力待ちにならなければ tmux・Slack に知らせる。2026-11-26〜）。**新しい会話のまま（まだ何も入力していない。statusline の記録ファイルが未作成）の枠は、前の会話で付けたタイトル（#番号）や autopilot.json の古い割り当てが残っていても空きとみなす**（起動し直した・/clear した枠。送ったら、その枠に残っていたほかのチケットの割り当てを外す）。1チケット1枠（作業中の枠と違う枠は指定できない）。`dry` は送らずに判定だけ
     - 次のスキル: なし→ct-redmine→ct-analyze→ct-architect→（sweep・scope を付けたら ct-sweep→ct-scope）→ct-planner→ct-issue-docs→コミット
     - 自動で進めるのは ct-redmine の後（→ct-analyze）・ct-sweep／ct-scope の後（→次）・ct-issue-docs の後（→コミット）。**ct-analyze・ct-architect・ct-planner の後は止めて確認待ち**として知らせる（`/na-next 番号` で次へ。architect の後に `sweep`・`scope` を付けて決める）。途中の質問も確認待ち。ct-ship-loop 以降は /na-go
     - ct-analyze の依頼文には「初期調査はステージング（団体 naga3）・テスティングは団体 nagayoshi・ローカルの DB・Redis・サーバーが要るときだけ hub_docker.py wait で順番待ち」を添える
