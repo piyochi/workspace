@@ -10,6 +10,7 @@ statusline の記録（最後に動いた時刻）、ct-fix-loop の state.json�
 """
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -38,7 +39,31 @@ NEXT_STOP = {
     "ct-finish": "push の確認で止まる",
     "ct-fix-loop": "F5（施策の結果の確認）と push の確認で止まる",
     "ct-pr-turn": "指摘ごとの「対応する／しない」の選択と、投稿・push の前の確認で止まる",
+    # 流れの外（各枠で直接進める作業）。最後に使ったスキルがこれなら、流れの段階より優先する（2026-11-26 [7] がリリース後なのに issue-docs と出た）
+    "ct-pr-create": "PR を作り、Redmine でレビューを頼む前に確認で止まる",
+    "ct-ci-fix": "CI が通るまで直す（push は起動時に決めた方針どおり）",
+    "ct-deploy": "デプロイの後の確認まで（想定外が起きたら止まる）",
+    "ct-browser-verify": "確認の結果を報告して止まる",
+    "ct-pr-fix": "修正と返信の前に確認で止まる",
+    "ct-pr-review": "投稿の前に確認で止まる",
 }
+
+
+def pr_live(url):
+    """GitHub の今の PR の状態（ダッシュボードの取得分は少し古いので、枠のチケットの分だけ取り直す）"""
+    try:
+        r = subprocess.run(["gh", "pr", "view", url, "--json", "state,mergedAt,reviewDecision,baseRefName"],
+                           capture_output=True, text=True, timeout=20)
+        d = json.loads(r.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    st = {"MERGED": "マージ済み", "OPEN": "オープン", "CLOSED": "閉じた"}.get(d.get("state"), d.get("state"))
+    if d.get("mergedAt"):
+        st += " " + time.strftime("%m/%d %H:%M", time.localtime(
+            time.mktime(time.strptime(d["mergedAt"], "%Y-%m-%dT%H:%M:%SZ")) - time.timezone))
+    if d.get("state") == "OPEN" and d.get("reviewDecision"):
+        st += {"APPROVED": "・承認済み", "CHANGES_REQUESTED": "・修正依頼あり", "REVIEW_REQUIRED": "・レビュー待ち"}.get(d["reviewDecision"], "")
+    return f"{st}（→ {d.get('baseRefName', '')}）"
 
 
 def ago(ts):
@@ -116,8 +141,12 @@ def main(argv):
                     line += f" {i.get('subject', '')[:40]}"
                 out.append(line)
                 if i:
-                    out.append(f"    監視: {i.get('state_label', '')}・段階 {i.get('stage') or '-'}"
+                    out.append(f"    Redmine: {i.get('status', '')}・{i.get('priority', '')}"
                                + (f"・{i['ball']['label']}" if i.get("ball") else ""))
+                    out.append(f"    流れの段階（決まった流れのスキルだけで判定。枠で直接進めた作業は入らない）: {i.get('stage') or '-'}・{i.get('state_label', '')}")
+                    for pr in i.get("prs") or []:
+                        live = pr_live(pr["url"]) if pr.get("url") else None
+                        out.append(f"    PR {pr.get('repo', '')}#{pr.get('number')}: {live or pr.get('state', '') + '（ダッシュボードの取得分）'}")
                 fx = fix_state(t)
                 if fx:
                     w = {"codex": "Codex の返事待ち", "docker": "開発用サーバーの順番待ち", "user": "あなたの確認待ち"}.get(fx.get("waiting"), "")
@@ -140,7 +169,7 @@ def main(argv):
         sk = s.get("skill") or ""
         if sk:
             out.append(f"  最後に使ったスキル: {sk}（{'終了' if s.get('skill_done') else '実行中'}）")
-        # 次に止まる所は流れのスキルで決める（最後に使ったのが ct-handoff などの補助のスキルでも、流れの段階で判断する）
+        # 次に止まる所: 最後に使ったスキルが表にあればそれ（流れの外の作業も含む）。ct-handoff などの補助なら流れの段階で判断する
         flow_sk = sk if sk in NEXT_STOP else ""
         for t in tks:
             i = items.get(t, {})
