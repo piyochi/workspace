@@ -24,7 +24,7 @@ windows:
   window_name: monitor
 - panes:
   # 6枠 = 環境1〜6のワークスペース。★ MAIN は hub のまま（--main-first）
-  - ~/bin/claude-monitor --no-window --main-first --name envs -f ~/.tmuxp/ticket_v2_project/envs.txt -l left -w 60% -g 3x2
+  - ~/bin/claude-monitor --no-window --main-first --name envs -f ~/.tmuxp/ticket_v2_project/envs.txt -l left -w 49% -g 3x2
   start_directory: ~/www/ticket_v2_hub
   window_name: envs
 - panes:

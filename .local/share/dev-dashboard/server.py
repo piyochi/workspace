@@ -439,14 +439,26 @@ def is_question(text):
 
 
 def claude_fresh(pane_id):
-    """Claude の枠が新しい会話のまま（まだ何も入力していない）か。statusline.py が書いたセッションの記録ファイルがまだ無ければ True。
-    起動し直した・/clear した枠に、前の会話で付けたタイトル（#番号）や自動の依頼の割り当てが残っていても空きとみなすため（2026-11-26 [1]）。"""
+    """Claude の枠が新しい会話のまま（まだ何も入力していない）か。statusline.py が書いたセッションの記録ファイルがまだ無いか、
+    記録に Claude の返事（type=assistant）が1件も無ければ True。
+    起動し直した・/clear した枠に、前の会話で付けたタイトル（#番号）や自動の依頼の割り当てが残っていても空きとみなすため（2026-11-26 [1]）。
+    /clear の直後は /clear の入力だけが書かれた記録ができるので、ファイルの有無だけでは空きと判定できなかった（2026-11-27 [1][3][5][9] を
+    /clear した後に「空いている Claude の枠がありません」）。"""
     try:
         with open(os.path.join(CACHE, f"pane-{pane_id.lstrip('%')}.json")) as f:
             path = json.load(f)["transcript_path"]
     except (OSError, ValueError, KeyError):
         return False
-    return not os.path.exists(path)
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if '"type":"assistant"' in line or '"type": "assistant"' in line:
+                    return False
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def claude_session_info(pane_id):
@@ -3651,6 +3663,10 @@ def watch_once():
         d["docker"] = docker_check(slots)
     except Exception as e:
         print(f"{time.strftime('%F %T')} 開発用サーバーの順番待ちの確認に失敗: {e}", file=sys.stderr, flush=True)
+    try:
+        defer_check(slots)
+    except Exception as e:
+        print(f"{time.strftime('%F %T')} 圧縮を延ばしたまま止まった枠の確認に失敗: {e}", file=sys.stderr, flush=True)
     watch_cache.update(d)
     tmux_attention(d["attention"])
     try:
@@ -4525,7 +4541,7 @@ def docker_check(slots):
         lf = open(HUB_DOCKER_LOCK, "a")
     except OSError:
         return None
-    yielded, heavy_tell = [], None
+    yielded, heavy_tell, asks = [], None, []
     with lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
         try:
@@ -4570,6 +4586,20 @@ def docker_check(slots):
                         d["heavy"] = None
                     yielded.append((h, nxt, why))
                     changed = True
+            # 優先度の高いチケットが待っていて空きが無いとき、優先度の低い使用中の枠に1回だけ「区切りで返して」と頼む
+            # （取り上げはしない。返さなければ 15 分・45 分の決まりのまま。2026-11-27 ユーザー「キリの良いところで優先度高いほうに譲れない？」）
+            if waiting and len(hs) >= DOCKER_MAX_HOLDERS:
+                w = waiting[0]
+                rank_w = order.get(w["ticket"], 10_000)
+                if not any(h.get("asked_for") == w["ticket"] for h in hs):
+                    lower = [h for h in hs if order.get(h["ticket"], 10_000) > rank_w and mine_of.get(h["ticket"])]
+                    if lower:
+                        h = max(lower, key=lambda x: (order.get(x["ticket"], 10_000), -x.get("since", 0)))
+                        h["asked_for"], h["asked_at"] = w["ticket"], now
+                        d.setdefault("log", []).append({"at": now, "event": "ask_yield", "ticket": h["ticket"], "env": h["env"], "to": w["ticket"]})
+                        del d["log"][:-50]
+                        asks.append((h, w, rank_w, [s["slot"] for s in mine_of[h["ticket"]]]))
+                        changed = True
             hv = d.get("heavy")
             if hv and (now - hv.get("seen", hv["since"]) >= DOCKER_HEAVY_STALE or not any(h["ticket"] == hv["ticket"] for h in hs)):
                 d.setdefault("log", []).append({"at": now, "event": "heavy_stale", "ticket": hv["ticket"], "env": hv.get("env", "")})
@@ -4594,6 +4624,14 @@ def docker_check(slots):
         for sl in h.get("slots") or []:  # 使用中だった枠にも伝える（処理中でも今の処理の途中で読む）
             na_to_send(sl, f"hub から: 開発用サーバーの使用中を #{nxt['ticket']} に譲りました（{why}）。"
                            f"次にサーバー（テスト・ブラウザ確認・ローカルの DB/Redis）を使う前に hub_docker.py wait {h['ticket']} で並び直してください", busy=True)
+    for h, w, rank_w, sls in asks:
+        rank = f"優先 {rank_w + 1}位" if rank_w < 10_000 else "固定なし"
+        tmux_notify(f"🔁 #{h['ticket']}（{h['env']}）に、#{w['ticket']}（{rank}）へ区切りでサーバーを返すよう頼みました"[:150])
+        for sl in sls:
+            na_to_send(sl, f"hub から: 優先度の高い #{w['ticket']}（{rank}・{w['env']}）が開発用サーバーの順番を待っています。"
+                           f"今の手順（テスト・ブラウザ確認などの1区切り）が終わったら、途中で止めずに区切りで "
+                           f"`python3 ~/.local/share/ticket-v2/hub/bin/hub_docker.py release {h['ticket']}` を実行してサーバーを返してください。"
+                           f"次にサーバーを使う前に hub_docker.py wait {h['ticket']} で並び直してください（コードの編集・読むことは続けてよい）", busy=True)
     if heavy_tell:
         hv, others = heavy_tell
         for h, mine in others:  # もう片方の使用中の枠に、重い処理の間は操作を止めるよう伝える（処理中でも途中で読む）
@@ -4602,6 +4640,75 @@ def docker_check(slots):
                                       f"終わるまで、サーバーを使う操作（画面・rails runner・curl・テスト・lint）を止めてください（コードの編集・読むことは続けてよい）。"
                                       f"再開する前に hub_docker.py wait {h['ticket']} を実行すると、重い処理が終わるまで待ってから返ります", busy=True)
     return summary
+
+
+HANDOFF_AUTO_DIR = os.path.join(HOME, ".claude", "tmp", "handoff-auto")
+DEFER_STUCK = 10 * 60  # 圧縮を延ばした（.deferred）まま、この秒数入力待ちで裏の処理も無ければ /compact を送る
+_defer_idle_since, _defer_sent = {}, {}
+_SGR = re.compile(r"\x1b\[([0-9;]*)m")
+_ESC = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def _visible(line):
+    """装飾付きの1行から、薄い文字（ESC[2m。入力欄のおすすめの入力）を除いた文字（handoff_auto.py の visible_text と同じ）。"""
+    out, dim, pos = [], False, 0
+    for m in _SGR.finditer(line):
+        if not dim:
+            out.append(line[pos:m.start()])
+        for code in (m.group(1) or "0").split(";"):
+            if code == "2":
+                dim = True
+            elif code in ("0", "22"):
+                dim = False
+        pos = m.end()
+    if not dim:
+        out.append(line[pos:])
+    return _ESC.sub("", "".join(out))
+
+
+def claude_input_empty(pane_id):
+    """Claude の入力欄（❯ の行から下の罫線まで）に書きかけの文字が無いか。入力欄が見つからなければ空とみなさない。"""
+    lines = tmux("capture-pane", "-p", "-e", "-t", pane_id).stdout.split("\n")
+    idx = [i for i, l in enumerate(lines) if "❯" in _ESC.sub("", l)]
+    if not idx:
+        return False
+    text = _visible(lines[idx[-1]]).split("❯", 1)[1]
+    for l in lines[idx[-1] + 1:]:
+        v = _visible(l)
+        if v.strip().startswith("─"):
+            break
+        text += v
+    return not text.replace("\xa0", " ").strip()
+
+
+def defer_check(slots):
+    """圧縮を延ばした（handoff_auto.py defer）まま止まった枠に /compact を送る。
+    延ばした後は「待っているもの」が届いたら判断し直す作りだが、待っているものが実は何も動いていないと永久に止まる
+    （2026-11-27 [5] #14714: サーバーを返した後 wait を動かさずに defer して 8 分以上止まった。ユーザー「compactとか必要になったら止まるのかすら」）。
+    条件: .deferred がある・枠が入力待ち（裏のサブエージェント・シェルも無い）のまま DEFER_STUCK 秒・入力欄が空。1回の defer につき1回だけ送る。"""
+    now = time.time()
+    for s in slots.values() if isinstance(slots, dict) else slots:
+        if s.get("kind") != "claude" or not s.get("pane"):
+            continue
+        key = s["pane"]
+        try:
+            with open(os.path.join(CACHE, f"pane-{key.lstrip('%')}.json")) as f:
+                sid = os.path.basename(json.load(f)["transcript_path"]).removesuffix(".jsonl")
+            mt = os.path.getmtime(os.path.join(HANDOFF_AUTO_DIR, f"{sid}.deferred"))
+        except (OSError, ValueError, KeyError, TypeError):
+            _defer_idle_since.pop(key, None)
+            continue
+        if s.get("state") != "idle":
+            _defer_idle_since.pop(key, None)
+            continue
+        since = _defer_idle_since.setdefault(key, now)
+        if now - max(since, mt) < DEFER_STUCK or _defer_sent.get(key) == mt or not claude_input_empty(key):
+            continue
+        _defer_sent[key] = mt
+        ok, msg = na_to_send(s["slot"], "/compact")
+        note = f"⏩ [{s['slot']}] は圧縮を延ばしたまま {int((now - max(since, mt)) // 60)} 分止まっていたので /compact を送りました" + ("" if ok else f"（失敗: {msg}）")
+        tmux_notify(note[:150])
+        print(f"{time.strftime('%F %T')} {note}", file=sys.stderr, flush=True)
 
 
 def review_notify(fv_items, order):
