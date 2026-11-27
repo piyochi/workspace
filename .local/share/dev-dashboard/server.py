@@ -3664,6 +3664,10 @@ def watch_once():
     except Exception as e:
         print(f"{time.strftime('%F %T')} 開発用サーバーの順番待ちの確認に失敗: {e}", file=sys.stderr, flush=True)
     try:
+        usage_guard(slots)
+    except Exception as e:
+        print(f"{time.strftime('%F %T')} 利用枠の確認に失敗: {e}", file=sys.stderr, flush=True)
+    try:
         defer_check(slots)
     except Exception as e:
         print(f"{time.strftime('%F %T')} 圧縮を延ばしたまま止まった枠の確認に失敗: {e}", file=sys.stderr, flush=True)
@@ -4685,7 +4689,7 @@ def defer_check(slots):
     """圧縮を延ばした（handoff_auto.py defer）まま止まった枠に /compact を送る。
     延ばした後は「待っているもの」が届いたら判断し直す作りだが、待っているものが実は何も動いていないと永久に止まる
     （2026-11-27 [5] #14714: サーバーを返した後 wait を動かさずに defer して 8 分以上止まった。ユーザー「compactとか必要になったら止まるのかすら」）。
-    条件: .deferred がある・枠が入力待ち（裏のサブエージェント・シェルも無い）のまま DEFER_STUCK 秒・入力欄が空。1回の defer につき1回だけ送る。"""
+    条件: .deferred か .compact-pending がある・枠が入力待ち（裏のサブエージェント・シェルも無い）のまま DEFER_STUCK 秒・入力欄が空。1回の defer につき1回だけ送る。"""
     now = time.time()
     for s in slots.values() if isinstance(slots, dict) else slots:
         if s.get("kind") != "claude" or not s.get("pane"):
@@ -4694,7 +4698,9 @@ def defer_check(slots):
         try:
             with open(os.path.join(CACHE, f"pane-{key.lstrip('%')}.json")) as f:
                 sid = os.path.basename(json.load(f)["transcript_path"]).removesuffix(".jsonl")
-            mt = os.path.getmtime(os.path.join(HANDOFF_AUTO_DIR, f"{sid}.deferred"))
+            # .deferred（延ばした）か .compact-pending（区切りと判断したが hook の /compact が来ない。2026-11-27 [3] #14625 で 9 分止まった）
+            marks = [os.path.join(HANDOFF_AUTO_DIR, f"{sid}.{x}") for x in ("deferred", "compact-pending")]
+            mt = max(os.path.getmtime(m) for m in marks if os.path.exists(m))
         except (OSError, ValueError, KeyError, TypeError):
             _defer_idle_since.pop(key, None)
             continue
@@ -4709,6 +4715,37 @@ def defer_check(slots):
         note = f"⏩ [{s['slot']}] は圧縮を延ばしたまま {int((now - max(since, mt)) // 60)} 分止まっていたので /compact を送りました" + ("" if ok else f"（失敗: {msg}）")
         tmux_notify(note[:150])
         print(f"{time.strftime('%F %T')} {note}", file=sys.stderr, flush=True)
+
+
+USAGE_STOP = {"5h": 90, "週": 95}  # Claude の利用枠がこの % 以上になったら全部止める（2026-11-27 ユーザー「超えそうになったら全てストップ。週制限も同じ」）
+
+
+def usage_guard(slots):
+    """Claude の 5 時間・週の利用枠が USAGE_STOP を超えたら、自動の依頼を止め（HUB_PAUSE）、処理中の Claude の枠に Esc を送って中断する。
+    1回止めたら HUB_PAUSE がある間は何もしない（再開はユーザーが決める: HUB_PAUSE を消す）。"""
+    if os.path.exists(HUB_PAUSE):
+        return
+    hit = []
+    for row in claude_usage():
+        for name, lim in USAGE_STOP.items():
+            w = (row.get("windows") or {}).get(name) or {}
+            if isinstance(w.get("percent"), (int, float)) and w["percent"] >= lim:
+                hit.append(f"{name} {w['percent']:.0f}%")
+    if not hit:
+        return
+    os.makedirs(HUB_STATE_DIR, exist_ok=True)
+    with open(HUB_PAUSE, "w", encoding="utf-8") as f:
+        f.write(f"{time.strftime('%F %T')} 利用枠で停止: {'・'.join(hit)}\n")
+    stopped = []
+    for s in slots.values() if isinstance(slots, dict) else slots:
+        if s.get("kind") == "claude" and s.get("pane") and s.get("state") in ("busy", "wait"):
+            tmux("send-keys", "-t", s["pane"], "Escape")
+            stopped.append(f"[{s['slot']}]")
+    msg = (f"🛑 Claude の利用枠が上限に近いので全部止めました（{'・'.join(hit)}）。自動の依頼を一時停止し、"
+           f"処理中の枠 {' '.join(stopped) or 'なし'} に Esc を送りました。再開は {HUB_PAUSE} を消す")
+    tmux_notify(msg[:150])
+    slack_dm("hub 監視\n" + msg)
+    print(f"{time.strftime('%F %T')} {msg}", file=sys.stderr, flush=True)
 
 
 def review_notify(fv_items, order):
