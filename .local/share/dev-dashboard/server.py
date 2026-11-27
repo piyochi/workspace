@@ -3689,9 +3689,10 @@ MANUAL_NEXT = {None: "ct-redmine", "ct-redmine": "ct-analyze", "ct-analyze": "ct
                "ct-sweep": "ct-planner", "ct-scope": "ct-planner", "ct-planner": "ct-issue-docs", "ct-issue-docs": "commit"}
 ANALYZE_NOTE = ("初期調査は release が対象なので、基本はステージング（https://group.corich.mobi/naga3/events 。団体 naga3 は自由に使ってよい）で確かめてください。"
                 "テスティングは https://group.test.corich.asia/nagayoshi/events （団体 nagayoshi は自由に使ってよい）。"
-                "ローカルの DB・Redis・サーバーが必要なときだけ、開発用サーバーは同時に1台なので、使う前に "
+                "ローカルの DB・Redis・サーバーが必要なときだけ、開発用サーバーは同時に2環境までなので、使う前に "
                 "`python3 ~/.local/share/ticket-v2/hub/bin/hub_docker.py wait <番号>`（Bash の run_in_background で実行し、終了コード 0 で使ってよい・3 ならもう一度）で順番を待ち、"
-                "使い終わったら `hub_docker.py release <番号>` を実行してください。")
+                "使い終わったら `hub_docker.py release <番号>` を実行してください。"
+                "rspec・vitest・tsc・全ファイルの lint の前後は `hub_docker.py heavy start <番号> --what rspec` / `heavy end <番号>` を必ず実行してください（同時に2環境まで動くため、重い処理の間はもう片方が止まります）。")
 auto_lock = threading.Lock()
 
 
@@ -4511,29 +4512,40 @@ DOCKER_YIELD = 15 * 60      # 使用中のチケットの枠がこの秒数止�
 DOCKER_HOLD_STALE = 45 * 60  # 使用中のチケットがこの秒数 wait を呼んでいなければ、処理中でも譲る（サーバーを使う直前に毎回 wait を呼ぶ決まり。
                              # 2026-11-26 #14747: レポート作成などで処理中のまま1時間半使用中を返さず、#15047 が待ち続けた）
 DOCKER_QUEUE_STALE = 300    # hub_docker.py の QUEUE_STALE と同じ
+DOCKER_MAX_HOLDERS = 2      # hub_docker.py の MAX_HOLDERS と同じ（同時に使用中にできる環境の数。2026-11-27 1→2）
+DOCKER_HEAVY_STALE = 40 * 60  # hub_docker.py の HEAVY_STALE と同じ
 
 
 def docker_check(slots):
-    """使用中のチケットの枠が 15 分止まっている・45 分 wait を呼んでいないとき、待っている人がいれば使用中を外す（次の人の wait が切り替える）。docker.json の要約を返す。"""
+    """使用中のチケットの枠が 15 分止まっている・45 分 wait を呼んでいないとき、待っている人がいれば使用中を外す（次の人の wait が切り替える）。
+    使用中は2環境まで（hub_docker.py の holders）。重い処理（heavy）が始まったら、もう片方の使用中の枠に「サーバーを使う操作を止めて待つ」を伝える。
+    docker.json の要約を返す。"""
     try:
         os.makedirs(HUB_STATE_DIR, exist_ok=True)
         lf = open(HUB_DOCKER_LOCK, "a")
     except OSError:
         return None
-    yielded = None
+    yielded, heavy_tell = [], None
     with lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
         try:
             d = _json_load(HUB_DOCKER, None)
             if not d:
-                return {"holder": None, "queue": []}
+                return {"holders": [], "holder": None, "heavy": None, "queue": []}
             now = time.time()
-            h = d.get("holder")
+            hs = d.setdefault("holders", [])
+            old = d.get("holder")
+            if old and not any(h["ticket"] == old["ticket"] for h in hs):
+                hs.append(old)
             queue = [q for q in d.get("queue") or [] if now - q.get("seen", 0) < DOCKER_QUEUE_STALE]
             changed = False
-            if h:
+            order = {str(x): k for k, x in enumerate(watch_order())}
+            waiting = sorted(queue, key=lambda q: (order.get(q["ticket"], 10_000), q["since"]))
+            mine_of = {}
+            for h in list(hs):
                 mine = [s for s in slots if s["kind"] == "claude" and s["env"] == h["env"] and s["state"] != "stopped"
                         and h["ticket"] in (s.get("tickets") or [s.get("ticket")])]
+                mine_of[h["ticket"]] = mine
                 if any(s["state"] == "busy" for s in mine):
                     if h.get("idle_since"):
                         h.pop("idle_since")
@@ -4541,10 +4553,10 @@ def docker_check(slots):
                 elif not h.get("idle_since"):
                     h["idle_since"] = now
                     changed = True
-                if queue and (now - h.get("seen", h.get("since", now)) >= DOCKER_HOLD_STALE
-                              or (h.get("idle_since") and now - h["idle_since"] >= DOCKER_YIELD)):
-                    order = {str(x): k for k, x in enumerate(watch_order())}
-                    nxt = sorted(queue, key=lambda q: (order.get(q["ticket"], 10_000), q["since"]))[0]
+                # 譲るのは、空きが無くて待っている人がいるときだけ（空きがあれば待っている人は空きを使う）
+                if waiting and len(hs) >= DOCKER_MAX_HOLDERS and (now - h.get("seen", h.get("since", now)) >= DOCKER_HOLD_STALE
+                                                                  or (h.get("idle_since") and now - h["idle_since"] >= DOCKER_YIELD)):
+                    nxt = waiting.pop(0)
                     if h.get("idle_since") and now - h["idle_since"] >= DOCKER_YIELD:
                         why = "枠が見つからない" if not mine else f"[{mine[0]['slot']}] が{WATCH_STATE_LABEL.get(mine[0]['state'], mine[0]['state'])}"
                         why += f"のまま {int((now - h['idle_since']) // 60)} 分"
@@ -4553,16 +4565,28 @@ def docker_check(slots):
                     h["slots"] = [s["slot"] for s in mine]
                     d.setdefault("log", []).append({"at": now, "event": "yield", "ticket": h["ticket"], "env": h["env"], "to": nxt["ticket"], "why": why})
                     del d["log"][:-50]
-                    d["holder"] = None
-                    yielded = (h, nxt, why)
+                    hs.remove(h)
+                    if (d.get("heavy") or {}).get("ticket") == h["ticket"]:
+                        d["heavy"] = None
+                    yielded.append((h, nxt, why))
                     changed = True
+            hv = d.get("heavy")
+            if hv and (now - hv.get("seen", hv["since"]) >= DOCKER_HEAVY_STALE or not any(h["ticket"] == hv["ticket"] for h in hs)):
+                d.setdefault("log", []).append({"at": now, "event": "heavy_stale", "ticket": hv["ticket"], "env": hv.get("env", "")})
+                d["heavy"] = hv = None
+                changed = True
+            if hv and not hv.get("told"):
+                others = [h for h in hs if h["ticket"] != hv["ticket"]]
+                heavy_tell = (hv, [(h, mine_of.get(h["ticket"]) or []) for h in others])
+                hv["told"] = True
+                changed = True
             if changed:
+                d["holder"] = hs[0] if hs else None
                 _json_save(HUB_DOCKER, d)
-            summary = {"holder": d.get("holder"), "queue": queue}
+            summary = {"holders": hs, "holder": hs[0] if hs else None, "heavy": d.get("heavy"), "queue": queue}
         finally:
             fcntl.flock(lf, fcntl.LOCK_UN)
-    if yielded:
-        h, nxt, why = yielded
+    for h, nxt, why in yielded:
         msg = (f"⏭ 開発用サーバーを #{h['ticket']}（{h['env']}）から #{nxt['ticket']}（{nxt['env']}）に譲りました（{why}）。"
                f"#{h['ticket']} は次にサーバーを使う前に hub_docker.py wait で並び直します")
         tmux_notify(msg[:150])
@@ -4570,6 +4594,13 @@ def docker_check(slots):
         for sl in h.get("slots") or []:  # 使用中だった枠にも伝える（処理中でも今の処理の途中で読む）
             na_to_send(sl, f"hub から: 開発用サーバーの使用中を #{nxt['ticket']} に譲りました（{why}）。"
                            f"次にサーバー（テスト・ブラウザ確認・ローカルの DB/Redis）を使う前に hub_docker.py wait {h['ticket']} で並び直してください", busy=True)
+    if heavy_tell:
+        hv, others = heavy_tell
+        for h, mine in others:  # もう片方の使用中の枠に、重い処理の間は操作を止めるよう伝える（処理中でも途中で読む）
+            for s in mine:
+                na_to_send(s["slot"], f"hub から: #{hv['ticket']}（{hv['env']}）が重い処理（{hv.get('what') or 'テスト'}）を始めました。"
+                                      f"終わるまで、サーバーを使う操作（画面・rails runner・curl・テスト・lint）を止めてください（コードの編集・読むことは続けてよい）。"
+                                      f"再開する前に hub_docker.py wait {h['ticket']} を実行すると、重い処理が終わるまで待ってから返ります", busy=True)
     return summary
 
 

@@ -1140,7 +1140,8 @@ function renderWatch() {
     $("watch-meta").textContent = items.length ? `${items.length} 件${d.attention ? `・確認待ち ${d.attention}` : ""}・${t} 時点` : "";
     // 開発用サーバーの順番待ち（hub_docker.py）。使用中か待ちがあれば先頭に1行出す
     const dk = d.docker || {}, dq = dk.queue || [];
-    const dline = dk.holder || dq.length ? `<div class="wt-empty" title="hub_docker.py wait / release。15 分止まるか 45 分 wait が無ければ次に譲る">開発用サーバー: ${dk.holder ? `使用中 #${esc(dk.holder.ticket)}（${esc(dk.holder.env)}）` : "空き"}${dq.length ? `・待ち ${dq.map((q) => `#${esc(q.ticket)}（${esc(q.env)}）`).join(" → ")}` : ""}</div>` : "";
+    const dhs = dk.holders || (dk.holder ? [dk.holder] : []);
+    const dline = dhs.length || dq.length ? `<div class="wt-empty" title="hub_docker.py wait / release（同時に2環境まで）。重い処理（rspec・vitest など）の間はもう片方が止まる。15 分止まるか 45 分 wait が無ければ次に譲る">開発用サーバー: ${dhs.length ? `使用中 ${dhs.map((h) => `#${esc(h.ticket)}（${esc(h.env)}）`).join("・")}` : "空き"}${dk.heavy ? `・重い処理 #${esc(dk.heavy.ticket)} ${esc(dk.heavy.what || "")}` : ""}${dq.length ? `・待ち ${dq.map((q) => `#${esc(q.ticket)}（${esc(q.env)}）`).join(" → ")}` : ""}</div>` : "";
     if (!items.length) { $("watch").innerHTML = dline + `<div class="wt-empty">固定したチケットはありません（hub で <code>/na-order 番号 …</code>）</div>`; syncNavBtns(); return; }
     $("watch").innerHTML = dline + items.map((i, k) => {
       const flow = (i.flow || []).map((x) => `<span class="wt-step ${x.mark || ""}${x.optional ? " opt" : ""}" title="${esc(x.skill)}${x.mark ? `：${{done: "済み", running: "実行中・途中", question: "質問中", skip: "実行の記録なし"}[x.mark] || x.mark}` : ""}">${esc(x.short)}</span>`).join("");
@@ -1806,14 +1807,22 @@ document.addEventListener("toggle", (e) => {
 }, true);
 // チケット1件の「今日の作業・待ち・tmux のセッション・ブランチ・履歴・関連」の並びと、行の色（active / today）。
 // Redmine 欄とメモの見出しで同じものを出す
-function rmInfo(i) {
+function rmInfo(i, latestOnly = false) {
     const td = todayOf(i);
     const sess = i.sessions.map((x) => `<span class="rm-sess ${x.state}">▶ [${x.slot}] ${esc(x.env)} ${esc(x.kind)} ${PANE_STATES[x.state] || ""}${x.skill ? ` <span class="${x.skill_done ? "skill-done" : ""}">${skillText(x)}</span>` : ""}</span>`);
     // ブランチは環境ごとにまとめる。checkout 中のものは太字
     const byEnv = {};
     // 退避用の backup/ は数だけ出す（checkout 中なら名前も出す）
     const backups = {};
-    i.branches.forEach((b) => {
+    // メモの見出し（latestOnly）は最新の環境だけ: checkout 中のブランチがある環境 → 先頭コミットが新しい環境の順（2026-11-27 ユーザー「どのenvか分かり難い」）
+    let brList = i.branches;
+    if (latestOnly && brList.length) {
+      const rank = {};
+      brList.forEach((b) => { if (b.branch.startsWith("backup/")) return; const r = rank[b.env] || [0, 0]; rank[b.env] = [Math.max(r[0], b.current ? 1 : 0), Math.max(r[1], b.ts || 0)]; });
+      const best = Object.entries(rank).sort((x, y) => (y[1][0] - x[1][0]) || (y[1][1] - x[1][1]))[0];
+      if (best) brList = brList.filter((b) => b.env === best[0]);
+    }
+    brList.forEach((b) => {
       if (b.branch.startsWith("backup/") && !b.current) {
         (backups[b.env] = backups[b.env] || []).push(`${b.branch}${b.repo === "ticket_v2" ? "(front)" : "(api)"}`);
         byEnv[b.env] = byEnv[b.env] || [];
@@ -2876,7 +2885,7 @@ fetch("/api/job").then((r) => r.json()).then((j) => { renderJob(j); if (j.runnin
         const tid = tn && tn.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
         const iss = tid && [...npIssues(), ...((rmData && rmData.memo_extra) || [])].find((x) => String(x.id) === tid);
         if (!iss) { if (tid && rmData) memoAsk(tid); return h; }
-        const { info, cls } = rmInfo(iss);
+        const { info, cls } = rmInfo(iss, true);
         // 見出しの文字にマウスを乗せると、対応中と同じ吹き出しでチケットの情報を出す
         const ttl = h.querySelector(".mv-title"); ttl.removeAttribute("title"); ttl.dataset.fc = String(iss.id);
         // ステータスは Redmine 欄と同じ部品（押すと選べるステータスを出し、選ぶと変更する）。その右に担当者

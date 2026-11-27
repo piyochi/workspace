@@ -276,8 +276,7 @@ def watch_view():
             items.append({"key": str(i["id"]), "row": row, "full": full, "url": i.get("url", ""),
                           "enter": lambda i=i: ticket_detail(i["id"], i.get("slot"))})
         dk = d.get("docker") or {}
-        h = dk.get("holder")
-        srv = "開発用サーバー " + (f"使用中 #{h['ticket']}（{h['env']}）" if h else "空き")
+        srv = "開発用サーバー " + hp.docker_line(dk)
         return f"監視  {len(items)} 件 · 確認待ち {d.get('attention', 0)}   {srv}   {time.strftime('%H:%M')}", items
     return ListView(load)
 

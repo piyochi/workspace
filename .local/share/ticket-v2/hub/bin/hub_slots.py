@@ -105,12 +105,14 @@ def main(argv):
     items = {i["id"]: i for i in watch.get("items", [])}
     auto = load(AUTO).get("tickets", {})
     docker = load(hd.STATE)
-    holder = (docker.get("holder") or {}).get("ticket")
+    holders = [h["ticket"] for h in (docker.get("holders") or ([docker["holder"]] if docker.get("holder") else []))]
+    heavy = docker.get("heavy") or {}
     queue = [q["ticket"] for q in hd.queue_sorted({"queue": list(docker.get("queue") or [])})]
     screens = {r["slot"]: r for r in hs.collect("monitor")}
     slots = {s["slot"]: s for s in panes.get("slots", [])}
     out = [f"取得 {time.strftime('%H:%M:%S')}・確認待ち {watch.get('attention', 0)} 件（/na-watch の固定分）"]
-    out.append("開発用サーバー: " + (f"使用中 #{holder}" if holder else "使用中なし")
+    out.append("開発用サーバー: " + (("使用中 " + "・".join(f"#{t}" for t in holders)) if holders else "使用中なし")
+               + (f"・重い処理 #{heavy['ticket']} {heavy.get('what', '')}".rstrip() if heavy else "")
                + ("・待ち " + " → ".join(f"#{t}" for t in queue) if queue else ""))
     # 並びは /na-order の順（固定したチケットが先・上が先）。固定していないチケットの枠・空き枠はその後に枠番号の順（2026-11-26 ユーザー「優先順に」）
     order = [str(x) for x in load(hd.ORDER).get("order") or []]
@@ -161,8 +163,8 @@ def main(argv):
                     w = {"codex": "Codex の返事待ち", "docker": "開発用サーバーの順番待ち", "user": "あなたの確認待ち"}.get(fx.get("waiting"), "")
                     out.append(f"    ct-fix-loop: {fx.get('step')} {fx.get('label', '')}・第{fx.get('round', 0)}回"
                                + (f"・{w}" if w else "") + (f"・止まっている（{fx['stop']}）" if fx.get("stop") else ""))
-                if t == holder:
-                    out.append("    開発用サーバー: 使用中")
+                if t in holders:
+                    out.append("    開発用サーバー: 使用中" + ("（重い処理中）" if heavy.get("ticket") == t else "（重い処理の終わり待ち）" if heavy else ""))
                 elif t in queue:
                     out.append(f"    開発用サーバー: 順番待ち {queue.index(t) + 1} 番目")
                 a = auto.get(t, {})

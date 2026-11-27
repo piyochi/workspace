@@ -88,9 +88,9 @@ def compact_text(d):
     dk = d.get("docker") or {}
     dq = dk.get("queue") or []
     dline = ""
-    if dk.get("holder") or dq:
-        h = dk.get("holder")
-        dline = ("開発用サーバー: " + (f"使用中 #{h['ticket']}（{h['env']}）" if h else "空き")
+    if dk.get("holders") or dk.get("holder") or dq:
+        import hub_popup
+        dline = ("開発用サーバー: " + hub_popup.docker_line(dk)
                  + ("・待ち " + " → ".join(f"#{q['ticket']}（{q['env']}）" for q in dq) if dq else ""))
     if not items:
         return (dline + "\n" if dline else "") + "固定したチケットはありません（/na-order 番号 … で固定すると監視します）"

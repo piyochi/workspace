@@ -144,13 +144,20 @@ def ticket_card(i, d, w, num=None):
     return out
 
 
+def docker_line(dk):
+    """開発用サーバーの使用中（2環境まで）と重い処理の文。"""
+    hs = dk.get("holders") or ([dk["holder"]] if dk.get("holder") else [])
+    t = ("使用中 " + "・".join(f"#{h['ticket']}（{h['env']}）" for h in hs)) if hs else "空き"
+    hv = dk.get("heavy")
+    return t + (f"・重い処理 #{hv['ticket']} {hv.get('what', '')}".rstrip() if hv else "")
+
+
 def render_watch(d):
     w = width()
     items = d.get("items") or []
     at = time.strftime("%H:%M", time.localtime(d.get("at") or time.time()))
     dk = d.get("docker") or {}
-    h = dk.get("holder")
-    srv = "開発用サーバー " + (f"使用中 #{h['ticket']}（{h['env']}）" if h else "空き") \
+    srv = "開発用サーバー " + docker_line(dk) \
         + ("・待ち " + " → ".join(f"#{q['ticket']}" for q in dk.get("queue") or []) if dk.get("queue") else "")
     out = [header(f"監視  {len(items)} 件 · 確認待ち {d.get('attention', 0)}", f"{at} 時点   {srv}", w), ""]
     if not items:

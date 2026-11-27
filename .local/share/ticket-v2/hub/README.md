@@ -116,10 +116,17 @@
   - **一時停止**（2026-11-26〜）: `hub/paused` というファイルがある間は、自動の依頼（次のスキル・コミット・ct-pr-turn・/na-go の続き）を送らない（server.py の `autopilot()` の先頭で見る）。止めるのは `date > ~/.local/share/ticket-v2/hub/paused`、再開は削除。各枠の今の作業は止まらないので、止めたい枠には別に `/na-to 枠 …` で止まるよう頼む（2026-11-26 使用量の制限の前に [3]・[9] を止めて 18:01 に再開した）
   - スキル本体 `hub/skills/na-next`・`na-slot`（hub の `.claude/skills/` からリンク。`.git/info/exclude` 済み）。API は `POST /api/watch/next {ticket, slot, sweep, scope, dry}`
 - 開発用サーバー（Docker）の順番待ち（E。2026-11-25〜）
-  - メモリの都合で、ローカルの api・app・sqs は同時に1環境だけ。**テスト・ブラウザでの確認・ローカルの DB/Redis を見る作業の直前に、各環境の Claude が `python3 ~/.local/share/ticket-v2/hub/bin/hub_docker.py wait <番号>`**（run_in_background。終了コード 0 = 使ってよい・3 = まだ待ち→もう一度・1 = 失敗）、終わったら `release <番号>`。コードを書く・読む作業は待たない（実装は同時に複数進めてよいので、/na-go の1件ずつの制限は外した）
+  - メモリの都合で、ローカルの api・app・sqs は**同時に2環境まで**（2026-11-27 1→2。それまでは1環境だけ）。**テスト・ブラウザでの確認・ローカルの DB/Redis を見る作業の直前に、各環境の Claude が `python3 ~/.local/share/ticket-v2/hub/bin/hub_docker.py wait <番号>`**（run_in_background。終了コード 0 = 使ってよい・3 = まだ待ち→もう一度・1 = 失敗）、終わったら `release <番号>`。コードを書く・読む作業は待たない（実装は同時に複数進めてよいので、/na-go の1件ずつの制限は外した）
   - wait は順番が来たら、他の環境のサーバーを `~/bin/local-server down` し、自分の環境を `up` する（環境2も対象。2026-11-25 決定）。release ではサーバーを止めない（次の人の wait が切り替える）
   - 順番は /na-order の順（固定したものが先）、固定していないものは来た順。同じチケットの wait は使用中ならすぐ返る。5分呼び直さない待ちは外す。環境は実行したフォルダから判定（hub では使えない。`--env envN` で指定可）
   - 譲る: 使用中のチケットの枠が 15 分止まって（質問・入力待ち・枠が無い）いるか、**45 分 `wait` を呼んでいない（処理中でも。サーバーを使う直前に毎回 wait を呼ぶ決まりなので、使っていない見込み）**とき、待っている人がいれば、ダッシュボードの常駐ループが使用中を外し、tmux と Slack DM と使用中だった枠（`na_to.py --busy`。処理中でも途中で読む）に知らせる（2026-11-26 30分→15分・45分を追加。#14747 が処理中のまま1時間半返さず #15047 が待ち続けた）（記録は docker.json の log。`hub_docker.py status` に直近3件）
+  - **重い処理（rspec・vitest・`tsc`（typecheck）・全ファイルの lint）は、前に `hub_docker.py heavy start <番号> --what rspec`、後に失敗・中断でも `heavy end <番号>`**（2026-11-27〜。ユーザー「rspec とか vitest は負荷が高いため、それらが動いてるときはもう片方は一切の操作を辞める」）
+    - 重い処理は同時に1つだけ。重い処理の間は、もう片方の使用中の環境の `wait` が返らない（使用中でも）。ダッシュボードの常駐ループが、もう片方の使用中の枠に「サーバーを使う操作（画面・rails runner・curl・テスト・lint）を止めて、再開前に wait」と送る（処理中でも途中で読む）。コードの編集・読むことは止めない
+    - 変更ファイルだけの rubocop・eslint は重い処理に入れない（rubocop は数秒・1コア。eslint は型を見るルールで 1〜2GB 使うが数十秒）
+    - 40 分 `heavy start` / `wait` で更新されない重い処理の印は外す（end の呼び忘れ）。使用中を返す・譲ると、その人の重い処理の印も外れる
+    - メモリのブレーキ: 2台目を起動するとき・重い処理を始めるとき、Mac のメモリの圧迫レベル（`kern.memorystatus_vm_pressure_level`）が危険（4）なら始めずに待つ。警告（2）は Docker に 12.5GB を割り当てている都合で1台でも常に出ているので、ブレーキにしない（`MEM_BRAKE_LEVEL`）
+    - 譲る（15 分止まる・45 分 wait なし）のは、2環境とも使用中で待っている人がいるときだけ。`wait` が起動するときに止めるのは、使用中でない環境のサーバーだけ
+    - docker.json は `holders`（使用中・2件まで）と `heavy`（重い処理）。古い形の `holder` も先頭の使用中として書き続ける（古い wait のプロセス向け）
   - 手順は個人スキル `~/.claude/skills/ct-ship`・`ct-ship-loop`・`ct-finish`・`ct-pr-turn` の「開発用サーバーの順番待ち」の節に書いた（チーム共有の ct-analyze は書き換えず、依頼文で伝える）。編集前の控えは `~/.claude/tmp/skill-backup-20261125-docker/`
   - 見る: **`/na-server-status`**（hook の文。使用中・経過時間・最後の wait・譲るまでの残り・順番待ち・各環境のサーバー・直近6件の記録・枠の番号と状態。`/na-server-status release 番号` で使用中・順番待ちから外す。2026-11-26〜）・`hub_docker.py status`・監視欄の先頭・/na-watch の2行目。状態は `hub/docker.json`・`docker.lock`（copy の対象外）
 - Claude の枠（奇数枠）への依頼の送付と完了待ち（2026-11-25 決定: hub が送るのは Claude の枠だけ）
