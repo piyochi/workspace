@@ -1,0 +1,22 @@
+# 環境1〜6のサーバー（1行 = 1環境: api server・app server・sqs）。2026-11-27〜 env1〜4 タブを廃止してここにまとめた
+# 自動では起動しない（先頭の @ は履歴に積むだけ）。起動・停止は開発ダッシュボード（~/bin/local-server）。タイトルは local-server が探すので変えない
+# DB コンソール・ログは envs タブの各環境の枠で、旧 env*.txt（~/.tmuxp/ticket_v2_project/env*.txt.bak-20261127）のコマンドを使う
+
+~/www/ticket_v2/ticket_v2_api | @docker compose -f docker/docker-compose.yml up | env1 api server
+~/www/ticket_v2/ticket_v2 | @docker compose -f docker-compose.yml up | env1 app server
+~/www/ticket_v2/ticket_v2_api | @docker compose -f docker/docker-compose.yml exec ticket_v2_api_app bundle exec rake sqs:worker | env1 sqs
+~/www/ticket_v2_second/ticket_v2_api | @docker compose -f docker/docker-compose.yml --env-file docker/.env -p ticket_v2_api_2 up | env2 api server
+~/www/ticket_v2_second/ticket_v2 | @docker compose -f docker-compose.yml -p ticket_v2_f_2 --env-file .env.development up | env2 app server
+~/www/ticket_v2_second/ticket_v2_api | @docker exec -it ticket_v2_api_2_app bundle exec rake sqs:worker | env2 sqs
+~/www/ticket_v2_third/ticket_v2_api | @docker compose -f docker/docker-compose.yml --env-file docker/.env -p ticket_v2_api_3 up | env3 api server
+~/www/ticket_v2_third/ticket_v2 | @docker compose -f docker-compose.yml -p ticket_v2_api_3_f --env-file .env.development up | env3 app server
+~/www/ticket_v2_third/ticket_v2_api | @docker exec -it ticket_v2_api_3_app bundle exec rake sqs:worker | env3 sqs
+~/www/ticket_v2_fourth/ticket_v2_api | @docker compose -f docker/docker-compose.yml --env-file docker/.env -p ticket_v2_api_4 up | env4 api server
+~/www/ticket_v2_fourth/ticket_v2 | @docker compose -f docker-compose.yml -p ticket_v2_api_4_f --env-file .env.development up | env4 app server
+~/www/ticket_v2_fourth/ticket_v2_api | @docker exec -it ticket_v2_api_4_app bundle exec rake sqs:worker | env4 sqs
+~/www/ticket_v2_fifth/ticket_v2_api | @docker compose -f docker/docker-compose.yml --env-file docker/.env -p ticket_v2_api_5 up | env5 api server
+~/www/ticket_v2_fifth/ticket_v2 | @docker compose -f docker-compose.yml -p ticket_v2_api_5_f --env-file .env.development up | env5 app server
+~/www/ticket_v2_fifth/ticket_v2_api | @docker exec -it ticket_v2_api_5_app bundle exec rake sqs:worker | env5 sqs
+~/www/ticket_v2_sixth/ticket_v2_api | @docker compose -f docker/docker-compose.yml --env-file docker/.env -p ticket_v2_api_6 up | env6 api server
+~/www/ticket_v2_sixth/ticket_v2 | @docker compose -f docker-compose.yml -p ticket_v2_api_6_f --env-file .env.development up | env6 app server
+~/www/ticket_v2_sixth/ticket_v2_api | @docker exec -it ticket_v2_api_6_app bundle exec rake sqs:worker | env6 sqs

@@ -1,16 +1,16 @@
 #!/bin/bash
 # ============================================================================
-#  local-server — ローカル開発環境（環境1〜4）の api / app サーバーと sqs ワーカーを
+#  local-server — ローカル開発環境（環境1〜6）の api / app サーバーと sqs ワーカーを
 #                 tmux のペインで起動・停止・再起動する
 #
-#  使い方: local-server <up|down|restart|status> [env1|env2|env3|env4|all] [api|app|sqs|all]
+#  使い方: local-server <up|down|restart|status> [env1〜env6|all] [api|app|sqs|all]
 #    既定は all all。例: local-server up env3 sqs / local-server restart env1
-#    all は status / down では env1〜env4、up / restart では env1 env2（4環境を一度に立てるとメモリが足りないため）
+#    all は status / down では env1〜env6、up / restart では env1 env2（4環境を一度に立てるとメモリが足りないため）
 #
 #  仕組み:
-#    - tmuxp（ticket_v2_project）の env1〜env4 タブにある「<env> api server」「<env> app server」
-#      「<env> sqs」ペインを claude-monitor の枠タイトルから探す
-#    - 起動コマンドは ~/.tmuxp/ticket_v2_project/<env>.txt の同じタイトルの行から読む（正本は txt）
+#    - tmuxp（ticket_v2_project）の servers タブにある「<env> api server」「<env> app server」
+#      「<env> sqs」ペインを claude-monitor の枠タイトルから探す（2026-11-27 env1〜env4 タブを servers タブ1つにまとめた）
+#    - 起動コマンドは ~/.tmuxp/ticket_v2_project/servers.txt の同じタイトルの行から読む（正本は txt）
 #    - up   … ペインがシェルに戻っていればコマンドを送る。起動順は api → app → sqs
 #              （sqs は api コンテナが動いてから送る）
 #    - down … ペインに Ctrl+C を送る（コンテナは停止するだけで削除しない）。停止順は sqs → app → api
@@ -25,6 +25,7 @@ ACTION="${1:-}"
 ENVS="${2:-all}"
 COMPS="${3:-all}"
 TXT_DIR="$HOME/.tmuxp/ticket_v2_project"
+MON=servers   # サーバーの枠がある claude-monitor の名前（タブ名）
 UP_TIMEOUT=180
 DOWN_TIMEOUT=90
 RC=0
@@ -32,10 +33,10 @@ SENT=" "   # このスクリプトがコマンドを送った「env:comp」。�
 
 usage() { sed -n '4,7p' "$0" | sed 's/^#  //'; exit 1; }
 [[ "$ACTION" =~ ^(up|down|restart|status)$ ]] || usage
-ALL_ENVS="env1 env2 env3 env4"
+ALL_ENVS="env1 env2 env3 env4 env5 env6"
 case "$ENVS" in
   all) if [[ "$ACTION" == up || "$ACTION" == restart ]]; then ENVS="env1 env2"; else ENVS="$ALL_ENVS"; fi ;;
-  env1|env2|env3|env4) ;;
+  env1|env2|env3|env4|env5|env6) ;;
   *) usage ;;
 esac
 case "$COMPS" in all) COMPS="api app sqs" ;; api|app|sqs) ;; *) usage ;; esac
@@ -70,16 +71,16 @@ running() {
 find_pane() {
   local env="$1" title="$2" session win n idx
   session=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -x ticket_v2_project) || return 1
-  win=$(tmux show-environment -t "$session" "CM_${env}_WINDOW_ID" 2>/dev/null | cut -d= -f2) || return 1
+  win=$(tmux show-environment -t "$session" "CM_${MON}_WINDOW_ID" 2>/dev/null | cut -d= -f2) || return 1
   [[ -n "$win" ]] || return 1
   n=$(tmux show-environment -t "$session" 2>/dev/null \
-      | grep -E "^CM_${env}_CLI_[0-9]+_TITLE=\[[0-9]+\] ${title}\$" | head -1 \
-      | sed -E "s/^CM_${env}_CLI_([0-9]+)_TITLE=.*/\1/")
+      | grep -E "^CM_${MON}_CLI_[0-9]+_TITLE=\[[0-9]+\] ${title}\$" | head -1 \
+      | sed -E "s/^CM_${MON}_CLI_([0-9]+)_TITLE=.*/\1/")
   [[ -n "$n" ]] || return 1
-  if [[ "$(tmux show-environment -t "$session" "CM_${env}_FOCUSED_CLI" 2>/dev/null | cut -d= -f2)" == "$n" ]]; then
-    idx=$(tmux show-environment -t "$session" "CM_${env}_FOCUS_IDX" 2>/dev/null | cut -d= -f2)
+  if [[ "$(tmux show-environment -t "$session" "CM_${MON}_FOCUSED_CLI" 2>/dev/null | cut -d= -f2)" == "$n" ]]; then
+    idx=$(tmux show-environment -t "$session" "CM_${MON}_FOCUS_IDX" 2>/dev/null | cut -d= -f2)
   else
-    idx=$(tmux show-environment -t "$session" "CM_${env}_CLI_${n}_IDX" 2>/dev/null | cut -d= -f2)
+    idx=$(tmux show-environment -t "$session" "CM_${MON}_CLI_${n}_IDX" 2>/dev/null | cut -d= -f2)
   fi
   tmux display -p -t "${win}.${idx}" '#{pane_id}' 2>/dev/null
 }
@@ -91,7 +92,7 @@ read_line() {
       ti=$NF; gsub(/^[ \t]+|[ \t]+$/, "", ti)
       if (ti==t) { d=$1; c=$2; for(i=3;i<NF;i++) c=c "|" $i
         gsub(/^[ \t]+|[ \t]+$/, "", d); gsub(/^[ \t]+|[ \t]+$/, "", c); sub(/^@/, "", c)
-        print d "\t" c; exit } }' "$TXT_DIR/$env.txt"
+        print d "\t" c; exit } }' "$TXT_DIR/servers.txt"
 }
 
 pane_idle() {

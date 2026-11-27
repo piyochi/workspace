@@ -15,7 +15,7 @@
 - 使用中のチケットの枠が 15 分止まって（質問・入力待ち）いるか、45 分 wait を呼んでいない（処理中でも）とき、待っている人がいれば、
   開発ダッシュボードの常駐ループが次の人に譲り、tmux と Slack DM と使用中だった枠に知らせる（譲られた側は次にサーバーを使う前に wait し直す）
 - 待ちをやめた（wait を5分呼び直さない）待ちは順番から外す
-- 環境は今いるフォルダ（~/www/ticket_v2 = env1・_second = env2・_third = env3・_fourth = env4）から判定する
+- 環境は今いるフォルダ（~/www/ticket_v2 = env1・_second = env2・_third = env3・_fourth = env4・_fifth = env5・_sixth = env6）から判定する
 """
 import fcntl
 import json
@@ -31,10 +31,11 @@ STATE = os.path.join(HUB, "docker.json")
 LOCK = os.path.join(HUB, "docker.lock")
 ORDER = os.path.join(HUB, "order.json")
 LOCAL_SERVER = os.path.expanduser("~/bin/local-server")
-ENV_DIRS = [("ticket_v2_second", "env2"), ("ticket_v2_third", "env3"), ("ticket_v2_fourth", "env4"), ("ticket_v2", "env1")]
+ENV_DIRS = [("ticket_v2_second", "env2"), ("ticket_v2_third", "env3"), ("ticket_v2_fourth", "env4"),
+            ("ticket_v2_fifth", "env5"), ("ticket_v2_sixth", "env6"), ("ticket_v2", "env1")]
 QUEUE_STALE = 300   # この秒数 wait を呼び直さない待ちは外す
 POLL = 10
-ENVS = ("env1", "env2", "env3", "env4")
+ENVS = ("env1", "env2", "env3", "env4", "env5", "env6")
 
 
 def env_of_cwd(cwd=None):

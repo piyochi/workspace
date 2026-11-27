@@ -1,11 +1,19 @@
-# Row 1: 環境1・環境2
+# 環境1〜6の ticket_v2_api・ticket_v2（エディタ用）。★ MAIN は hub（~/www/ticket_v2_hub）
+
+# Row: 環境1・環境2
 ~/www/ticket_v2/ticket_v2_api | | env1 api
 ~/www/ticket_v2/ticket_v2 | | env1 app
 ~/www/ticket_v2_second/ticket_v2_api | | env2 api
 ~/www/ticket_v2_second/ticket_v2 | | env2 app
 
-# Row 2: 環境3・環境4
+# Row: 環境3・環境4
 ~/www/ticket_v2_third/ticket_v2_api | | env3 api
 ~/www/ticket_v2_third/ticket_v2 | | env3 app
 ~/www/ticket_v2_fourth/ticket_v2_api | | env4 api
 ~/www/ticket_v2_fourth/ticket_v2 | | env4 app
+
+# Row: 環境5・環境6
+~/www/ticket_v2_fifth/ticket_v2_api | | env5 api
+~/www/ticket_v2_fifth/ticket_v2 | | env5 app
+~/www/ticket_v2_sixth/ticket_v2_api | | env6 api
+~/www/ticket_v2_sixth/ticket_v2 | | env6 app

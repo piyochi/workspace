@@ -1,13 +1,18 @@
 session_name: ticket_v2_project
-start_directory: ~/www/ticket_v2
+# 2026-11-27: 環境1〜6（1環境 = Claude と Codex の1組）。既定の場所は hub（~/www/ticket_v2_hub。12枠の取りまとめ役）
+# 旧構成（環境1〜4・env1〜env4 タブ）は ticket_v2_project.yaml.bak-20261127
+start_directory: ~/www/ticket_v2_hub
 windows:
 - panes:
   # Claude・Codex の利用枠の計測を始める（~/bin/ai-warmup。先頭スペースで履歴に残さない）
   - shell_command:
     - ' ~/bin/ai-warmup &!'
+  start_directory: ~/www/ticket_v2_hub
   window_name: zsh
 - panes:
-  - ~/bin/claude-monitor --no-window --name vim -f ~/.tmuxp/ticket_v2_project/vim.txt -l left -w 55% -g 4x2
+  # 12枠 = 環境1〜6の ticket_v2_api・ticket_v2。★ MAIN は hub のまま（--main-first）
+  - ~/bin/claude-monitor --no-window --main-first --name vim -f ~/.tmuxp/ticket_v2_project/vim.txt -l left -w 60% -g 4x3
+  start_directory: ~/www/ticket_v2_hub
   window_name: vim
 - panes:
   # 番号無しの枠（★ MAIN）は hub（~/www/ticket_v2_hub。12枠の取りまとめ役。説明は ~/.local/share/ticket-v2/hub/README.md）
@@ -18,20 +23,12 @@ windows:
   start_directory: ~/www/ticket_v2_hub
   window_name: monitor
 - panes:
-  - ~/bin/claude-monitor --no-window --name envs -f ~/.tmuxp/ticket_v2_project/envs.txt -l left -w 50% -g 2x2
+  # 6枠 = 環境1〜6のワークスペース。★ MAIN は hub のまま（--main-first）
+  - ~/bin/claude-monitor --no-window --main-first --name envs -f ~/.tmuxp/ticket_v2_project/envs.txt -l left -w 60% -g 3x2
+  start_directory: ~/www/ticket_v2_hub
   window_name: envs
 - panes:
-  - ~/bin/claude-monitor --no-window --name env1 -f ~/.tmuxp/ticket_v2_project/env1.txt -l left -w 65% -g 4x3
-  window_name: env1
-- panes:
-  - ~/bin/claude-monitor --no-window --name env2 -f ~/.tmuxp/ticket_v2_project/env2.txt -l left -w 65% -g 4x3
-  start_directory: ~/www/ticket_v2_second
-  window_name: env2
-- panes:
-  - ~/bin/claude-monitor --no-window --name env3 -f ~/.tmuxp/ticket_v2_project/env3.txt -l left -w 65% -g 4x3
-  start_directory: ~/www/ticket_v2_third
-  window_name: env3
-- panes:
-  - ~/bin/claude-monitor --no-window --name env4 -f ~/.tmuxp/ticket_v2_project/env4.txt -l left -w 65% -g 4x3
-  start_directory: ~/www/ticket_v2_fourth
-  window_name: env4
+  # 18枠 = 環境1〜6 × api server・app server・sqs（~/bin/local-server と開発ダッシュボードがこのタブの枠を使う）
+  - ~/bin/claude-monitor --no-window --main-first --name servers -f ~/.tmuxp/ticket_v2_project/servers.txt -l left -w 60% -g 3x6
+  start_directory: ~/www/ticket_v2_hub
+  window_name: servers

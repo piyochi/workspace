@@ -60,7 +60,7 @@ DEFAULT_CONFIG = {
     "stale_minutes": 30,
 }
 
-ENVS = ("env1", "env2", "env3", "env4")
+ENVS = ("env1", "env2", "env3", "env4", "env5", "env6")  # 2026-11-27 env5・env6 を追加
 COMPS = ("api", "app", "sqs", "all")
 ACTIONS = {"up": "起動", "down": "停止", "restart": "再起動"}
 STATUS_LINE = re.compile(r"^([●◐○])\s+(env\d)\s+(api|app|sqs)")
@@ -335,7 +335,7 @@ def codex_usage(cfg):
 
 TMUX_SESSION = "ticket_v2_project"
 SLOT_TITLE = re.compile(r"\[(\d+)\]\s+(\S+)\s+(claude|codex)(?:\(([^)]*)\))?")
-# MAIN の枠で動く hub（環境1〜4の12枠の取りまとめ役。2026-11-25〜。説明は ~/.local/share/ticket-v2/hub/README.md）
+# MAIN の枠で動く hub（環境1〜6の12枠の取りまとめ役。2026-11-25〜。説明は ~/.local/share/ticket-v2/hub/README.md）
 HUB_DIR = os.path.join(HOME, "www", "ticket_v2_hub")
 HUB_CLAUDE_CMD = "bin/claude ticket_v2 ticket_v2_api --permission-mode auto"
 CODEX_WAIT = re.compile(r"Would you like to (run the following command|make the following edits|grant these permissions)\?")
@@ -1246,7 +1246,8 @@ def slot_send(n, cmd, tickets, launch=None, free=""):
 
 LINK_URL = re.compile(r"https?://[^\s<>()\[\]{}\"'`|*、。，）」』]+")  # * は Markdown の太字なので URL に含めない
 LINK_DAYS = 7
-ENV_DIRS = {"ticket_v2": "env1", "ticket_v2_second": "env2", "ticket_v2_third": "env3", "ticket_v2_fourth": "env4"}
+ENV_DIRS = {"ticket_v2": "env1", "ticket_v2_second": "env2", "ticket_v2_third": "env3", "ticket_v2_fourth": "env4",
+            "ticket_v2_fifth": "env5", "ticket_v2_sixth": "env6"}
 links_lock = threading.Lock()
 links = {}          # url -> {url, ts, cat, src, path, context}
 links_scan_lock = threading.Lock()  # 集める処理を同時に2つ走らせない（読み進めた位置が狂う）
@@ -1278,7 +1279,7 @@ def link_category(url):
 
 
 def env_of(cwd):
-    """作業フォルダから環境名（env1〜env4）。わからなければフォルダ名。"""
+    """作業フォルダから環境名（env1〜env6）。わからなければフォルダ名。"""
     for part in reversed(os.path.normpath(cwd or "").split(os.sep)):
         if part in ENV_DIRS:
             return ENV_DIRS[part]
@@ -2516,7 +2517,7 @@ def codex_prompt_text(payload):
 
 
 def history_entries(path, kind, st, lines, work=None):
-    """記録の行から (チケット番号, 環境, 時刻) を出す。env1〜env4 の作業フォルダのセッションだけ。
+    """記録の行から (チケット番号, 環境, 時刻) を出す。env1〜env6 の作業フォルダのセッションだけ。
 
     work（辞書）を渡すと、その入力の作業番号（session_ticket。話に出ただけの番号は含まない）-> 最後の時刻 も書き込む。
     """
@@ -3379,7 +3380,7 @@ def _watch_lines(st, lines, skills):
             continue
         st["cwd"] = d.get("cwd") or st.get("cwd", "")
         if env_of(st.get("cwd")) not in ENV_DIRS.values():
-            continue  # 環境1〜4の作業フォルダのセッションだけ（hub・一時フォルダは数えない）
+            continue  # 環境1〜6の作業フォルダのセッションだけ（hub・一時フォルダは数えない）
         ts = iso_ts(d.get("timestamp"))
         if not ts or d.get("isMeta") or d.get("isCompactSummary") or d.get("isSidechain"):
             continue  # 圧縮後に差し込まれる「前に使ったスキル」の一覧・サブエージェントの会話は数えない
@@ -3801,9 +3802,10 @@ def auto_text(skill, n, item, plan=None, t=None):
     return f"/{skill} {n}"
 
 
-SLOT_PREFER = {"design": [9, 11, 1, 3, 5, 7],   # 調査・設計の流れ: 設計用の環境3・4を先に（環境3・4は release で設計する）
-               "review": [9, 11, 1, 3, 5, 7],   # 他の人の PR のレビュー
-               "fix": [1, 3, 5, 7]}             # 自分の PR の戻り（修正）: ブランチを触るので環境1・2だけ
+# 2026-11-27: 1環境1組（[1]env1・[3]env2・[5]env3・[7]env4・[9]env5・[11]env6）になり、どの環境も開発・設計に使うので枠の番号順
+SLOT_PREFER = {"design": [1, 3, 5, 7, 9, 11],   # 調査・設計の流れ
+               "review": [1, 3, 5, 7, 9, 11],   # 他の人の PR のレビュー
+               "fix": [1, 3, 5, 7, 9, 11]}      # 自分の PR の戻り（修正）
 
 
 def free_slot(items, slots, auto, purpose="design"):
@@ -4439,7 +4441,7 @@ def auto_go(n, slot=None, branch="", force=False, dry=False, model=None, effort=
             [x for x in watch_cache.get("items", []) if x["id"] != n], slots,
             {"tickets": {k: v for k, v in auto.get("tickets", {}).items() if k != n}}, "fix"))
         if use is None:
-            return False, "空いている Claude の枠（環境1・2）がありません。枠を指定してください（/na-go 番号 枠）"
+            return False, "空いている Claude の枠がありません。枠を指定してください（/na-go 番号 枠）"
         # 同じ環境のもう一方の Claude の枠は同じリポジトリを使う。動いている作業があればブランチの切り替えで壊すので止める
         me = next((s for s in slots if s["slot"] == use), None)
         sib = [s for s in slots if me and s["env"] == me["env"] and s["slot"] != use and s["kind"] == "claude" and s["state"] in ("busy", "wait")]

@@ -1,10 +1,10 @@
-# ticket_v2_hub（環境1〜4の12枠を取りまとめる場所）
+# ticket_v2_hub（環境1〜6の12枠を取りまとめる場所）
 
 2026-11-25 作成。ホーム（git 管理外）に置く個人用の説明。hub の workspace にある `CLAUDE.local.md` からここを参照する。
 
 ## これは何か
 
-- tmux `ticket_v2_project` セッションの **monitor タブの1〜12枠**（環境1〜4の Claude と Codex）を取りまとめるための workspace
+- tmux `ticket_v2_project` セッションの **monitor タブの1〜12枠**（環境1〜6の Claude と Codex。1環境1組）を取りまとめるための workspace
 - 自分ではチケットの実装・検証をしない。**状態の把握・依頼の送付・完了待ち・結果の集約・次の割り振り**だけを行う
 - 新しいリポジトリではなく、`ticket_v2_project` を別の場所に clone したもの
 
@@ -16,7 +16,7 @@
 | サブリポ | `ticket_v2`・`ticket_v2_api`（clone のみ。release。コードを読むためだけ） |
 | 環境番号 | **なし**（hub）。起動時フローの「環境番号」は「hub」と宣言する |
 | Docker | **なし**。コンテナ・DB・Redis・サーバーは作らない・起動しない |
-| メモリ | `~/.claude/projects/-Users-piyoh-www-ticket-v2-hub/memory` → `~/.local/share/ticket-v2/memory`（環境1〜4と共有） |
+| メモリ | `~/.claude/projects/-Users-piyoh-www-ticket-v2-hub/memory` → `~/.local/share/ticket-v2/memory`（環境1〜6と共有） |
 | git 管理外の設定 | `.claude/settings.local.json`・`.codex/config.toml`・`.kiro/settings/mcp.json` は環境4からコピー（4環境とも同じ内容） |
 | Codex の信頼設定 | `~/.codex/config.toml` に `/Users/piyoh/www/ticket_v2_hub` を追加済み |
 | 起動 | `cd ~/www/ticket_v2_hub && bin/claude ticket_v2 ticket_v2_api --permission-mode auto`（`bin/codex` も同じ引数） |
@@ -28,12 +28,14 @@
 | 枠 | 環境 | 中身 |
 |---|---|---|
 | 1 ↔ 2 | 環境1 `~/www/ticket_v2` | Claude（continue）↔ Codex（continue） |
-| 3 ↔ 4 | 環境1 | Claude（new）↔ Codex（new） |
-| 5 ↔ 6 | 環境2 `~/www/ticket_v2_second` | Claude（continue）↔ Codex（continue） |
-| 7 ↔ 8 | 環境2 | Claude（new）↔ Codex（new） |
-| 9 ↔ 10 | 環境3 `~/www/ticket_v2_third` | Claude ↔ Codex（read-only） |
-| 11 ↔ 12 | 環境4 `~/www/ticket_v2_fourth` | Claude ↔ Codex（read-only） |
+| 3 ↔ 4 | 環境2 `~/www/ticket_v2_second` | 同上 |
+| 5 ↔ 6 | 環境3 `~/www/ticket_v2_third` | 同上 |
+| 7 ↔ 8 | 環境4 `~/www/ticket_v2_fourth` | 同上 |
+| 9 ↔ 10 | 環境5 `~/www/ticket_v2_fifth` | 同上 |
+| 11 ↔ 12 | 環境6 `~/www/ticket_v2_sixth` | 同上 |
 
+- **2026-11-27 に1環境1組に組み替えた**（それまでは環境1・2が2組、環境3・4が1組で Codex は read-only）。環境5・6は `bin/create-env-www.sh N --config-from env4 --db-from env4`（devtools の `tools/create-env.sh` の ~/www 版。サブ repo は ticket_v2・ticket_v2_api だけ、hosts は手で追記）で作った。Chrome のポートは ~/.zshrc で環境5=9245・環境6=9246。どの環境も開発・設計に使うので、`/na-next` が空き枠を選ぶ順は枠の番号順（server.py の `SLOT_PREFER`）。Codex は全部書き込みあり
+- tmux のタブ（`~/.tmuxp/ticket_v2_project.yaml`。変更前は `.bak-20261127`）: 0 zsh・1 vim（環境1〜6の api・app の12枠）・2 monitor・3 envs（環境1〜6のワークスペース6枠）・4 servers（環境1〜6 × api server・app server・sqs の18枠。`~/bin/local-server` とダッシュボードはここの枠を使う。定義は `servers.txt`）。どのタブも ★ MAIN は hub（`--main-first`・`start_directory: ~/www/ticket_v2_hub`）。env1〜env4 タブは廃止（DB コンソール・ログのコマンドは `env*.txt.bak-20261127`）
 - **hub は monitor の番号無しの枠（★ MAIN。`claude-monitor` を実行した元の枠）に置く**（2026-11-25 決定）
   - `~/.tmuxp/ticket_v2_project.yaml` の monitor タブに `start_directory: ~/www/ticket_v2_hub` を指定し、起動コマンドを履歴に積むだけにした（↑ = continue、↑↑ = new）。変更前は `ticket_v2_project.yaml.bak-20261125`
   - monitor タブの `claude-monitor` には `--main-first` を付けているので、tmuxp を読み込んだ直後から番号無しの枠（★ MAIN＝hub）がメインに出る（2026-11-25〜。付けない他のタブは従来どおり [1] がメイン）。[n] を見た後で MAIN に戻すには、表示中の番号（Alt+n）をもう一度押す
@@ -62,7 +64,7 @@
   - 対象は `/na-order` で固定したチケット。判定は開発ダッシュボードの常駐ループ（server.py の `watch_loop`。20 秒ごと）が行い、結果を `/api/watch` と `hub/watch.json` に書く。hub の Claude は常駐しない
   - 判定するもの: 担当の枠（Claude の枠のうち、そのチケットを作業中のもの）・状態・スキル単位の段階・03_progress.md のフェーズ・PR・レビュー
     - 状態: 処理中 / 確認待ち（許可）/ 確認待ち（質問。スキルの返答が質問で終わった）/ 確認待ち（次の指示。流れのスキルが終わった）/ 入力待ち / 枠なし
-    - 段階: 環境1〜4の Claude の会話ログ（`~/.claude/projects/*/*.jsonl`。直近14日）から、チケット番号付きのスキル実行（`/ct-… 番号`・Skill ツール）とその終わり（end_turn が質問かどうか）を拾い、流れ redmine→analyze→architect→(sweep)→(scope)→planner→issue-docs→ship-loop→finish の各段に印を付ける。後の段が動いていて記録の無い必須の段は「✗ 記録なし」
+    - 段階: 環境1〜6の Claude の会話ログ（`~/.claude/projects/*/*.jsonl`。直近14日）から、チケット番号付きのスキル実行（`/ct-… 番号`・Skill ツール）とその終わり（end_turn が質問かどうか）を拾い、流れ redmine→analyze→architect→(sweep)→(scope)→planner→issue-docs→ship-loop→finish の各段に印を付ける。後の段が動いていて記録の無い必須の段は「✗ 記録なし」
   - 見る場所: ダッシュボードの先頭の「監視（/na-order）」欄（20 秒ごとに更新。確認待ちの行は黄色）と、hub の **`/na-watch [refresh]`**（同じ hook で表示。会話を消費しない。CLI は `hub_watch.py [--json]`）
   - 通知（状態が変わったときだけ。固定した直後とダッシュボードの起動直後は今の状態を記録するだけ）:
     - tmux のステータス行の右に「確認待ち N」（`@hub_attention`。セッションの `status-right` の先頭に書式を足す。tmuxp を読み直して消えても次の判定で足し直す）
@@ -71,7 +73,7 @@
     - 前回の状態は `hub/watch_notify.json`（watch*.json は copy-to-workspace / copy-to-home の対象外）
   - 確かめるときは `/api/watch?tickets=14926,14747`（固定の順を使わず判定だけ。記録・通知はしない）
 - 自動の依頼（2026-11-25〜。B 次のスキル・C 資料の後のコミット・F レビュー）。判定と送信はダッシュボードの同じ常駐ループ（1回に1件。送信は `na_to.py` なので、偶数枠・処理中・入力欄に文字がある枠・本番系の枠には送らない）
-  - **`/na-next 番号 [枠] [sweep] [scope] [model=…] [effort=…] [dry]`**: 止まっている所から次のスキルを頼み、以後そのチケットを自動の依頼の対象にする（固定しただけでは始めない）。枠を指定しなければ空いている Claude の枠（入力待ち・作業中のチケット無し・`/na-slot off` で外していない・他のチケットに割り当てていない）を、設計用の環境3・4 → 環境1・2 の順に選ぶ。**起動中の空き枠が無ければ、Claude が未起動の奇数枠（シェルのまま）で `monitor.txt` のその枠のコマンドから `--continue` を外して新しい会話として起動し、入力待ちになったら依頼を送る**（autopilot.json の `pending`。4分たっても入力待ちにならなければ tmux・Slack に知らせる。2026-11-26〜）。**新しい会話のまま（まだ何も入力していない。statusline の記録ファイルが未作成）の枠は、前の会話で付けたタイトル（#番号）や autopilot.json の古い割り当てが残っていても空きとみなす**（起動し直した・/clear した枠。送ったら、その枠に残っていたほかのチケットの割り当てを外す）。1チケット1枠（作業中の枠と違う枠は指定できない）。`dry` は送らずに判定だけ
+  - **`/na-next 番号 [枠] [sweep] [scope] [model=…] [effort=…] [dry]`**: 止まっている所から次のスキルを頼み、以後そのチケットを自動の依頼の対象にする（固定しただけでは始めない）。枠を指定しなければ空いている Claude の枠（入力待ち・作業中のチケット無し・`/na-slot off` で外していない・他のチケットに割り当てていない）を、枠の番号順（[1]→[3]→…→[11]。2026-11-27 まで設計用の環境3・4 → 環境1・2）に選ぶ。**起動中の空き枠が無ければ、Claude が未起動の奇数枠（シェルのまま）で `monitor.txt` のその枠のコマンドから `--continue` を外して新しい会話として起動し、入力待ちになったら依頼を送る**（autopilot.json の `pending`。4分たっても入力待ちにならなければ tmux・Slack に知らせる。2026-11-26〜）。**新しい会話のまま（まだ何も入力していない。statusline の記録ファイルが未作成）の枠は、前の会話で付けたタイトル（#番号）や autopilot.json の古い割り当てが残っていても空きとみなす**（起動し直した・/clear した枠。送ったら、その枠に残っていたほかのチケットの割り当てを外す）。1チケット1枠（作業中の枠と違う枠は指定できない）。`dry` は送らずに判定だけ
     - 次のスキル: なし→ct-redmine→ct-analyze→ct-architect→（sweep・scope を付けたら ct-sweep→ct-scope）→ct-planner→ct-issue-docs→コミット
     - 自動で進めるのは ct-redmine の後（→ct-analyze）・ct-sweep／ct-scope の後（→次）・ct-issue-docs の後（→コミット）。**ct-analyze・ct-architect・ct-planner の後は止めて確認待ち**として知らせる（`/na-next 番号` で次へ。architect の後に `sweep`・`scope` を付けて決める）。途中の質問も確認待ち。ct-ship-loop 以降は /na-go
     - ct-analyze の依頼文には「初期調査はステージング（団体 naga3）・テスティングは団体 nagayoshi・ローカルの DB・Redis・サーバーが要るときだけ hub_docker.py wait で順番待ち」を添える
@@ -96,7 +98,7 @@
   - **別のチケットの会話が残っている枠に頼むときは、先に `/clear` する**（server.py の `clear_other`。自動で選んだ枠も指定した枠も。同じチケットの続きは会話を引き継ぐので消さない。新しい会話の枠はそのまま。結果の文に「/clear しました」と出る。2026-11-26 [5] で #15012 の会話のまま #14921 を頼んだため）（枠の Claude に ct-tmux-title を頼まない。会話に残らないので `--continue` で起動し直したときは付け直されない）
   - **`/na-go 番号 [枠] [--branch 名前] [force] [dry]`**（D。2026-11-25〜）: 実装を始める。決まった依頼文2つ（設計ページ r1 q4 の補足のまま）を順に送る
     - 1つ目 `/ct-ship-loop 番号 コーディングはcodexで…ブランチ：feature/番号`（`--branch` で変える）。ct-ship-loop が終わったら（end_turn が質問でない）2つ目 `/ct-finish 番号 sweepは設計時に…アーティファクトにまとめて` を自動で送る。ct-finish が終わったら tmux と Slack DM で「完了」を知らせる（push はしない）
-    - 枠: 作業中の枠（1チケット1枠）。無ければ指定した枠、無ければ空いている環境1・2の Claude の枠
+    - 枠: 作業中の枠（1チケット1枠）。無ければ指定した枠、無ければ空いている Claude の枠（枠の番号順）
     - 止めるもの: ct-issue-docs の記録が無い（記録の外で設計したなら `force`）・ct-ship-loop／ct-finish の記録がある（やり直しは `force`）・処理中や確認待ち・**同じ環境のもう一方の Claude の枠が処理中／確認待ち**（同じリポジトリのブランチを切り替えるため。その枠がリポジトリを使わない作業（本番の監視など）なら `force`。2026-11-26 [7] #15043 の本番監視中に [5] で #14921 を始めた）
     - **`force` は上の確認（設計・調査の記録が無い・実装の記録がある・同じ環境の枠が動いている）を全部まとめて飛ばす**。1つのために付けても他も効かなくなるので、付ける前に残りの確認を自分で済ませる
     - 補足の指示に別のチケットを「#番号」で書いても、スキルの引数の**先頭の番号**がそのチケットとして記録される（server.py の `arg_tickets`。先頭に番号が無いときだけ「#番号」。2026-11-26 まで「#番号」が優先で、補足の「[7] #15043 は…」により #14921 の ct-ship-loop が #15043 の作業と記録され、ct-finish を自動で頼まなかった）
@@ -138,5 +140,5 @@
 
 ## 未決事項
 
-- 開発ダッシュボードに hub を表示するか（今は環境1〜4だけ。hub は環境ではないので登録していない）
+- 開発ダッシュボードに hub を表示するか（今は環境1〜6だけ。hub は環境ではないので登録していない）
 - ~~12枠の状態をまとめて出す hub 専用のコマンド・スキルを作るか~~ → 2026-11-25 `hub/bin/hub_status.py` を作成。スキル化はしない（個人用で hub でしか使わず、スキルにするとチーム共有リポへのコミットと全環境への配布になるため。README に書けば hub の Claude は起動時に読む）

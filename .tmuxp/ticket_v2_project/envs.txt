@@ -1,9 +1,8 @@
-# 環境1〜4のワークスペースを切り替える（Alt + 1〜4）
+# 環境1〜6のワークスペース（Alt + 1〜6）。★ MAIN は hub（~/www/ticket_v2_hub）
 
-# Row 1: 開発
 ~/www/ticket_v2 | | env1
 ~/www/ticket_v2_second | | env2
-
-# Row 2: 設計・調査＋開発（2026-11-13 から開発も可。サーバーは env3 / env4 タブ）
 ~/www/ticket_v2_third | | env3
 ~/www/ticket_v2_fourth | | env4
+~/www/ticket_v2_fifth | | env5
+~/www/ticket_v2_sixth | | env6
